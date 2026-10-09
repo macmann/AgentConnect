@@ -97,9 +97,23 @@ See operations.md for supported behavior, local acceptance and limits. Phase 5 i
 
 See generative-experience.md for supported behavior, testing and limits. This initial slice leaves the broader Phase 6 and Phase 5 extensions explicit.
 
+## Phase 7 — Channels and voice (initial web release)
+
+- [x] Standalone lightweight web widget with theme, greeting, position, dimensions, language and responsive layout.
+- [x] Deployment-scoped embedding settings, exact-origin server policy, restricted CORS and token/origin-bound conversations.
+- [x] Explicit widget channel in conversation filtering and persistent support handoff state/events.
+- [x] Visitor handoff, operator context/replies and atomic agent pause/resume with role/tenant checks.
+- [x] Browser speech recognition with editable transcripts and user-initiated, interruptible speech playback; unsupported/denied fallback.
+- [x] Documented authenticated messaging adapter boundaries and provider real-time voice architecture.
+- [ ] WhatsApp/Messenger implementations and vendor application/account setup.
+- [ ] Registered provider STT/TTS, ephemeral WebRTC sessions, live microphone/speech acceptance and model-triggered handoff.
+- [ ] Operator assignment/notifications, persistent visitor sessions, rich embedded UI, production retention and larger inbox/history pagination.
+
+See channels-voice.md for the supported initial slice and integration prerequisites. Browser voice does not establish provider real-time capability.
+
 ## Subsequent phases
 
-Follow product-spec.md phases 7–10: channels/voice; evaluations; enterprise connectors; hardening. Complete a compiling, tested, usable slice before starting the next.
+Follow product-spec.md phases 8–10: evaluations; enterprise connectors; hardening. Complete a compiling, tested, usable slice before starting the next.
 
 ## Risks and dependencies
 

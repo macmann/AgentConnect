@@ -13,6 +13,7 @@ try {
       "0006",
       "0007",
       "0008",
+      "0009",
     ]) {
       const done =
         await tx`SELECT version FROM schema_migrations WHERE version=${version}`;
@@ -32,7 +33,9 @@ try {
                       ? "0006_model_management.sql"
                       : version === "0007"
                         ? "0007_operations.sql"
-                        : "0008_generative.sql";
+                        : version === "0008"
+                          ? "0008_generative.sql"
+                          : "0009_channels.sql";
         await tx.unsafe(
           await readFile(
             new URL(`../../../packages/db/migrations/${file}`, import.meta.url),

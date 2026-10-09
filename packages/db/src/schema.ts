@@ -122,6 +122,7 @@ export const agentVersions = pgTable("agent_versions", {
 });
 
 export const deployments = pgTable("deployments", {
+  widgetSettings: jsonb("widget_settings").notNull().default({}),
   environment: text("environment").notNull().default("production"),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
@@ -134,6 +135,9 @@ export const deployments = pgTable("deployments", {
 });
 
 export const conversations = pgTable("conversations", {
+  channel: text("channel").notNull().default("hosted"),
+  widgetOrigin: text("widget_origin"),
+  handoffStatus: text("handoff_status").notNull().default("none"),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
   workspaceId: uuid("workspace_id").notNull(),
@@ -511,5 +515,16 @@ export const collectedSubmissions = pgTable("collected_submissions", {
   blockId: text("block_id").notNull(),
   values: jsonb("values").notNull(),
   submittedBy: uuid("submitted_by"),
+  createdAt: created(),
+});
+
+export const handoffEvents = pgTable("handoff_events", {
+  id: uuid("id").primaryKey(),
+  conversationId: uuid("conversation_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  kind: text("kind").notNull(),
+  content: text("content").notNull(),
+  actorId: uuid("actor_id"),
   createdAt: created(),
 });

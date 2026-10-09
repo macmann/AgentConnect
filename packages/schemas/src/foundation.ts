@@ -39,6 +39,7 @@ export const capabilities = [
   "operations:manage",
   "member:manage",
   "conversation:review",
+  "handoff:manage",
   "workspace:create",
   "member:invite",
   "secret:manage",
@@ -69,6 +70,7 @@ const grants: Record<Role, readonly Capability[]> = {
   builder: [
     "operations:view",
     "conversation:review",
+    "handoff:manage",
     "workflow:manage",
     "workflow:read",
     "workflow:execute",
@@ -87,6 +89,7 @@ const grants: Record<Role, readonly Capability[]> = {
   operator: [
     "operations:view",
     "conversation:review",
+    "handoff:manage",
     "workflow:read",
     "workflow:approve",
     "conversation:view",

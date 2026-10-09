@@ -1,11 +1,19 @@
 "use client";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { ArrowUp, Square, RefreshCw, Sparkles } from "lucide-react";
 import { GenerativeResponse } from "./generative-response";
 import type { RenderedBlock } from "@agentconnect/schemas/generative";
 import { Button } from "./button";
 import { Citations, type Citation } from "./citations";
 import { ToolTraces, type ToolTrace } from "./tool-studio";
+import { VoiceControls } from "./voice-controls";
+import { HandoffPanel } from "./handoff-panel";
 import { streamChat } from "./agent-client";
 function diagnosticHint(code: string): string {
   switch (code) {
@@ -47,6 +55,11 @@ export function ChatPanel({
       tools?: ToolTrace[];
     }[]
   >([]);
+  const [handoffOpen, setHandoffOpen] = useState(false);
+  const handoffStatus = useCallback(
+    (open: boolean) => setHandoffOpen(open),
+    [],
+  );
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -60,7 +73,7 @@ export function ChatPanel({
     bottom.current?.scrollIntoView({ block: "nearest" });
   }, [messages]);
   async function send(text: string) {
-    if (!text.trim() || busy) return;
+    if (!text.trim() || busy || handoffOpen) return;
     setBusy(true);
     setError("");
     setInput("");
@@ -158,6 +171,7 @@ export function ChatPanel({
     setMessages([]);
     setError("");
     setTraceId("");
+    setHandoffOpen(false);
   }
   return (
     <section className="panel chat-panel">
@@ -223,6 +237,30 @@ export function ChatPanel({
           {error}
         </p>
       )}
+      <VoiceControls
+        text={
+          [...messages].reverse().find((m) => m.role === "assistant")
+            ?.content ?? ""
+        }
+        onTranscript={setInput}
+        disabled={busy || handoffOpen}
+      />
+      {conversation.current && (
+        <HandoffPanel
+          key={conversation.current}
+          endpoint={
+            endpoint.startsWith("/public")
+              ? endpoint.replace(
+                  /\/chat$/,
+                  "/conversations/" + conversation.current + "/handoff",
+                )
+              : "/conversations/" + conversation.current + "/handoff"
+          }
+          guestToken={guest.current}
+          busy={busy}
+          onStatus={handoffStatus}
+        />
+      )}
       <form onSubmit={submit} className="chat-composer">
         <label className="sr-only" htmlFor={`chat-${name}`}>
           Message
@@ -234,7 +272,7 @@ export function ChatPanel({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           maxLength={12000}
-          disabled={busy}
+          disabled={busy || handoffOpen}
         />
         {busy ? (
           <Button
@@ -247,7 +285,7 @@ export function ChatPanel({
         ) : (
           <Button
             type="submit"
-            disabled={!input.trim()}
+            disabled={!input.trim() || handoffOpen}
             aria-label="Send message"
           >
             <ArrowUp size={17} />
