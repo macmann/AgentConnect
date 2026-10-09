@@ -27,6 +27,7 @@ export interface StreamData {
   guestToken?: string;
   text?: string;
   message?: string;
+  code?: string;
   status?: string;
   traceId?: string;
   citations?: Citation[];

@@ -350,6 +350,7 @@ async function streamChat(
         ? e.code
         : "RUNTIME_ERROR";
     span.setStatus({ code: SpanStatusCode.ERROR, message: errorCode });
+    r.log.warn({ runId, traceId, code: errorCode }, "Agent chat failed");
   } finally {
     clearTimeout(timer);
     clearInterval(heartbeat);
