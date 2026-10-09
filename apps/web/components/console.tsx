@@ -32,6 +32,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { Button } from "./button";
+import { WorkflowStudio } from "./workflow-studio";
 import { ToolStudio } from "./tool-studio";
 import { KnowledgeStudio } from "./knowledge-studio";
 import { AgentStudio, Models, Conversations } from "./agent-studio";
@@ -51,7 +52,13 @@ async function api<T>(
   if (!response.ok) throw new Error(data.error ?? "Request failed");
   return data as T;
 }
-type User = { id: string; name: string; email: string; verified: boolean };
+type User = {
+  id: string;
+  name: string;
+  email: string;
+  verified: boolean;
+  verificationRequired?: boolean;
+};
 type Organization = { id: string; name: string };
 type Workspace = { id: string; name: string; role: string };
 type Member = { id: string; name: string; email: string; role: string };
@@ -425,6 +432,7 @@ function Studio() {
             { label: "Models", icon: Boxes },
             { label: "Knowledge", icon: BookOpen },
             { label: "Tools", icon: Boxes },
+            { label: "Workflows", icon: Workflow },
             { label: "Conversations", icon: Activity },
             { label: "Members", icon: Users },
             { label: "Secrets", icon: KeyRound },
@@ -486,7 +494,7 @@ function Studio() {
         </header>
         <main className="content">
           {tokenPanel}
-          {!user.data.verified && (
+          {!user.data.verified && user.data.verificationRequired !== false && (
             <div className="verify-banner">
               <ShieldCheck size={18} />
               <span>
@@ -539,13 +547,24 @@ function Studio() {
               {notice}
             </div>
           )}
-          {["Agents", "Models", "Conversations", "Knowledge", "Tools"].includes(
-            view,
-          ) &&
+          {[
+            "Agents",
+            "Models",
+            "Conversations",
+            "Knowledge",
+            "Tools",
+            "Workflows",
+          ].includes(view) &&
             (!wid ? (
               <p className="empty">Choose or create a workspace first.</p>
             ) : view === "Agents" ? (
               <AgentStudio
+                key={wid}
+                workspaceId={wid}
+                role={currentWorkspace?.role ?? "viewer"}
+              />
+            ) : view === "Workflows" ? (
+              <WorkflowStudio
                 key={wid}
                 workspaceId={wid}
                 role={currentWorkspace?.role ?? "viewer"}

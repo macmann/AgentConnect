@@ -14,6 +14,10 @@ const schema = z.object({
   S3_BUCKET: z.string().min(3),
   TEMPORAL_ADDRESS: z.string().min(1),
   SMTP_URL: z.url().optional(),
+  REQUIRE_EMAIL_VERIFICATION: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
   MODEL_ALLOWED_HOSTS: z
     .string()
     .default(
@@ -28,6 +32,8 @@ const schema = z.object({
   MAIL_FROM: z.email().default("noreply@agentconnect.local"),
 });
 export const config = schema.parse(process.env);
+if (config.NODE_ENV === "production" && !config.REQUIRE_EMAIL_VERIFICATION)
+  throw new Error("Production requires email verification");
 if (
   config.NODE_ENV === "production" &&
   (!config.SMTP_URL || !config.WEB_ORIGIN.startsWith("https://"))

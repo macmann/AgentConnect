@@ -5,6 +5,7 @@ if (!existsSync(".env")) {
   writeFileSync(
     ".env",
     `NODE_ENV=development
+REQUIRE_EMAIL_VERIFICATION=false
 PORT=4000
 WEB_ORIGIN=http://localhost:3000
 NEXT_PUBLIC_API_URL=http://localhost:4000

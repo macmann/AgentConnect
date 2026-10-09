@@ -1,3 +1,5 @@
+import { registerWorkflowRoutes } from "./workflows.js";
+import { WorkflowError } from "./workflow-runtime.js";
 import { registerToolRoutes } from "./tools.js";
 import { ToolError } from "./tool-runtime.js";
 import { registerKnowledgeRoutes } from "./knowledge.js";
@@ -45,14 +47,8 @@ import {
   checkPassword,
   encrypt,
 } from "./security.js";
-export class HttpError extends Error {
-  constructor(
-    public statusCode: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+import { HttpError } from "./http-error.js";
+export { HttpError } from "./http-error.js";
 const deny = () => {
   throw new HttpError(403, "Access denied");
 };
@@ -206,6 +202,8 @@ export async function buildApp(
       throw new HttpError(403, "Invalid request origin");
   });
   app.setErrorHandler((error, _r, reply) => {
+    if (error instanceof WorkflowError)
+      return reply.code(400).send({ error: error.code });
     if (error instanceof ToolError)
       return reply.code(400).send({ error: error.code });
     if (error instanceof KnowledgeError)
@@ -355,6 +353,7 @@ export async function buildApp(
         email: u.email,
         name: u.name,
         verified: !!u.verified_at,
+        verificationRequired: config.REQUIRE_EMAIL_VERIFICATION,
       };
     },
   );
@@ -374,6 +373,7 @@ export async function buildApp(
       email: u.email,
       name: u.name,
       verified: !!u.verified_at,
+      verificationRequired: config.REQUIRE_EMAIL_VERIFICATION,
     };
   });
   app.post("/auth/verification", async (r) => {
@@ -424,7 +424,7 @@ export async function buildApp(
   });
   app.post("/organizations", async (r, reply) => {
     const u = await actor(r);
-    if (!u.verified_at)
+    if (config.REQUIRE_EMAIL_VERIFICATION && !u.verified_at)
       throw new HttpError(
         403,
         "Verify your email before creating an organization",
@@ -509,7 +509,8 @@ export async function buildApp(
   });
   app.post("/invitations/accept", async (r) => {
     const u = await actor(r);
-    if (!u.verified_at) throw new HttpError(403, "Verify your email first");
+    if (config.REQUIRE_EMAIL_VERIFICATION && !u.verified_at)
+      throw new HttpError(403, "Verify your email first");
     const data = tokenInput.parse(r.body);
     await sql.begin(async (tx) => {
       const [inv] =
@@ -603,6 +604,7 @@ export async function buildApp(
   });
   await registerKnowledgeRoutes(app, options.embeddingFactory);
   await registerToolRoutes(app);
+  await registerWorkflowRoutes(app);
   await registerAgentRoutes(
     app,
     options.providerFactory,

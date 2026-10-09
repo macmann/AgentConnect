@@ -86,3 +86,5 @@ flowchart LR
 ```
 
 Ingestion currently uses PostgreSQL leases/outbox jobs. Temporal remains provisioned and connectivity-tested for later durable graph workflows. Website and model destinations have separate server allowlists and share the inherited cloud outbound proxy.
+
+Phase 4 adds a React Flow canvas and workspace workflow API. Immutable graphs reference published agent versions; the worker compiles them to LangGraph with PostgreSQL checkpoints in a dedicated schema. SQL leases and guarded status changes coordinate execution, cancellation and approval/resume. Node traces persist values, durations, reported usage and citations; tool executions also reference their workflow run and node. See workflows.md for graph constraints and recovery semantics.

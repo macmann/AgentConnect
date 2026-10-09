@@ -41,3 +41,15 @@ Private host exceptions in browser tests are temporary and must be removed from 
 See tools.md. Tool destinations default to denied: TOOL_ALLOWED_HOSTS for HTTPS, TOOL_PRIVATE_HOSTS for trusted private host:port exceptions, TOOL_DATABASE_HOSTS for explicit PostgreSQL host:port grants. Store integration credentials in encrypted workspace secrets. Restart the API after changing server grants. Cloud outbound access must also permit the destination.
 
 The new browser tooling scenario uses an explicit fixture on 127.0.0.1:4547. For all four browser scenarios, temporarily start the API with MODEL_PRIVATE_HOSTS=127.0.0.1:4545,127.0.0.1:4546,127.0.0.1:4547, KNOWLEDGE_PRIVATE_HOSTS=127.0.0.1:4546 and TOOL_PRIVATE_HOSTS=127.0.0.1:4547. The worker needs the model/knowledge fixture exceptions only. Restart normal processes without these grants after testing.
+
+Phase 4 requires migration 0005 and a running worker for workflows. The PostgreSQL role must be able to initialize the workflow_checkpoints schema on first execution; production deployments can provision it ahead of time and restrict the runtime role afterward. Restart workers with each runtime release. Approval waiting is persisted, and the next approved attempt resumes the checkpoint. Reads can repeat after a crash before checkpoint commit; this is not an exactly-once workflow engine.
+
+The fifth browser scenario uses a workflow provider fixture on 127.0.0.1:4548. Include that exact host:port in temporary MODEL_PRIVATE_HOSTS for both API and worker when running the browser suite, and remove the fixture grants afterward. Stop the worker for the API test suite so it cannot claim fixture jobs or runs.
+
+## Local email verification
+
+For development without an inbox, set `REQUIRE_EMAIL_VERIFICATION=false` in the repository-root `.env`, restart `pnpm dev`, and refresh the browser. This permits organization creation and email-bound invitation acceptance for existing unverified accounts; it does not mark their email addresses verified. Newly generated local `.env` files use this setting. Existing `.env` files are preserved by `pnpm local:init`, so add the setting yourself if needed. The API defaults to requiring verification when the setting is absent, and refuses to start in production with it disabled.
+
+To enable verification, set `REQUIRE_EMAIL_VERIFICATION=true`, configure `SMTP_URL` and `MAIL_FROM` in `.env` (or your deployment's secure environment settings), and restart both API and worker. The worker delivers the persisted email outbox. The default development SMTP service is Mailpit: messages appear in its local capture inbox rather than your personal mailbox. On your own machine, open `http://localhost:8025` to read captured verification emails. Real SMTP credentials belong in secure environment settings and must not be committed. SMTP administration through the product UI is not implemented yet.
+
+API tests that exercise the required-verification flow can be run with `REQUIRE_EMAIL_VERIFICATION=true pnpm test`. Browser foundation tests still verify the real SMTP capture and verification flow even when local bypass is enabled.

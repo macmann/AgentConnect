@@ -55,9 +55,21 @@ Acceptance is exercised with explicit HTTP protocol fixtures: upload, background
 
 Acceptance: an agent uses explicitly attached read-only tools and shows saved execution traces. See tools.md for supported behavior and limits; the broader product specification is not fully implemented by this slice.
 
+## Phase 4 — Visual multi-agent workflows
+
+- [x] React Flow canvas, node properties, structured templates, undo/redo, group copy/paste, auto-layout, and graph validation.
+- [x] Tenant-scoped drafts, optimistic revisions, immutable published versions, restoration and per-run snapshots.
+- [x] LangGraph compilation for Input, Output, Agent, Tool, Router, Condition, Parallel, Merge, and Human Approval.
+- [x] Published-agent handoffs, deterministic branches, concurrent structured joins, and durable PostgreSQL checkpoints.
+- [x] Authorized approval/edit/reject, recovery, cancellation, bounded execution and persisted node/usage/citation/tool traces.
+- [ ] Live hosted-provider acceptance and production retention/process-management review.
+- [ ] Richer node catalog, nested branching, configurable retry policies, workflow public deployment, and collaborative editing.
+
+See workflows.md for supported graph shapes and runtime limits.
+
 ## Subsequent phases
 
-Follow product-spec.md phases 4–10: LangGraph visual workflows; enterprise operations; generative experience; channels/voice; evaluations; enterprise connectors; hardening. Complete a compiling, tested, usable slice before starting the next.
+Follow product-spec.md phases 5–10: enterprise operations; generative experience; channels/voice; evaluations; enterprise connectors; hardening. Complete a compiling, tested, usable slice before starting the next.
 
 ## Risks and dependencies
 

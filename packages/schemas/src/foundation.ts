@@ -46,6 +46,10 @@ export const capabilities = [
   "agent:delete",
   "agent:execute",
   "conversation:view",
+  "workflow:manage",
+  "workflow:read",
+  "workflow:execute",
+  "workflow:approve",
   "tool:manage",
   "tool:read",
   "tool:execute",
@@ -59,6 +63,9 @@ const grants: Record<Role, readonly Capability[]> = {
   org_admin: capabilities,
   workspace_admin: capabilities.filter((c) => c !== "workspace:create"),
   builder: [
+    "workflow:manage",
+    "workflow:read",
+    "workflow:execute",
     "tool:read",
     "tool:execute",
     "knowledge:manage",
@@ -71,8 +78,19 @@ const grants: Record<Role, readonly Capability[]> = {
     "agent:execute",
     "conversation:view",
   ],
-  operator: ["conversation:view", "knowledge:read", "tool:read"],
-  analyst: ["audit:view", "knowledge:read", "knowledge:retrieve"],
+  operator: [
+    "workflow:read",
+    "workflow:approve",
+    "conversation:view",
+    "knowledge:read",
+    "tool:read",
+  ],
+  analyst: [
+    "workflow:read",
+    "audit:view",
+    "knowledge:read",
+    "knowledge:retrieve",
+  ],
   viewer: [],
 };
 export function permitted(role: Role, capability: Capability) {

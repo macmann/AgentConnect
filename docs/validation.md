@@ -65,3 +65,26 @@ Validated on 2026-10-09 in the supplied cloud environment.
 No live model tool selection, Brave account request, third-party MCP server, external production PostgreSQL connection or production load/security acceptance was validated. Credentials remain absent and cloud provider/tool egress is not published. tools.md documents the supported read-only slice and the unimplemented mutation/approval, additional database, OAuth, MCP transport and native function-call extensions. Updated startup instructions were saved as an environment configuration draft; publication/fresh-task restoration remain unverified. Temporary fixture destination grants are removed from normal startup.
 
 Phase 3 implementation is submitted for review on `feat/safe-tools-mcp`, based on the merged Phase 0–2 main branch.
+
+## Phase 4 visual workflows
+
+Validated on 2026-10-09 after pulling merged Phase 3 main (`2712343`), on `feat/visual-workflows`.
+
+- Frozen-lockfile installation and repeated migration passed; existing local credentials were preserved.
+- `pnpm lint` and `pnpm typecheck` passed across all eight packages.
+- `pnpm test`: 66 tests passed, no failures, skips or cancellations. Eleven workflow checks cover graph structure, tenant/role boundaries, optimistic revisions, immutable versions, pinned agent handoffs, selected conditional branches, concurrent joins with unequal paths, persisted approval and saver restart/resume, tool linkage, lease recovery, sanitized failures, and queued/running cancellation. The running cancellation check verifies that the actual provider signal is aborted and terminal run/node status is persisted.
+- `pnpm build`: all eight targets passed, including the Next.js production build and compiled API/worker. A worker/server import coupling found during startup was corrected by extracting shared model helpers; the compiled workflow worker starts successfully.
+- `pnpm test:e2e`: all five browser scenarios passed against compiled API/worker and the production web build. The new scenario creates a visual review workflow, saves/validates/publishes it, executes a pinned version, edits approval input, resumes the second agent, and verifies the final output and visible canvas nodes. Desktop/mobile screenshots were inspected; mobile overflow checks passed.
+- Workflow tests use actual PostgreSQL checkpoints and explicit local HTTP/provider fixtures. Hosted-provider acceptance remains pending; these results do not certify production operations or the full specification's richer node catalog.
+- Phase 4 startup guidance was saved to the cloud environment draft. Publication and a new-task restoration check have not occurred.
+
+See workflows.md for supported graph shapes, execution bounds, at-least-once recovery, and remaining extensions.
+
+## Development email verification setting
+
+The API exposes `verificationRequired` separately from the actual verified-email status. Local initialization sets `REQUIRE_EMAIL_VERIFICATION=false`; absent configuration still requires verification, and production rejects a disabled requirement. Existing unverified accounts can create organizations and accept email-bound invitations when the development bypass is enabled.
+
+- `REQUIRE_EMAIL_VERIFICATION=true pnpm test`: 68 passed, including bypass/re-enable behavior, unchanged verification status, and production startup rejection.
+- Lint, typecheck and all eight build targets passed.
+- The focused browser scenario passed against compiled API and production web output with local bypass enabled: the verification banner is absent, an unverified account creates an organization, and its verification timestamp remains null. That scenario explicitly skips when a server requires verification.
+- This cloud instance's ignored `.env` now disables the development verification gate. No account verification timestamps or existing SMTP credentials were changed. SMTP and Mailpit configuration are documented in deployment.md.

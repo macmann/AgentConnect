@@ -39,6 +39,8 @@ export type ToolContext = {
   publicAccess?: boolean;
   userId?: string;
   runId?: string;
+  workflowRunId?: string;
+  workflowNodeId?: string;
 };
 export function validateToolUrl(url: string) {
   try {
@@ -473,7 +475,7 @@ export async function executeTool(
         );
   const executionId = randomUUID();
   const started = performance.now();
-  await sql`INSERT INTO tool_executions(id,organization_id,workspace_id,tool_id,run_id,user_id,tool_name,tool_revision,arguments,status) VALUES (${executionId},${context.organizationId},${context.workspaceId},${toolId},${context.runId ?? null},${context.userId ?? null},${tool.name},${tool.revision},${sql.json(redact(args, [credential ?? ""]) as Record<string, never>)},'running')`;
+  await sql`INSERT INTO tool_executions(id,organization_id,workspace_id,tool_id,run_id,user_id,tool_name,tool_revision,arguments,status,workflow_run_id,workflow_node_id) VALUES (${executionId},${context.organizationId},${context.workspaceId},${toolId},${context.runId ?? null},${context.userId ?? null},${tool.name},${tool.revision},${sql.json(redact(args, [credential ?? ""]) as Record<string, never>)},'running',${context.workflowRunId ?? null},${context.workflowNodeId ?? null})`;
   const timeout = AbortSignal.timeout(tool.timeout_ms);
   const combined = AbortSignal.any([signal, timeout]);
   try {
