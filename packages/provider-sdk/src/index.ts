@@ -33,6 +33,7 @@ export class ProviderError extends Error {
   constructor(
     public code: string,
     public retryable = false,
+    public httpStatus?: number,
   ) {
     super("Model provider request failed");
   }
@@ -286,6 +287,7 @@ export function createProvider(
                 ? "RATE_LIMITED"
                 : "PROVIDER_HTTP_ERROR",
             response.status === 429 || response.status >= 500,
+            response.status,
           );
         for await (const frame of decodeSSE(response.body)) {
           if (frame.data === "[DONE]") {
