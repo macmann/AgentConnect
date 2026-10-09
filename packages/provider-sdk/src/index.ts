@@ -99,7 +99,7 @@ export function safeHttpTransport(
   headers: Record<string, string>,
   body: unknown,
   signal: AbortSignal,
-  method?: "GET" | "POST",
+  method?: "GET" | "POST" | "DELETE",
 ) => Promise<TransportResponse> {
   return async (url, headers, body, signal, method = "POST") => {
     const u = new URL(url);
@@ -135,7 +135,7 @@ export function safeHttpTransport(
       const response = await request(url, {
         method,
         headers,
-        body: method === "GET" ? undefined : JSON.stringify(body),
+        body: method === "POST" ? JSON.stringify(body) : undefined,
         signal,
         headersTimeout: 30000,
         bodyTimeout: 60000,

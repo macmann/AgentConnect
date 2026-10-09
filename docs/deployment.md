@@ -35,3 +35,9 @@ Restart development processes after changing .env. Local SMTP uses 127.0.0.1 to 
 The worker now runs independent SMTP, knowledge ingestion and raw-object cleanup loops. API and worker must share DATABASE_URL, S3 settings, MASTER_KEY, MODEL_ALLOWED_HOSTS and website destination settings. Restart both after configuration changes. Embedding credentials belong to encrypted workspace secrets, not a global provider-key fallback. Read rag.md for model dimensions, source formats, limits, job recovery and public-knowledge access.
 
 Private host exceptions in browser tests are temporary and must be removed from normal startup. Source-processing API tests inject explicit embedding fixtures and should run with the ingestion worker stopped, preventing it from claiming those test jobs. Browser tests require the actual worker running.
+
+## Read-only tools and MCP
+
+See tools.md. Tool destinations default to denied: TOOL_ALLOWED_HOSTS for HTTPS, TOOL_PRIVATE_HOSTS for trusted private host:port exceptions, TOOL_DATABASE_HOSTS for explicit PostgreSQL host:port grants. Store integration credentials in encrypted workspace secrets. Restart the API after changing server grants. Cloud outbound access must also permit the destination.
+
+The new browser tooling scenario uses an explicit fixture on 127.0.0.1:4547. For all four browser scenarios, temporarily start the API with MODEL_PRIVATE_HOSTS=127.0.0.1:4545,127.0.0.1:4546,127.0.0.1:4547, KNOWLEDGE_PRIVATE_HOSTS=127.0.0.1:4546 and TOOL_PRIVATE_HOSTS=127.0.0.1:4547. The worker needs the model/knowledge fixture exceptions only. Restart normal processes without these grants after testing.

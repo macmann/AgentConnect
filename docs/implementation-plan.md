@@ -42,9 +42,22 @@ Acceptance: a builder creates an agent, chats using a configured real model, pub
 
 Acceptance is exercised with explicit HTTP protocol fixtures: upload, background ingestion, retrieval, attachment and cited answers in playground/hosted chat. Live provider acceptance remains pending. Limits and parser/production extensions are described in rag.md; checkboxes do not certify enterprise production readiness.
 
+## Phase 3 — Tooling
+
+- [x] Tenant-scoped registry, administrator-managed destinations/credentials, builder testing and explicit public-access policies.
+- [x] Fixed-endpoint HTTP GET adapter with bounded parameters, redaction, SSRF checks and redirect rejection.
+- [x] PostgreSQL tool with fixed table/columns, parameterized equality filters, read-only transactions, row/time limits and least-privilege role checks.
+- [x] Provider-neutral search interface with Brave Search, strict safe search, bounded results and exact domain filtering.
+- [x] Official SDK MCP client, bounded cached tool/resource/prompt discovery, reviewed read-only selection, schema drift checks and connector enable/disable.
+- [x] Bounded JSON tool planning, agent attachment, result grounding, combined usage and persisted execution traces in playground/history.
+- [ ] Live model, Brave Search and third-party MCP acceptance with credentials and approved egress.
+- [ ] Mutating HTTP tools with approval/resume, additional databases/providers, OAuth, richer MCP transports and native function-call loops.
+
+Acceptance: an agent uses explicitly attached read-only tools and shows saved execution traces. See tools.md for supported behavior and limits; the broader product specification is not fully implemented by this slice.
+
 ## Subsequent phases
 
-Follow product-spec.md phases 3–10: safe tools/MCP; LangGraph visual workflows; enterprise operations; generative experience; channels/voice; evaluations; enterprise connectors; hardening. Complete a compiling, tested, usable slice before starting the next.
+Follow product-spec.md phases 4–10: LangGraph visual workflows; enterprise operations; generative experience; channels/voice; evaluations; enterprise connectors; hardening. Complete a compiling, tested, usable slice before starting the next.
 
 ## Risks and dependencies
 

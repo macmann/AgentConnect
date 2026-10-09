@@ -30,9 +30,9 @@ flowchart TD
   Runtime --> OTLP
 ```
 
-`packages/provider-sdk` owns provider protocols and approved HTTP transport. `packages/agent-sdk` owns provider-neutral single-agent execution and prompt rendering. `packages/rag` owns parsing, chunking and the retrieval/citation boundary. `apps/worker` delivers the durable SMTP outbox, ingests knowledge sources and purges deleted source objects. LangGraph, tools/MCP and AI workflow workers in the diagram remain future boundaries.
+`packages/provider-sdk` owns provider protocols and approved HTTP transport. `packages/agent-sdk` owns provider-neutral single-agent execution and prompt rendering. `packages/rag` owns parsing, chunking and the retrieval/citation boundary. `apps/worker` delivers the durable SMTP outbox, ingests knowledge sources and purges deleted source objects. Phase 3 tool policies, MCP client and agent tool orchestration live in tested API modules (`tools.ts`, `tool-runtime.ts`, `web-search.ts`). LangGraph and AI workflow workers in the diagram remain future boundaries.
 
-Future apps: agent-runtime, ingestion, widget. Future packages: auth, ui, tool-sdk, mcp, rag, observability, security, shared, config. Extract modules when there is tested behavior to share; do not create empty service placeholders.
+Future apps: agent-runtime, ingestion, widget. Future extractions: auth, ui, tool-sdk, mcp, observability, security, shared, config. Extract modules when there is tested behavior to share; do not create empty service placeholders.
 
 ## Initial database ERD
 

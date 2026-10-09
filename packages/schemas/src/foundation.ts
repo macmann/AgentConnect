@@ -46,6 +46,9 @@ export const capabilities = [
   "agent:delete",
   "agent:execute",
   "conversation:view",
+  "tool:manage",
+  "tool:read",
+  "tool:execute",
   "knowledge:manage",
   "knowledge:read",
   "knowledge:retrieve",
@@ -56,6 +59,8 @@ const grants: Record<Role, readonly Capability[]> = {
   org_admin: capabilities,
   workspace_admin: capabilities.filter((c) => c !== "workspace:create"),
   builder: [
+    "tool:read",
+    "tool:execute",
     "knowledge:manage",
     "knowledge:read",
     "knowledge:retrieve",
@@ -66,7 +71,7 @@ const grants: Record<Role, readonly Capability[]> = {
     "agent:execute",
     "conversation:view",
   ],
-  operator: ["conversation:view", "knowledge:read"],
+  operator: ["conversation:view", "knowledge:read", "tool:read"],
   analyst: ["audit:view", "knowledge:read", "knowledge:retrieve"],
   viewer: [],
 };

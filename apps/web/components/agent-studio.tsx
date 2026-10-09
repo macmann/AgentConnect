@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Button } from "./button";
 import { Citations, type Citation } from "./citations";
+import { ToolTraces, type ToolTrace } from "./tool-studio";
 import { ChatPanel } from "./chat-panel";
 import { requestJson } from "./agent-client";
 type Model = {
@@ -39,6 +40,7 @@ type Prompt = {
 };
 type Config = {
   schemaVersion: 1;
+  tools: { toolIds: string[]; maxCalls: number };
   rag: {
     knowledgeBaseIds: string[];
     topK: number;
@@ -106,6 +108,7 @@ function emptyDraft(modelId: string): Draft {
     revision: 1,
     config: {
       schemaVersion: 1,
+      tools: { toolIds: [], maxCalls: 3 },
       rag: {
         knowledgeBaseIds: [],
         topK: 5,
@@ -403,6 +406,14 @@ export function AgentStudio({
     queryKey: ["models", workspaceId],
     queryFn: () => requestJson<Model[]>(`/workspaces/${workspaceId}/models`),
   });
+  const tools = useQuery({
+    queryKey: ["tools", workspaceId],
+    queryFn: () =>
+      requestJson<
+        { id: string; name: string; enabled: boolean; public_access: boolean }[]
+      >(`/workspaces/${workspaceId}/tools`),
+    enabled: canBuild,
+  });
   const knowledge = useQuery({
     queryKey: ["knowledge", workspaceId],
     queryFn: () =>
@@ -455,6 +466,7 @@ export function AgentStudio({
         publicDescription: a.public_description,
         config: {
           ...a.draft_config,
+          tools: a.draft_config.tools ?? { toolIds: [], maxCalls: 3 },
           rag: a.draft_config.rag ?? {
             knowledgeBaseIds: [],
             topK: 5,
@@ -647,6 +659,59 @@ export function AgentStudio({
                       />
                     </label>
                   </div>
+                  <h4>Attached tools</h4>
+                  <p className="muted">
+                    Agents select from these approved read-only tools. Public
+                    deployments require public access on every attachment. Tool
+                    definitions use current workspace settings.
+                  </p>
+                  {tools.error && (
+                    <p className="error">{tools.error.message}</p>
+                  )}
+                  {tools.data
+                    ?.filter((t) => t.enabled)
+                    .map((t) => (
+                      <label className="checkbox-row" key={t.id}>
+                        <input
+                          type="checkbox"
+                          checked={draft.config.tools.toolIds.includes(t.id)}
+                          onChange={(e) =>
+                            configField("tools", {
+                              ...draft.config.tools,
+                              toolIds: e.target.checked
+                                ? [...draft.config.tools.toolIds, t.id]
+                                : draft.config.tools.toolIds.filter(
+                                    (id) => id !== t.id,
+                                  ),
+                            })
+                          }
+                        />
+                        {t.name} ·{" "}
+                        {t.public_access ? "Public access" : "Workspace only"}
+                      </label>
+                    ))}
+                  {!tools.data?.length && (
+                    <p className="muted">
+                      Ask a workspace administrator to register tools in Tools.
+                    </p>
+                  )}
+                  {!!draft.config.tools.toolIds.length && (
+                    <label>
+                      Maximum tool calls per response
+                      <input
+                        type="number"
+                        min={1}
+                        max={5}
+                        value={draft.config.tools.maxCalls}
+                        onChange={(e) =>
+                          configField("tools", {
+                            ...draft.config.tools,
+                            maxCalls: Number(e.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                  )}
                   <h4>Attached knowledge</h4>
                   <p className="muted">
                     Knowledge uses current ready sources. Public deployments
@@ -1165,6 +1230,12 @@ export function Conversations({ workspaceId }: { workspaceId: string }) {
       >(`/conversations/${selected}/messages`),
     enabled: !!selected,
   });
+  const toolTraces = useQuery({
+    queryKey: ["conversation-tools", selected],
+    queryFn: () =>
+      requestJson<ToolTrace[]>(`/conversations/${selected}/tool-executions`),
+    enabled: !!selected,
+  });
   const rows = [...pages, ...(conversations.data ?? [])];
   return (
     <section className="panel">
@@ -1207,6 +1278,7 @@ export function Conversations({ workspaceId }: { workspaceId: string }) {
           )}
         </div>
         <div className="conversation-detail">
+          <ToolTraces traces={toolTraces.data ?? []} />
           {messages.isPending && selected && <p>Loading messages…</p>}
           {messages.error && <p className="error">{messages.error.message}</p>}
           {messages.data?.map((m) => (

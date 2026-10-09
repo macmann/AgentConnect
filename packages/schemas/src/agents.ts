@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentTools } from "./tools.js";
 import { ragConfig } from "./knowledge.js";
 export const providerNames = [
   "openai",
@@ -36,6 +37,7 @@ export const promptSchema = z.object({
 export const agentConfig = z.object({
   schemaVersion: z.literal(1).default(1),
   rag: ragConfig,
+  tools: agentTools,
   category: z.enum(["unstructured", "structured", "hybrid"]).default("hybrid"),
   modelId: z.uuid(),
   prompt: promptSchema.default({

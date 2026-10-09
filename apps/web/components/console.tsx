@@ -32,6 +32,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { Button } from "./button";
+import { ToolStudio } from "./tool-studio";
 import { KnowledgeStudio } from "./knowledge-studio";
 import { AgentStudio, Models, Conversations } from "./agent-studio";
 const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -423,6 +424,7 @@ function Studio() {
             { label: "Agents", icon: Sparkles },
             { label: "Models", icon: Boxes },
             { label: "Knowledge", icon: BookOpen },
+            { label: "Tools", icon: Boxes },
             { label: "Conversations", icon: Activity },
             { label: "Members", icon: Users },
             { label: "Secrets", icon: KeyRound },
@@ -537,11 +539,19 @@ function Studio() {
               {notice}
             </div>
           )}
-          {["Agents", "Models", "Conversations", "Knowledge"].includes(view) &&
+          {["Agents", "Models", "Conversations", "Knowledge", "Tools"].includes(
+            view,
+          ) &&
             (!wid ? (
               <p className="empty">Choose or create a workspace first.</p>
             ) : view === "Agents" ? (
               <AgentStudio
+                key={wid}
+                workspaceId={wid}
+                role={currentWorkspace?.role ?? "viewer"}
+              />
+            ) : view === "Tools" ? (
+              <ToolStudio
                 key={wid}
                 workspaceId={wid}
                 role={currentWorkspace?.role ?? "viewer"}
