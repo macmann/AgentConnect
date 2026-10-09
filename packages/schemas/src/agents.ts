@@ -14,7 +14,7 @@ export const modelInput = z.object({
   baseUrl: z.url().max(500).optional(),
   secretId: z.uuid().nullable().default(null),
   contextWindow: z.number().int().min(256).max(2000000).default(32768),
-  maxOutputTokens: z.number().int().min(1).max(32768).default(4096),
+  maxOutputTokens: z.number().int().min(1).max(2000000).default(4096),
   capabilities: z
     .object({
       streaming: z.literal(true).default(true),
@@ -55,7 +55,7 @@ export const agentConfig = z.object({
   }),
   temperature: z.number().min(0).max(1).default(0.7),
   topP: z.number().min(0).max(1).nullable().default(null),
-  maxOutputTokens: z.number().int().min(1).max(32768).default(1024),
+  maxOutputTokens: z.number().int().min(1).max(2000000).default(1024),
   historyWindow: z.number().int().min(1).max(50).default(10),
   language: z.string().max(50).default("English"),
   timezone: z.string().max(100).default("UTC"),

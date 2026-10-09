@@ -595,3 +595,33 @@ test("Browser preflight permits authenticated model edit and delete methods", as
     );
   }
 });
+
+test("Models and agents support one million output tokens with model-specific validation", async () => {
+  const registered = await call("POST", `/workspaces/${workspace}/models`, {
+    name: "Large output model",
+    provider: "openai-compatible",
+    modelId: "large-output-fixture",
+    baseUrl: "https://api.openai.com/v1",
+    contextWindow: 2000000,
+    maxOutputTokens: 1000000,
+  });
+  assert.equal(registered.statusCode, 201);
+  const largeModelId = registered.json().id;
+  let largeAgentId: string | undefined;
+  try {
+    const created = await call("POST", `/workspaces/${workspace}/agents`, {
+      name: "Large output agent",
+      config: { modelId: largeModelId, maxOutputTokens: 1000000 },
+    });
+    assert.equal(created.statusCode, 201);
+    largeAgentId = created.json().id;
+    const invalid = await call("POST", `/workspaces/${workspace}/agents`, {
+      name: "Over limit",
+      config: { modelId: largeModelId, maxOutputTokens: 1000001 },
+    });
+    assert.equal(invalid.statusCode, 400);
+  } finally {
+    if (largeAgentId) await sql`DELETE FROM agents WHERE id=${largeAgentId}`;
+    await sql`DELETE FROM model_configurations WHERE id=${largeModelId}`;
+  }
+});

@@ -407,7 +407,7 @@ export function Models({
                 type="number"
                 defaultValue={editing?.max_output_tokens ?? 4096}
                 min={1}
-                max={32768}
+                max={2000000}
                 required
               />
             </label>
@@ -1077,7 +1077,11 @@ export function AgentStudio({
                       <input
                         type="number"
                         min={1}
-                        max={32768}
+                        max={
+                          models.data?.find(
+                            (m) => m.id === draft.config.modelId,
+                          )?.max_output_tokens ?? 2000000
+                        }
                         value={draft.config.maxOutputTokens}
                         onChange={(e) =>
                           configField("maxOutputTokens", Number(e.target.value))
