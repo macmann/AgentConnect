@@ -2000,3 +2000,81 @@ form small {
     font-size: 20px;
   }
 }
+.generative-blocks {
+  display: grid;
+  gap: 14px;
+  margin: 16px 0;
+}
+.generated-block {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+.generated-block h4 {
+  margin: 0 0 12px;
+}
+.generated-block p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.generated-chart {
+  width: 100%;
+  max-height: 300px;
+}
+.generated-kpi strong {
+  font-size: 30px;
+  color: #256c55;
+}
+.generated-alert {
+  border-left: 4px solid #6e9cad;
+}
+.generated-alert.warning {
+  border-left-color: #d6ad58;
+}
+.generated-alert.success {
+  border-left-color: #256c55;
+}
+.generated-form {
+  display: grid;
+  gap: 14px;
+}
+.generated-form label {
+  display: grid;
+  gap: 8px;
+}
+.generated-form input,
+.generated-form select,
+.generated-form textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  background: white;
+}
+.generated-form .generated-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.generated-checkbox input {
+  width: auto;
+}
+.generated-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.generative-settings {
+  padding: 20px;
+  display: grid;
+  gap: 12px;
+}
+.generative-settings h4,
+.generative-settings p {
+  margin: 0;
+}

@@ -32,6 +32,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { Button } from "./button";
+import { CollectedData } from "./collected-data";
 import { OperationsStudio } from "./operations-studio";
 import { WorkflowStudio } from "./workflow-studio";
 import { ToolStudio } from "./tool-studio";
@@ -442,6 +443,7 @@ function Studio() {
             { label: "Workflows", icon: Workflow },
             { label: "Conversations", icon: Activity },
             { label: "Operations", icon: Activity },
+            { label: "Collected data", icon: Layers },
             { label: "Members", icon: Users },
             { label: "Secrets", icon: KeyRound },
             { label: "Audit log", icon: Activity },
@@ -562,6 +564,7 @@ function Studio() {
             "Models",
             "Conversations",
             "Operations",
+            "Collected data",
             "Knowledge",
             "Tools",
             "Workflows",
@@ -575,6 +578,8 @@ function Studio() {
                 workspaceId={wid}
                 role={currentWorkspace?.role ?? "viewer"}
               />
+            ) : view === "Collected data" ? (
+              <CollectedData key={wid} workspaceId={wid} />
             ) : view === "Operations" ? (
               <OperationsStudio
                 key={wid}

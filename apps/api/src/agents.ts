@@ -1,3 +1,10 @@
+import {
+  responseEnvelope,
+  generativePrompt,
+  type RenderedBlock,
+} from "@agentconnect/schemas/generative";
+import { prepareArtifacts, type Artifact } from "./generative.js";
+import { deleteKnowledge } from "./knowledge-storage.js";
 import { queueRunWebhooks } from "./webhooks.js";
 import {
   modelSnapshotSchema,
@@ -257,6 +264,9 @@ async function streamChat(
     ...(guestToken ? { guestToken } : {}),
   });
   let output = "";
+  let uiBlocks: RenderedBlock[] = [];
+  let artifacts: Artifact[] = [];
+  const messageId = randomUUID();
   let inputTokens: number | null = null;
   let outputTokens: number | null = null;
   let status = "completed";
@@ -298,7 +308,12 @@ async function streamChat(
       model.contextWindow - c.maxOutputTokens,
     );
     const grounding =
-      (sources.length ? groundedPrompt(sources) : "") + toolsResult.grounding;
+      (sources.length ? groundedPrompt(sources) : "") +
+      toolsResult.grounding +
+      (c.generative.enabled
+        ? generativePrompt() +
+          ` Allowed block types: ${c.generative.allowedBlocks.join(",")}.`
+        : "");
     // Conservative UTF-8 byte budget avoids sending an oversized context to providers.
     if (
       Buffer.byteLength(JSON.stringify(messages)) +
@@ -318,7 +333,7 @@ async function streamChat(
       if (event.type === "token") {
         output += event.text;
         if (output.length > 256000) throw new ProviderError("OUTPUT_LIMIT");
-        write("token", { text: event.text });
+        if (!c.generative.enabled) write("token", { text: event.text });
       } else {
         inputTokens =
           event.inputTokens === null || toolsResult.inputTokens === null
@@ -328,6 +343,37 @@ async function streamChat(
           event.outputTokens === null || toolsResult.outputTokens === null
             ? null
             : event.outputTokens + toolsResult.outputTokens;
+      }
+    }
+    if (c.generative.enabled) {
+      try {
+        const envelope = responseEnvelope.parse(JSON.parse(output));
+        if (
+          envelope.blocks.some(
+            (b) => !c.generative.allowedBlocks.includes(b.type),
+          )
+        )
+          throw new Error("Unsupported component");
+        const prepared = await prepareArtifacts(
+          envelope,
+          conversation.workspace_id,
+          conversation.organization_id,
+        );
+        uiBlocks = prepared.blocks;
+        artifacts = prepared.artifacts;
+        if (controller.signal.aborted) throw new ProviderError("CANCELLED");
+        output = [
+          envelope.message,
+          ...envelope.blocks
+            .filter((b) => b.type === "text")
+            .map((b) => (b.type === "text" ? b.content : "")),
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+      } catch (error) {
+        output = "";
+        if (error instanceof ProviderError) throw error;
+        throw new ProviderError("INVALID_UI_RESPONSE");
       }
     }
     citations = citedSources(output, sources);
@@ -350,6 +396,12 @@ async function streamChat(
           e instanceof ToolError
         ? e.code
         : "RUNTIME_ERROR";
+    if (c.generative.enabled) {
+      output = "";
+      uiBlocks = [];
+      await Promise.allSettled(artifacts.map((a) => deleteKnowledge(a.key)));
+      artifacts = [];
+    }
     span.setStatus({ code: SpanStatusCode.ERROR, message: errorCode });
     r.log.warn(
       {
@@ -382,8 +434,10 @@ async function streamChat(
     reply.raw.off("close", disconnected);
     try {
       await sql.begin(async (tx) => {
-        if (output)
-          await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content,citations) VALUES (${randomUUID()},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'assistant',${output},${tx.json(citations.map((s) => ({ ...s })))})`;
+        if (output || uiBlocks.length)
+          await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content,citations,ui_blocks) VALUES (${messageId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'assistant',${output},${tx.json(citations.map((s) => ({ ...s })))},${tx.json(uiBlocks as never)})`;
+        for (const a of artifacts)
+          await tx`INSERT INTO generated_artifacts(id,organization_id,workspace_id,message_id,name,content_type,storage_key,byte_size) VALUES (${a.id},${conversation.organization_id},${conversation.workspace_id},${messageId},${a.name},${a.contentType},${a.key},${a.byteSize})`;
         await tx`UPDATE agent_runs SET status=${status},input_tokens=${inputTokens},output_tokens=${outputTokens},error_code=${errorCode},finished_at=now(),retrieval=${tx.json(sources.map((s) => ({ ...s })))},retrieval_ms=${retrievalMs} WHERE id=${runId}`;
         await tx`UPDATE agent_runs ar SET input_usd_per_million=p.input_usd_per_million,output_usd_per_million=p.output_usd_per_million FROM model_prices p WHERE ar.id=${runId} AND p.model_id=${model.id} AND p.workspace_id=${conversation.workspace_id}`;
         await queueRunWebhooks(tx, {
@@ -411,7 +465,15 @@ async function streamChat(
                     : c.fallbackResponse,
           status,
         });
-      else
+      else {
+        if (c.generative.enabled)
+          write("ui", {
+            messageId,
+            message: output,
+            blocks: uiBlocks,
+            actionsEnabled:
+              !conversation.deployment_id || c.generative.allowPublicForms,
+          });
         write("done", {
           runId,
           status,
@@ -420,7 +482,9 @@ async function streamChat(
           citations,
           retrievalMs,
         });
+      }
     } catch {
+      await Promise.allSettled(artifacts.map((a) => deleteKnowledge(a.key)));
       write("error", {
         code: "PERSISTENCE_ERROR",
         message: "The response could not be saved.",
@@ -849,7 +913,7 @@ export async function registerAgentRoutes(
     >`SELECT * FROM conversations WHERE id=${id(params(r).conversationId)}`;
     if (!c) throw new HttpError(404, "Conversation not found");
     await workspaceAccess(u.id, c.workspace_id, "conversation:view");
-    return sql`SELECT m.id,m.role,m.content,m.citations,m.created_at,ar.status,m.run_id FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${c.id} ORDER BY m.created_at,m.id`;
+    return sql`SELECT m.id,m.role,m.content,m.citations,m.ui_blocks,m.created_at,ar.status,m.run_id FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${c.id} ORDER BY m.created_at,m.id`;
   });
   app.post(
     "/agents/:agentId/chat",

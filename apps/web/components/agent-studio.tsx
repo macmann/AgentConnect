@@ -13,6 +13,11 @@ import { Button } from "./button";
 import { Citations, type Citation } from "./citations";
 import { ToolTraces, type ToolTrace } from "./tool-studio";
 import { ChatPanel } from "./chat-panel";
+import { GenerativeResponse } from "./generative-response";
+import {
+  blockNames,
+  type RenderedBlock,
+} from "@agentconnect/schemas/generative";
 import { MessageReview } from "./message-review";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
 import { AgentAttachments } from "./agent-attachments";
@@ -46,6 +51,11 @@ type Prompt = {
   advanced: string | null;
 };
 type Config = {
+  generative?: {
+    enabled: boolean;
+    allowedBlocks: (typeof blockNames)[number][];
+    allowPublicForms: boolean;
+  };
   schemaVersion: 1;
   tools: { toolIds: string[]; maxCalls: number };
   rag: {
@@ -835,6 +845,89 @@ export function AgentStudio({
                       />
                     </label>
                   </div>
+                  <section className="agent-attachments generative-settings">
+                    <h4>Generative responses</h4>
+                    <p className="muted">
+                      Let this agent choose charts, tables, forms and
+                      downloadable files. Responses use validated components;
+                      submissions require confirmation.
+                    </p>
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={draft.config.generative?.enabled ?? false}
+                        onChange={(e) =>
+                          configField("generative", {
+                            enabled: e.target.checked,
+                            allowedBlocks: draft.config.generative
+                              ?.allowedBlocks ?? [...blockNames],
+                            allowPublicForms:
+                              draft.config.generative?.allowPublicForms ??
+                              false,
+                          })
+                        }
+                      />
+                      Enable generative responses
+                    </label>
+                    {draft.config.generative?.enabled && (
+                      <>
+                        <fieldset>
+                          <legend>Allowed response components</legend>
+                          <div className="capabilities">
+                            {blockNames.map((name) => (
+                              <label className="checkbox-label" key={name}>
+                                <input
+                                  type="checkbox"
+                                  checked={draft.config.generative!.allowedBlocks.includes(
+                                    name,
+                                  )}
+                                  disabled={
+                                    draft.config.generative!.allowedBlocks
+                                      .length === 1 &&
+                                    draft.config.generative!.allowedBlocks.includes(
+                                      name,
+                                    )
+                                  }
+                                  onChange={(e) =>
+                                    configField("generative", {
+                                      ...draft.config.generative!,
+                                      allowedBlocks: e.target.checked
+                                        ? [
+                                            ...draft.config.generative!
+                                              .allowedBlocks,
+                                            name,
+                                          ]
+                                        : draft.config.generative!.allowedBlocks.filter(
+                                            (b) => b !== name,
+                                          ),
+                                    })
+                                  }
+                                />
+                                {name}
+                              </label>
+                            ))}
+                          </div>
+                        </fieldset>
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={draft.config.generative.allowPublicForms}
+                            onChange={(e) =>
+                              configField("generative", {
+                                ...draft.config.generative!,
+                                allowPublicForms: e.target.checked,
+                              })
+                            }
+                          />
+                          Allow confirmed form/action submissions in public chat
+                        </label>
+                        <p className="muted">
+                          Public collection is off by default. Publish a new
+                          version after changing this setting.
+                        </p>
+                      </>
+                    )}
+                  </section>
                   <AgentAttachments
                     kind="tools"
                     items={tools.data?.filter((t) => t.enabled) ?? []}
@@ -1413,6 +1506,7 @@ export function Conversations({
           content: string;
           status: string;
           citations: Citation[];
+          ui_blocks: RenderedBlock[];
         }[]
       >(`/conversations/${selected}/messages`),
     enabled: !!selected,
@@ -1557,6 +1651,13 @@ export function Conversations({
                 {m.role} · {m.status}
               </small>
               <div>{m.content}</div>
+              {m.ui_blocks?.length > 0 && (
+                <GenerativeResponse
+                  blocks={m.ui_blocks}
+                  messageId={m.id}
+                  interactive={false}
+                />
+              )}
               <Citations sources={m.citations ?? []} />
               {m.role === "assistant" && (
                 <MessageReview

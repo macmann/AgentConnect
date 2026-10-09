@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { generativeConfig } from "./generative.js";
 import { environments } from "./operations.js";
 import { agentTools } from "./tools.js";
 import { ragConfig } from "./knowledge.js";
@@ -39,6 +40,7 @@ export const promptSchema = z.object({
   advanced: z.string().max(24000).nullable().default(null),
 });
 export const agentConfig = z.object({
+  generative: generativeConfig,
   schemaVersion: z.literal(1).default(1),
   rag: ragConfig,
   tools: agentTools,

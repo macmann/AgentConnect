@@ -172,6 +172,7 @@ export const agentRuns = pgTable("agent_runs", {
 });
 
 export const messages = pgTable("messages", {
+  uiBlocks: jsonb("ui_blocks").notNull().default([]),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
   workspaceId: uuid("workspace_id").notNull(),
@@ -488,4 +489,27 @@ export const webhookDeliveries = pgTable("webhook_deliveries", {
   httpStatus: integer("http_status"),
   createdAt: created(),
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+});
+
+export const generatedArtifacts = pgTable("generated_artifacts", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  name: text("name").notNull(),
+  contentType: text("content_type").notNull(),
+  storageKey: text("storage_key").notNull().unique(),
+  byteSize: integer("byte_size").notNull(),
+  createdAt: created(),
+});
+export const collectedSubmissions = pgTable("collected_submissions", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  blockId: text("block_id").notNull(),
+  values: jsonb("values").notNull(),
+  submittedBy: uuid("submitted_by"),
+  createdAt: created(),
 });

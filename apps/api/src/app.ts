@@ -1,3 +1,4 @@
+import { registerGenerativeRoutes } from "./generative.js";
 import { registerOperationsRoutes } from "./operations.js";
 import { apiKeyChatRequest, apiKeyActor } from "./api-key-auth.js";
 import { registerWorkflowRoutes } from "./workflows.js";
@@ -197,7 +198,12 @@ export async function buildApp(
             params: {
               type: "object",
               properties: Object.fromEntries(
-                names.map((name) => [name, { type: "string", format: "uuid" }]),
+                names.map((name) => [
+                  name,
+                  name === "blockId"
+                    ? { type: "string", pattern: "^[a-z][a-z0-9_]{0,39}$" }
+                    : { type: "string", format: "uuid" },
+                ]),
               ),
               required: names,
             },
@@ -668,6 +674,7 @@ export async function buildApp(
   await registerToolRoutes(app);
   await registerWorkflowRoutes(app);
   await registerOperationsRoutes(app);
+  await registerGenerativeRoutes(app);
   await registerAgentRoutes(
     app,
     options.providerFactory,
