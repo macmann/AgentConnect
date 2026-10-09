@@ -155,6 +155,42 @@ test("Register a tenant-owned encrypted credential and model; reject unauthorize
     400,
   );
 });
+test("Custom provider registration explains host approval and retains the selected workspace credential", async () => {
+  const original = config.MODEL_ALLOWED_HOSTS;
+  const [secret] =
+    await sql`SELECT id FROM secrets WHERE workspace_id=${workspace}`;
+  const input = {
+    name: "Custom provider",
+    provider: "openai-compatible",
+    modelId: "fixture-custom",
+    secretId: secret!.id,
+    baseUrl: "https://api.deepseek.com",
+  };
+  try {
+    config.MODEL_ALLOWED_HOSTS = "api.openai.com";
+    const denied = await call("POST", `/workspaces/${workspace}/models`, input);
+    assert.equal(denied.statusCode, 400);
+    assert.match(denied.body, /api.deepseek.com.*MODEL_ALLOWED_HOSTS/);
+    config.MODEL_ALLOWED_HOSTS += ",api.deepseek.com";
+    const approved = await call(
+      "POST",
+      `/workspaces/${workspace}/models`,
+      input,
+    );
+    assert.equal(approved.statusCode, 201, approved.body);
+    const [saved] =
+      await sql`SELECT secret_id FROM model_configurations WHERE id=${approved.json().id}`;
+    assert.equal(saved!.secret_id, secret!.id);
+    const insecure = await call("POST", `/workspaces/${workspace}/models`, {
+      ...input,
+      baseUrl: "http://api.deepseek.com",
+    });
+    assert.equal(insecure.statusCode, 400);
+    assert.match(insecure.body, /HTTPS/);
+  } finally {
+    config.MODEL_ALLOWED_HOSTS = original;
+  }
+});
 test("Agent CRUD validates models, rejects viewers and cross-tenant access", async () => {
   assert.equal(
     (

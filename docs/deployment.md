@@ -59,3 +59,11 @@ API tests that exercise the required-verification flow can be run with `REQUIRE_
 Stop `pnpm dev`, pull the intended branch, run `pnpm install --frozen-lockfile` and `pnpm db:migrate`, then restart `pnpm dev`. Phase 4 adds workflow tables in migration 0005. Older database schemas can produce repeated workflow worker failures even when API health reports ready. Worker diagnostics now print sanitized error codes and a migration hint for missing tables/columns, with bounded backoff during repeated failures.
 
 Create agent requires a registered model in the selected workspace. Administrators register it under Models; builders can then create agents. Store hosted-provider credentials under Secrets and select the credential in the model configuration. Model registration does not itself verify that the provider accepts the credential: test the connection before chatting.
+
+## Custom hosted models such as DeepSeek
+
+Select OpenAI-compatible in Models and use the provider's supported base URL and exact model identifier. DeepSeek's `https://api.deepseek.com` base URL is compatible with the adapter, which appends `/chat/completions`; adding `/v1` is not required by this application. Check the identifier against the models available to your provider account.
+
+Append `api.deepseek.com` to `MODEL_ALLOWED_HOSTS` in the repository-root `.env`, preserving the existing hosts, then restart both API and worker. With the default host list, the resulting setting is `MODEL_ALLOWED_HOSTS=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.deepseek.com`. If developing in the managed cloud, its outbound network policy must also permit the destination; local server approval does not change cloud egress policy.
+
+Store the DeepSeek API key under Secrets in the same workspace, then explicitly select that secret in Workspace credential. The success message for saving a secret does not mean it is selected in the model form. Leave None selected only for providers that require no authentication. Save the model and test its connection before creating an agent.

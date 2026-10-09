@@ -265,7 +265,7 @@ export function Models({
               >
                 <option value="">
                   {provider === "openai-compatible"
-                    ? "None (local provider)"
+                    ? "None (no authentication)"
                     : "Select encrypted secret"}
                 </option>
                 {secrets.data?.map((s) => (
@@ -275,10 +275,16 @@ export function Models({
                 ))}
               </select>
               <small>
-                Add credentials under Secrets first. Values are never returned
-                here.
+                For hosted providers such as DeepSeek, select the API-key secret
+                saved in this workspace. Saving a secret does not select it
+                automatically. Values are never returned here.
               </small>
             </label>
+            {secrets.error && (
+              <p className="error-banner" role="alert">
+                Cannot load workspace credentials: {secrets.error.message}
+              </p>
+            )}
             {provider === "openai-compatible" && (
               <label>
                 Base URL
@@ -289,7 +295,9 @@ export function Models({
                   placeholder="https://approved-host.example/v1"
                 />
                 <small>
-                  Hostname must be approved in the API server settings.
+                  Custom hosts require server approval through
+                  MODEL_ALLOWED_HOSTS. Restart the API and worker after changing
+                  that setting.
                 </small>
               </label>
             )}

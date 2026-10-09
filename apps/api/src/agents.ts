@@ -404,10 +404,23 @@ export async function registerAgentRoutes(
       const baseUrl = data.baseUrl ?? defaultBaseUrls[data.provider];
       try {
         validateEndpoint(baseUrl, allowedHosts(), privateHosts());
-      } catch {
+      } catch (error) {
+        if (
+          error instanceof ProviderError &&
+          error.code === "ENDPOINT_NOT_ALLOWED"
+        )
+          throw new HttpError(
+            400,
+            `Model endpoint ${new URL(baseUrl).host} is not approved. Add this host to MODEL_ALLOWED_HOSTS in the API and worker environment, preserving existing hosts, then restart both services.`,
+          );
+        if (error instanceof ProviderError && error.code === "HTTPS_REQUIRED")
+          throw new HttpError(
+            400,
+            "Model endpoint requires HTTPS. Use the provider's HTTPS base URL.",
+          );
         throw new HttpError(
           400,
-          "Endpoint requires HTTPS and server-approved hostname",
+          "Model endpoint must be an approved HTTPS URL without embedded credentials, query parameters or fragments.",
         );
       }
       if (data.provider !== "openai-compatible" && !data.secretId)

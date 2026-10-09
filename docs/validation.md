@@ -94,3 +94,9 @@ The API exposes `verificationRequired` separately from the actual verified-email
 User-provided logs contained repeated generic workflow-worker failures and React Flow node initialization warnings. Generic worker messages do not establish the underlying database error. Worker diagnostics now expose sanitized error codes with migration/connection hints and retry backoff. A focused unit test confirms that raw connection/provider details are not logged.
 
 Canvas nodes now retain React Flow measurement state through controlled node changes. The workflow browser scenario drags a node twice, checks position changes, asserts no initialization warning, and completes publication/approval/resume. The agent browser scenario checks the disabled button and missing-model explanation before registration, then creates an agent after registration. Both browser scenarios passed against compiled services and production web output; typecheck, lint and all eight build targets passed.
+
+## Custom hosted model setup diagnostics
+
+The model-registry screenshot showed an unapproved DeepSeek hostname and no selected workspace credential. Registration errors now distinguish host approval, HTTPS and malformed endpoints. Form guidance explains custom-host approval, restarting API/worker, and explicitly selecting a saved API-key secret. No server allowlist was broadened automatically.
+
+All 10 focused agent API tests passed, including rejection of an unapproved DeepSeek host, acceptance after explicit approval, persistence of the selected workspace secret, and rejection of HTTP for that hosted endpoint. Lint, typecheck and all eight build targets passed. These tests validate registration policy; live DeepSeek authentication/model acceptance was not tested.
