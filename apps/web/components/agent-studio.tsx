@@ -1205,6 +1205,7 @@ export function AgentStudio({
             )}
             {tab === "playground" && draft.id && canBuild && (
               <ChatPanel
+                diagnostics
                 key={`${draft.id}-${chatKey}`}
                 endpoint={`/agents/${draft.id}/chat`}
                 name={draft.name}

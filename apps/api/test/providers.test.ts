@@ -170,7 +170,9 @@ test("Provider failures and incomplete streams are explicit and redact upstream 
       e instanceof Error &&
       e.message === "Model provider request failed" &&
       "code" in e &&
-      e.code === "AUTHENTICATION_FAILED",
+      e.code === "AUTHENTICATION_FAILED" &&
+      "httpStatus" in e &&
+      e.httpStatus === 401,
   );
   await assert.rejects(
     () =>

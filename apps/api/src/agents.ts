@@ -350,6 +350,31 @@ async function streamChat(
         ? e.code
         : "RUNTIME_ERROR";
     span.setStatus({ code: SpanStatusCode.ERROR, message: errorCode });
+    r.log.warn(
+      {
+        runId,
+        traceId,
+        code: errorCode,
+        provider: model.provider,
+        modelId: model.modelId,
+        hostname: new URL(model.baseUrl).hostname,
+        httpStatus: e instanceof ProviderError ? e.httpStatus : undefined,
+        retryable: e instanceof ProviderError ? e.retryable : false,
+        temperature: c.temperature,
+        topP: c.topP,
+        maxOutputTokens: c.maxOutputTokens,
+        credentialSelected: !!model.secretId,
+        hint:
+          errorCode === "PROVIDER_HTTP_ERROR"
+            ? "Check model identifier, account access, output token limit and supported sampling parameters."
+            : errorCode === "AUTHENTICATION_FAILED"
+              ? "Check the selected workspace credential."
+              : errorCode === "RATE_LIMITED"
+                ? "Check provider quota and retry later."
+                : "Use the failure code and trace ID to investigate the run.",
+      },
+      "Agent chat failed",
+    );
   } finally {
     clearTimeout(timer);
     clearInterval(heartbeat);

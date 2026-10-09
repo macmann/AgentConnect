@@ -175,6 +175,9 @@ export async function buildApp(
     "POST /organizations/:orgId/invitations": invitation,
     "POST /invitations/accept": tokenInput,
     "POST /workspaces/:workspaceId/secrets": secretInput,
+    "PUT /workspaces/:workspaceId/secrets/:secretId": secretInput.pick({
+      value: true,
+    }),
   };
   app.addHook("onRoute", (route) => {
     const body = bodySchemas[`${route.method} ${route.url}`];
@@ -566,6 +569,32 @@ export async function buildApp(
     });
     return reply.code(201).send({ name: data.name });
   });
+  app.put("/workspaces/:workspaceId/secrets/:secretId", async (r) => {
+    const u = await actor(r);
+    const w = await workspaceAccess(
+      u.id,
+      id(params(r).workspaceId),
+      "secret:manage",
+    );
+    const secretId = id(params(r).secretId);
+    const data = secretInput.pick({ value: true }).parse(r.body);
+    await sql.begin(async (tx) => {
+      const [secret] =
+        await tx`SELECT name FROM secrets WHERE id=${secretId} AND workspace_id=${w.id} AND organization_id=${w.organization_id} FOR UPDATE`;
+      if (!secret) throw new HttpError(404, "Secret not found");
+      await tx`UPDATE secrets SET ciphertext=${tx.json(encrypt(data.value, `${w.organization_id}:${w.id}:${secret.name}`))} WHERE id=${secretId}`;
+      await audit(
+        tx,
+        r,
+        u.id,
+        "secret.updated",
+        secretId,
+        w.organization_id,
+        w.id,
+      );
+    });
+    return { ok: true };
+  });
   app.delete("/workspaces/:workspaceId/secrets/:secretId", async (r) => {
     const u = await actor(r);
     const w = await workspaceAccess(
@@ -574,20 +603,29 @@ export async function buildApp(
       "secret:manage",
     );
     const secretId = id(params(r).secretId);
-    await sql.begin(async (tx) => {
-      const rows =
-        await tx`DELETE FROM secrets WHERE id=${secretId} AND workspace_id=${w.id} AND organization_id=${w.organization_id} RETURNING id`;
-      if (!rows.length) throw new HttpError(404, "Secret not found");
-      await audit(
-        tx,
-        r,
-        u.id,
-        "secret.deleted",
-        secretId,
-        w.organization_id,
-        w.id,
-      );
-    });
+    try {
+      await sql.begin(async (tx) => {
+        const rows =
+          await tx`DELETE FROM secrets WHERE id=${secretId} AND workspace_id=${w.id} AND organization_id=${w.organization_id} RETURNING id`;
+        if (!rows.length) throw new HttpError(404, "Secret not found");
+        await audit(
+          tx,
+          r,
+          u.id,
+          "secret.deleted",
+          secretId,
+          w.organization_id,
+          w.id,
+        );
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === "23503")
+        throw new HttpError(
+          409,
+          "Secret is in use by a model, embedding provider, or connector. Change or remove its references before deleting, or edit the secret to replace its value.",
+        );
+      throw error;
+    }
     return { ok: true };
   });
   app.get("/workspaces/:workspaceId/audit", async (r) => {

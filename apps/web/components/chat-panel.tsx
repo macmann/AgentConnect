@@ -5,16 +5,34 @@ import { Button } from "./button";
 import { Citations, type Citation } from "./citations";
 import { ToolTraces, type ToolTrace } from "./tool-studio";
 import { streamChat } from "./agent-client";
+function diagnosticHint(code: string): string {
+  switch (code) {
+    case "PROVIDER_HTTP_ERROR":
+      return "Check the model identifier, account access, output token limit and supported sampling parameters.";
+    case "AUTHENTICATION_FAILED":
+      return "Check the selected workspace credential.";
+    case "RATE_LIMITED":
+      return "Check provider quota and retry later.";
+    case "INCOMPLETE_STREAM":
+      return "The provider ended its response unexpectedly. Retry or check provider availability.";
+    case "ENDPOINT_NOT_ALLOWED":
+      return "Approve the model hostname in the API settings.";
+    default:
+      return "";
+  }
+}
 export function ChatPanel({
   endpoint,
   name,
   welcomeMessage,
   starters = [],
+  diagnostics = false,
 }: {
   endpoint: string;
   name: string;
   welcomeMessage: string;
   starters?: string[];
+  diagnostics?: boolean;
 }) {
   const [messages, setMessages] = useState<
     {
@@ -93,7 +111,11 @@ export function ChatPanel({
               ),
             );
           if (event === "error")
-            setError(data.message ?? "The model request failed.");
+            setError(
+              diagnostics && data.code
+                ? `${data.code}: ${data.message ?? "The model request failed."} ${diagnosticHint(data.code)}`
+                : (data.message ?? "The model request failed."),
+            );
         },
         guest.current,
       );

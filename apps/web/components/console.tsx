@@ -231,6 +231,7 @@ function Studio() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editingSecret, setEditingSecret] = useState<Secret | null>(null);
   const [action, setAction] = useState("");
   const [actionToken, setActionToken] = useState("");
   const [actionPassword, setActionPassword] = useState("");
@@ -326,10 +327,15 @@ function Studio() {
     if (dialog === "secret")
       await mutate(
         () =>
-          api(`/workspaces/${wid}/secrets`, "POST", {
-            name,
-            value: f.get("value"),
-          }),
+          api(
+            editingSecret
+              ? `/workspaces/${wid}/secrets/${editingSecret.id}`
+              : `/workspaces/${wid}/secrets`,
+            editingSecret ? "PUT" : "POST",
+            editingSecret
+              ? { value: f.get("value") }
+              : { name, value: f.get("value") },
+          ),
         "Encrypted secret saved",
       );
   }
@@ -813,7 +819,13 @@ function Studio() {
                   </p>
                 </div>
                 {manage && (
-                  <Button onClick={() => setDialog("secret")}>
+                  <Button
+                    onClick={() => {
+                      setEditingSecret(null);
+                      setError("");
+                      setDialog("secret");
+                    }}
+                  >
                     <Plus size={16} />
                     Add secret
                   </Button>
@@ -840,16 +852,33 @@ function Studio() {
                             <button
                               className="text-button"
                               disabled={busy}
-                              onClick={() =>
-                                mutate(
+                              onClick={() => {
+                                setEditingSecret(s);
+                                setError("");
+                                setDialog("secret");
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="text-button"
+                              disabled={busy}
+                              onClick={() => {
+                                if (
+                                  !window.confirm(
+                                    `Delete secret ${s.name}? This cannot be undone.`,
+                                  )
+                                )
+                                  return;
+                                void mutate(
                                   () =>
                                     api(
                                       `/workspaces/${wid}/secrets/${s.id}`,
                                       "DELETE",
                                     ),
                                   "Secret deleted",
-                                )
-                              }
+                                );
+                              }}
                             >
                               Delete
                             </button>
@@ -982,11 +1011,15 @@ function Studio() {
                   ? "Create workspace"
                   : dialog === "invite"
                     ? "Invite a teammate"
-                    : "Add encrypted secret"}
+                    : editingSecret
+                      ? "Edit encrypted secret"
+                      : "Add encrypted secret"}
             </Dialog.Title>
             <Dialog.Description>
               {dialog === "secret"
-                ? "The value is encrypted server-side and never returned."
+                ? editingSecret
+                  ? "Enter a replacement value. Existing model and connector references are preserved. The current value is never returned."
+                  : "The value is encrypted server-side and never returned."
                 : "Build a shared, secure place for your team."}
             </Dialog.Description>
             <Dialog.Close className="dialog-close" aria-label="Close">
@@ -1021,6 +1054,10 @@ function Studio() {
                   {dialog === "secret" ? "Secret name" : "Name"}
                   <input
                     name="name"
+                    defaultValue={
+                      dialog === "secret" ? (editingSecret?.name ?? "") : ""
+                    }
+                    readOnly={dialog === "secret" && !!editingSecret}
                     required
                     maxLength={100}
                     pattern={

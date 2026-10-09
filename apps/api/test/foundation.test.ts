@@ -23,7 +23,7 @@ let owner = "",
   orgId = "",
   workspaceId = "";
 async function call(
-  method: "GET" | "POST" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "DELETE",
   url: string,
   body?: unknown,
   session = "",
@@ -295,6 +295,40 @@ test("secrets are encrypted with tenant-bound context and never returned", async
     ).statusCode,
     403,
   );
+});
+test("secret rotation preserves references and deletion reports conflicts", async () => {
+  const [secret] =
+    await sql`SELECT id FROM secrets WHERE workspace_id=${workspaceId} AND name='TEST_KEY'`;
+  const url = `/workspaces/${workspaceId}/secrets/${secret!.id}`;
+  assert.equal(
+    (await call("PUT", url, { value: "replacement-key" }, outsider)).statusCode,
+    403,
+  );
+  assert.equal(
+    (await call("PUT", url, { value: "replacement-key" }, owner)).statusCode,
+    200,
+  );
+  const [updated] =
+    await sql`SELECT ciphertext FROM secrets WHERE id=${secret!.id}`;
+  assert.equal(
+    decrypt(updated!.ciphertext, `${orgId}:${workspaceId}:TEST_KEY`),
+    "replacement-key",
+  );
+  const modelId = randomUUID();
+  await sql`INSERT INTO model_configurations(id,organization_id,workspace_id,name,provider,model_id,base_url,secret_id,context_window,max_output_tokens,capabilities) VALUES (${modelId},${orgId},${workspaceId},'Reference test','openai-compatible','test','https://example.com',${secret!.id},4096,256,'{}')`;
+  try {
+    const blocked = await call("DELETE", url, undefined, owner);
+    assert.equal(blocked.statusCode, 409);
+    assert.match(blocked.json().error, /in use/);
+    assert.equal(
+      (await call("PUT", url, { value: "rotated-key" }, owner)).statusCode,
+      200,
+    );
+  } finally {
+    await sql`DELETE FROM model_configurations WHERE id=${modelId}`;
+  }
+  assert.equal((await call("DELETE", url, undefined, owner)).statusCode, 200);
+  assert.equal((await call("DELETE", url, undefined, owner)).statusCode, 404);
 });
 test("audits record changes without plaintext secrets", async () => {
   const res = await call(
