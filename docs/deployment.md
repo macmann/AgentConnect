@@ -75,3 +75,7 @@ Model administrators can use Edit, Delete and Test connection in Models. Editing
 Delete requires confirmation and removes the model from the active registry. An active agent draft must switch to another model or be archived first. The underlying model record is retained so published versions and run history remain valid. Migration 0006 adds revision and archive metadata; run `pnpm db:migrate` after pulling these changes.
 
 Connection tests now expose sanitized provider diagnostics instead of replacing all provider failures with Internal server error. Authentication failures point to the selected credential/provider; other HTTP errors point to the base URL, model identifier and supported parameters. Raw upstream responses and secrets remain private. Stored credentials that cannot be decrypted produce a MASTER_KEY configuration hint rather than a generic server error.
+
+## Phase 5 operations upgrade
+
+Run `pnpm db:migrate` for migration 0007, then restart API, web and worker. The worker now delivers signed run webhooks. Configure `WEBHOOK_ALLOWED_HOSTS` with exact approved HTTPS receiver hostnames on both API and worker before registration. Existing hosts must be preserved; no private host override is provided. See [operations](operations.md) for API key use, pricing semantics, signing verification and environment labels.

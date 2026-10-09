@@ -67,9 +67,39 @@ Acceptance: an agent uses explicitly attached read-only tools and shows saved ex
 
 See workflows.md for supported graph shapes and runtime limits.
 
+## Phase 5 — Enterprise operations (initial release)
+
+- [x] Workspace-scoped reports, provider usage, per-agent estimates and workflow outcome summaries.
+- [x] Configurable model USD rates, saved completion-time rate snapshots and explicit unavailable usage/cost counts.
+- [x] Conversation filtering/pagination, reviewer ratings/classifications and separate corrections preserving original responses.
+- [x] Capability-separated operational reads/admin writes; protected workspace role changes with inherited organization roles.
+- [x] Hashed single-agent execution API keys, one-time display, expiry/revocation, current-issuer authorization and per-key limiting.
+- [x] Signed, encrypted-secret outbound run webhooks, durable queue/leases, bounded retries, delivery logs, manual retry and rotation.
+- [x] Deployment environment labels, published-version promotion, public attachment checks and unchanged existing snapshots.
+- [x] Filtered audit viewer and operational mutation audits without credentials/review content.
+- [ ] Live HTTPS webhook/provider acceptance; production retention and queue management review.
+- [ ] Custom roles, public guest feedback, richer conversation/channel filters, workflow/embedding costs, budget enforcement, environment infrastructure isolation and expanded webhook events.
+
+See operations.md for supported behavior, local acceptance and limits. Phase 5 is an initial usable operations slice; it does not complete every enterprise requirement in the master specification.
+
+## Phase 6 — Generative experience (initial release)
+
+- [x] Strict versioned declarative response schema and component/action registry.
+- [x] Agent settings with component allowlists and public collection disabled by default.
+- [x] Chat validation before rendering, persisted response blocks and trusted responsive React components.
+- [x] Text, cards, alerts, KPI, tables and bounded single-series SVG charts with accessible data tables.
+- [x] Generated forms and buttons using confirmed, validated, replay-protected `data.collect`.
+- [x] Private TXT/Markdown/CSV artifacts, safe CSV cells and authorized five-minute signed download URLs.
+- [x] Workspace collected-data search, cursor pagination, record details and loaded-record JSON export.
+- [x] Backend integration and browser coverage using explicit protocol fixtures and local object storage.
+- [ ] Live-provider schema adherence and production retention/orphan-object reconciliation.
+- [ ] PDF/Office formats, richer chart data, custom registry management, external actions/approval routing, automated collection destinations and generative workflow outputs.
+
+See generative-experience.md for supported behavior, testing and limits. This initial slice leaves the broader Phase 6 and Phase 5 extensions explicit.
+
 ## Subsequent phases
 
-Follow product-spec.md phases 5–10: enterprise operations; generative experience; channels/voice; evaluations; enterprise connectors; hardening. Complete a compiling, tested, usable slice before starting the next.
+Follow product-spec.md phases 7–10: channels/voice; evaluations; enterprise connectors; hardening. Complete a compiling, tested, usable slice before starting the next.
 
 ## Risks and dependencies
 

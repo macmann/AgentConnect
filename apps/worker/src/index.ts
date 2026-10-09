@@ -1,3 +1,4 @@
+import { processWebhookDelivery } from "@agentconnect/api/webhooks";
 import { workerFailure } from "./failure.js";
 import {
   processWorkflowRun,
@@ -38,6 +39,7 @@ async function loop(
 await Promise.all([
   loop(processWorkflowRun, 1000, "Workflow execution"),
   loop(deliverMail, 3000, "Mail delivery"),
+  loop(processWebhookDelivery, 1000, "Webhook delivery"),
   loop(processKnowledgeJob, 1000, "Knowledge ingestion"),
   loop(purgeDeletedKnowledge, 5000, "Knowledge object cleanup"),
 ]);

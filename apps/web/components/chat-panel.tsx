@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowUp, Square, RefreshCw, Sparkles } from "lucide-react";
+import { GenerativeResponse } from "./generative-response";
+import type { RenderedBlock } from "@agentconnect/schemas/generative";
 import { Button } from "./button";
 import { Citations, type Citation } from "./citations";
 import { ToolTraces, type ToolTrace } from "./tool-studio";
@@ -38,6 +40,9 @@ export function ChatPanel({
     {
       role: "user" | "assistant";
       content: string;
+      actionsEnabled?: boolean;
+      messageId?: string;
+      blocks?: RenderedBlock[];
       citations?: Citation[];
       tools?: ToolTrace[];
     }[]
@@ -99,6 +104,20 @@ export function ChatPanel({
               m.map((item, i) =>
                 i === m.length - 1
                   ? { ...item, content: item.content + (data.text ?? "") }
+                  : item,
+              ),
+            );
+          if (event === "ui")
+            setMessages((m) =>
+              m.map((item, i) =>
+                i === m.length - 1
+                  ? {
+                      ...item,
+                      content: data.message ?? "",
+                      messageId: data.messageId,
+                      blocks: data.blocks ?? [],
+                      actionsEnabled: data.actionsEnabled,
+                    }
                   : item,
               ),
             );
@@ -178,8 +197,21 @@ export function ChatPanel({
           <div key={i} className={`chat-message ${m.role}`}>
             <small>{m.role === "user" ? "You" : name}</small>
             <div>
-              {m.content || (busy ? "Thinking…" : "No response content.")}
+              {m.content ||
+                (m.blocks?.length
+                  ? null
+                  : busy
+                    ? "Thinking…"
+                    : "No response content.")}
             </div>
+            {m.blocks && m.messageId && (
+              <GenerativeResponse
+                blocks={m.blocks}
+                messageId={m.messageId}
+                guestToken={guest.current}
+                interactive={m.actionsEnabled ?? true}
+              />
+            )}
             {m.citations && <Citations sources={m.citations} />}
             {m.tools && <ToolTraces traces={m.tools} />}
           </div>

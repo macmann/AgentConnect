@@ -1,3 +1,4 @@
+import type { RenderedBlock } from "@agentconnect/schemas/generative";
 import type { Citation } from "./citations";
 export const apiBase =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -17,6 +18,9 @@ export async function requestJson<T>(
   return data as T;
 }
 export interface StreamData {
+  actionsEnabled?: boolean;
+  messageId?: string;
+  blocks?: RenderedBlock[];
   error_code?: string;
   executionId?: string;
   toolId?: string;

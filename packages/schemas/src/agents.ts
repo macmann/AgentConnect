@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { generativeConfig } from "./generative.js";
+import { environments } from "./operations.js";
 import { agentTools } from "./tools.js";
 import { ragConfig } from "./knowledge.js";
 export const providerNames = [
@@ -38,6 +40,7 @@ export const promptSchema = z.object({
   advanced: z.string().max(24000).nullable().default(null),
 });
 export const agentConfig = z.object({
+  generative: generativeConfig,
   schemaVersion: z.literal(1).default(1),
   rag: ragConfig,
   tools: agentTools,
@@ -77,6 +80,7 @@ export const agentUpdate = agentInput.extend({
 });
 export const publishInput = z.object({ revision: z.number().int().min(1) });
 export const deploymentInput = z.object({
+  environment: z.enum(environments).default("production"),
   versionId: z.uuid(),
   name: z.string().trim().min(1).max(100),
 });

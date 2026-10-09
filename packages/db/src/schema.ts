@@ -5,6 +5,7 @@ import {
   timestamp,
   jsonb,
   integer,
+  numeric,
   boolean,
   customType,
 } from "drizzle-orm/pg-core";
@@ -121,6 +122,7 @@ export const agentVersions = pgTable("agent_versions", {
 });
 
 export const deployments = pgTable("deployments", {
+  environment: text("environment").notNull().default("production"),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
   workspaceId: uuid("workspace_id").notNull(),
@@ -146,6 +148,14 @@ export const conversations = pgTable("conversations", {
 });
 
 export const agentRuns = pgTable("agent_runs", {
+  inputUsdPerMillion: numeric("input_usd_per_million", {
+    precision: 14,
+    scale: 6,
+  }),
+  outputUsdPerMillion: numeric("output_usd_per_million", {
+    precision: 14,
+    scale: 6,
+  }),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
   workspaceId: uuid("workspace_id").notNull(),
@@ -162,6 +172,7 @@ export const agentRuns = pgTable("agent_runs", {
 });
 
 export const messages = pgTable("messages", {
+  uiBlocks: jsonb("ui_blocks").notNull().default([]),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
   workspaceId: uuid("workspace_id").notNull(),
@@ -408,4 +419,97 @@ export const workflowApprovals = pgTable("workflow_approvals", {
   decidedBy: uuid("decided_by"),
   createdAt: created(),
   decidedAt: timestamp("decided_at", { withTimezone: true }),
+});
+
+export const conversationReviews = pgTable("conversation_reviews", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  reviewerId: uuid("reviewer_id").notNull(),
+  rating: text("rating"),
+  label: text("label"),
+  comment: text("comment").notNull(),
+  correctedResponse: text("corrected_response"),
+  reason: text("reason").notNull(),
+  createdAt: created(),
+});
+export const modelPrices = pgTable("model_prices", {
+  modelId: uuid("model_id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  inputUsdPerMillion: numeric("input_usd_per_million", {
+    precision: 14,
+    scale: 6,
+  }).notNull(),
+  outputUsdPerMillion: numeric("output_usd_per_million", {
+    precision: 14,
+    scale: 6,
+  }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  updatedBy: uuid("updated_by").notNull(),
+});
+export const workspaceApiKeys = pgTable("workspace_api_keys", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  agentId: uuid("agent_id").notNull(),
+  label: text("label").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  prefix: text("prefix").notNull(),
+  createdBy: uuid("created_by").notNull(),
+  scope: text("scope").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  createdAt: created(),
+});
+export const workspaceWebhooks = pgTable("workspace_webhooks", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  name: text("name").notNull(),
+  url: text("url").notNull(),
+  signingSecret: jsonb("signing_secret").notNull(),
+  enabled: boolean("enabled").notNull(),
+  createdBy: uuid("created_by").notNull(),
+  createdAt: created(),
+});
+export const webhookDeliveries = pgTable("webhook_deliveries", {
+  id: uuid("id").primaryKey(),
+  webhookId: uuid("webhook_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  payload: jsonb("payload").notNull(),
+  status: text("status").notNull(),
+  attempts: integer("attempts").notNull(),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
+  errorCode: text("error_code"),
+  httpStatus: integer("http_status"),
+  createdAt: created(),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+});
+
+export const generatedArtifacts = pgTable("generated_artifacts", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  name: text("name").notNull(),
+  contentType: text("content_type").notNull(),
+  storageKey: text("storage_key").notNull().unique(),
+  byteSize: integer("byte_size").notNull(),
+  createdAt: created(),
+});
+export const collectedSubmissions = pgTable("collected_submissions", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  blockId: text("block_id").notNull(),
+  values: jsonb("values").notNull(),
+  submittedBy: uuid("submitted_by"),
+  createdAt: created(),
 });

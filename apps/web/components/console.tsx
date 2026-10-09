@@ -32,6 +32,8 @@ import {
   BookOpen,
 } from "lucide-react";
 import { Button } from "./button";
+import { CollectedData } from "./collected-data";
+import { OperationsStudio } from "./operations-studio";
 import { WorkflowStudio } from "./workflow-studio";
 import { ToolStudio } from "./tool-studio";
 import { KnowledgeStudio } from "./knowledge-studio";
@@ -440,6 +442,8 @@ function Studio() {
             { label: "Tools", icon: Boxes },
             { label: "Workflows", icon: Workflow },
             { label: "Conversations", icon: Activity },
+            { label: "Operations", icon: Activity },
+            { label: "Collected data", icon: Layers },
             { label: "Members", icon: Users },
             { label: "Secrets", icon: KeyRound },
             { label: "Audit log", icon: Activity },
@@ -530,7 +534,9 @@ function Studio() {
               <p className="muted">
                 {view === "Overview"
                   ? "A clear view of your workspace. A strong foundation for what comes next."
-                  : "Manage your organization with clear permissions and a complete audit trail."}
+                  : view === "Operations"
+                    ? "Monitor usage, review answers and manage workspace access."
+                    : "Manage your organization with clear permissions and a complete audit trail."}
               </p>
             </div>
             <Button
@@ -557,6 +563,8 @@ function Studio() {
             "Agents",
             "Models",
             "Conversations",
+            "Operations",
+            "Collected data",
             "Knowledge",
             "Tools",
             "Workflows",
@@ -566,6 +574,14 @@ function Studio() {
             ) : view === "Agents" ? (
               <AgentStudio
                 onNavigate={setView}
+                key={wid}
+                workspaceId={wid}
+                role={currentWorkspace?.role ?? "viewer"}
+              />
+            ) : view === "Collected data" ? (
+              <CollectedData key={wid} workspaceId={wid} />
+            ) : view === "Operations" ? (
+              <OperationsStudio
                 key={wid}
                 workspaceId={wid}
                 role={currentWorkspace?.role ?? "viewer"}
@@ -595,7 +611,11 @@ function Studio() {
                 role={currentWorkspace?.role ?? "viewer"}
               />
             ) : (
-              <Conversations key={wid} workspaceId={wid} />
+              <Conversations
+                key={wid}
+                workspaceId={wid}
+                role={currentWorkspace?.role ?? "viewer"}
+              />
             ))}
           {view === "Overview" && (
             <>
