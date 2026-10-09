@@ -95,6 +95,15 @@ test("model registration, agent editor, streaming playground, publish and anonym
     },
   ]);
   await page.goto("/");
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Create agent", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText(
+      "To enable Create agent, register a model in Models for this workspace.",
+    ),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Models", exact: true }).click();
   await page
     .getByRole("button", { name: "Register model", exact: true })
@@ -107,6 +116,46 @@ test("model registration, agent editor, streaming playground, publish and anonym
   await expect(
     page.getByRole("cell", { name: "Explicit browser fixture", exact: true }),
   ).toBeVisible();
+  const modelRow = page
+    .getByRole("row")
+    .filter({
+      has: page.getByRole("cell", {
+        name: "Explicit browser fixture",
+        exact: true,
+      }),
+    });
+  await modelRow.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(page.getByLabel("Model identifier")).toHaveValue("fixture-only");
+  await expect(page.getByLabel(/^Base URL/)).toHaveValue(
+    "http://127.0.0.1:4545/v1",
+  );
+  await page.getByLabel("Display name").fill("Edited browser fixture");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(
+    page.getByRole("cell", { name: "Edited browser fixture", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Register model", exact: true })
+    .click();
+  await page.getByLabel("Display name").fill("Disposable browser fixture");
+  await page.getByLabel(/^Provider/).selectOption("openai-compatible");
+  await page.getByLabel("Model identifier").fill("fixture-disposable");
+  await page.getByLabel(/^Base URL/).fill("http://127.0.0.1:4545/v1");
+  await page.getByRole("button", { name: "Save model", exact: true }).click();
+  const disposable = page
+    .getByRole("row")
+    .filter({
+      has: page.getByRole("cell", {
+        name: "Disposable browser fixture",
+        exact: true,
+      }),
+    });
+  await disposable.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("button", { name: "Delete model", exact: true }).click();
+  await expect(
+    page.getByRole("cell", { name: "Disposable browser fixture", exact: true }),
+  ).toHaveCount(0);
+
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await page.getByRole("button", { name: "Create agent", exact: true }).click();
   await page.getByLabel("Agent name").fill("Browser assistant");

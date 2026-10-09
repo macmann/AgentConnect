@@ -150,7 +150,11 @@ export async function buildApp(
   const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 2 });
   await redis.ping();
   await app.register(cookie);
-  await app.register(cors, { origin: config.WEB_ORIGIN, credentials: true });
+  await app.register(cors, {
+    origin: config.WEB_ORIGIN,
+    credentials: true,
+    methods: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"],
+  });
   await app.register(helmet);
   await app.register(rateLimit, { max: 300, timeWindow: "1 minute", redis });
   await app.register(swagger, {
@@ -238,7 +242,7 @@ export async function buildApp(
           : 500;
     return reply.code(status).send({
       error:
-        status >= 500
+        status >= 500 && !(error instanceof HttpError)
           ? "Internal server error"
           : error instanceof Error
             ? error.message

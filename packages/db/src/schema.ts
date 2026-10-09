@@ -74,6 +74,8 @@ export const auditEvents = pgTable("audit_events", {
 // Explicit migration is authoritative for composite foreign keys and indexes.
 
 export const modelConfigurations = pgTable("model_configurations", {
+  revision: integer("revision").notNull().default(1),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
   workspaceId: uuid("workspace_id").notNull(),

@@ -9,6 +9,7 @@ import {
   Handle,
   Position,
   applyNodeChanges,
+  useNodesState,
   applyEdgeChanges,
   type Node,
   type NodeProps,
@@ -233,6 +234,8 @@ export function WorkflowStudio({
   const clipboard = useRef<WorkflowNode[] | null>(null);
   const canvas = useRef<ReactFlowInstance<CanvasNode, Edge> | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
+  const [canvasNodes, setCanvasNodes, onCanvasNodesChange] =
+    useNodesState<CanvasNode>([]);
   const versions = useQuery({
     queryKey: ["workflow-versions", draft?.id],
     queryFn: () => requestJson<Version[]>(`/workflows/${draft?.id}/versions`),
@@ -581,6 +584,8 @@ export function WorkflowStudio({
   }
   function nodeChanges(changes: NodeChange<CanvasNode>[]) {
     if (!draft) return;
+    changes = changes.filter((c) => c.type !== "dimensions");
+    if (!changes.length) return;
     const selects = changes.filter((c) => c.type === "select");
     if (selects.length)
       setSelection((previous) => {
@@ -667,7 +672,23 @@ export function WorkflowStudio({
   }
   if (!read) return <p className="empty">Your role cannot access workflows.</p>;
   const displayGraph = run.data?.graph_snapshot ?? draft?.graph;
-  const statuses = new Map(run.data?.nodes.map((n) => [n.node_id, n.status]));
+  const traceNodes = run.data?.nodes;
+  useEffect(() => {
+    const statuses = new Map(traceNodes?.map((n) => [n.node_id, n.status]));
+    setCanvasNodes((previous) => {
+      const existing = new Map(previous.map((n) => [n.id, n]));
+      return (displayGraph?.nodes ?? []).map((n) => ({
+        ...existing.get(n.id),
+        id: n.id,
+        type: "workflow" as const,
+        width: 170,
+        height: 100,
+        position: n.position,
+        selected: selection.includes(n.id),
+        data: { label: n.data.label, kind: n.type, status: statuses.get(n.id) },
+      }));
+    });
+  }, [displayGraph, traceNodes, selection, setCanvasNodes]);
   return (
     <section className="panel workflow-studio">
       <div className="panel-header">
@@ -857,26 +878,17 @@ export function WorkflowStudio({
           <div className="workflow-editor">
             <div className="workflow-canvas" aria-label="Workflow canvas">
               <ReactFlow<CanvasNode, Edge>
-                nodes={(displayGraph?.nodes ?? []).map((n) => ({
-                  id: n.id,
-                  type: "workflow" as const,
-                  width: 170,
-                  height: 100,
-                  position: n.position,
-                  selected: selection.includes(n.id),
-                  data: {
-                    label: n.data.label,
-                    kind: n.type,
-                    status: statuses.get(n.id),
-                  },
-                }))}
+                nodes={canvasNodes}
                 edges={(displayGraph?.edges ?? []).map((e) => ({
                   ...e,
                   label: e.sourceHandle ?? undefined,
                   animated: run.data?.status === "running",
                 }))}
                 nodeTypes={nodeTypes}
-                onNodesChange={build && !selectedRun ? nodeChanges : undefined}
+                onNodesChange={(changes) => {
+                  onCanvasNodesChange(changes);
+                  if (build && !selectedRun) nodeChanges(changes);
+                }}
                 onEdgesChange={build && !selectedRun ? edgeChanges : undefined}
                 onConnect={connections}
                 onInit={(instance) => {

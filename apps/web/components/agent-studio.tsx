@@ -1,5 +1,5 @@
 "use client";
-import { useState, type FormEvent } from "react";
+import { useState, useRef, useEffect, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
@@ -21,6 +21,10 @@ type Model = {
   model_id: string;
   max_output_tokens: number;
   context_window: number;
+  base_url: string;
+  secret_id: string | null;
+  revision: number;
+  capabilities: { streaming: true; temperature: boolean; topP: boolean };
 };
 type AgentSummary = {
   id: string;
@@ -153,7 +157,15 @@ export function Models({
     enabled: canManage,
   });
   const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Model | null>(null);
+  const [deleting, setDeleting] = useState<Model | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (formOpen)
+      formRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [formOpen, editing]);
   const [provider, setProvider] = useState("openai");
+  const [credential, setCredential] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -163,26 +175,59 @@ export function Models({
     setBusy(true);
     setError("");
     try {
-      await requestJson(`/workspaces/${workspaceId}/models`, "POST", {
-        name: f.get("name"),
-        provider,
-        modelId: f.get("modelId"),
-        secretId: f.get("secretId") || null,
-        baseUrl:
-          provider === "openai-compatible" ? f.get("baseUrl") : undefined,
-        contextWindow: Number(f.get("contextWindow")),
-        maxOutputTokens: Number(f.get("maxOutputTokens")),
-        capabilities: {
-          streaming: true,
-          temperature: f.get("temperature") === "on",
-          topP: f.get("topP") === "on",
+      await requestJson(
+        editing ? `/models/${editing.id}` : `/workspaces/${workspaceId}/models`,
+        editing ? "PUT" : "POST",
+        {
+          ...(editing ? { revision: editing.revision } : {}),
+          name: f.get("name"),
+          provider,
+          modelId: f.get("modelId"),
+          secretId: f.get("secretId") || null,
+          baseUrl:
+            provider === "openai-compatible" ? f.get("baseUrl") : undefined,
+          contextWindow: Number(f.get("contextWindow")),
+          maxOutputTokens: Number(f.get("maxOutputTokens")),
+          capabilities: {
+            streaming: true,
+            temperature: f.get("temperature") === "on",
+            topP: f.get("topP") === "on",
+          },
         },
-      });
+      );
       await cache.invalidateQueries({ queryKey: ["models", workspaceId] });
       setFormOpen(false);
-      setNotice("Model registered");
+      setNotice(
+        editing
+          ? "Model updated. Published agent versions keep their existing settings."
+          : "Model registered",
+      );
+      setEditing(null);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function deleteModel() {
+    if (!deleting) return;
+    setBusy(true);
+    setError("");
+    try {
+      await requestJson(`/models/${deleting.id}`, "DELETE", {
+        revision: deleting.revision,
+      });
+      await cache.invalidateQueries({ queryKey: ["models", workspaceId] });
+      if (editing?.id === deleting.id) {
+        setEditing(null);
+        setFormOpen(false);
+      }
+      setDeleting(null);
+      setNotice(
+        "Model deleted from the registry. Published versions and run history are retained.",
+      );
+    } catch (error) {
+      setError((error as Error).message);
     } finally {
       setBusy(false);
     }
@@ -213,7 +258,16 @@ export function Models({
           </p>
         </div>
         {canManage && (
-          <Button onClick={() => setFormOpen(!formOpen)}>
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setProvider("openai");
+              setCredential("");
+              setFormOpen(!formOpen || !!editing);
+              setError("");
+              setNotice("");
+            }}
+          >
             <Plus size={15} />
             Register model
           </Button>
@@ -229,12 +283,42 @@ export function Models({
           {notice}
         </p>
       )}
+      {deleting && (
+        <div className="notice" role="alert">
+          <p>
+            Delete {deleting.name} from the registry? Published versions and
+            historical runs are retained. Active agent drafts must switch to
+            another model first.
+          </p>
+          <Button className="danger" disabled={busy} onClick={deleteModel}>
+            Delete model
+          </Button>
+          <Button
+            className="secondary"
+            disabled={busy}
+            onClick={() => setDeleting(null)}
+          >
+            Cancel deletion
+          </Button>
+        </div>
+      )}
       {formOpen && (
-        <form className="studio-form" onSubmit={create}>
+        <form
+          ref={formRef}
+          key={editing?.id ?? "new"}
+          className="studio-form"
+          onSubmit={create}
+        >
+          {editing && <h4>Edit model: {editing.name}</h4>}
           <div className="form-grid">
             <label>
               Display name
-              <input name="name" required maxLength={100} />
+              <input
+                name="name"
+                required
+                maxLength={100}
+                defaultValue={editing?.name ?? ""}
+              />
             </label>
             <label>
               Provider
@@ -252,6 +336,7 @@ export function Models({
               Model identifier
               <input
                 name="modelId"
+                defaultValue={editing?.model_id ?? ""}
                 required
                 placeholder="Provider model identifier"
                 maxLength={150}
@@ -261,11 +346,13 @@ export function Models({
               Workspace credential
               <select
                 name="secretId"
+                value={credential}
+                onChange={(e) => setCredential(e.target.value)}
                 required={provider !== "openai-compatible"}
               >
                 <option value="">
                   {provider === "openai-compatible"
-                    ? "None (local provider)"
+                    ? "None (no authentication)"
                     : "Select encrypted secret"}
                 </option>
                 {secrets.data?.map((s) => (
@@ -275,21 +362,30 @@ export function Models({
                 ))}
               </select>
               <small>
-                Add credentials under Secrets first. Values are never returned
-                here.
+                For hosted providers such as DeepSeek, select the API-key secret
+                saved in this workspace. Saving a secret does not select it
+                automatically. Values are never returned here.
               </small>
             </label>
+            {secrets.error && (
+              <p className="error-banner" role="alert">
+                Cannot load workspace credentials: {secrets.error.message}
+              </p>
+            )}
             {provider === "openai-compatible" && (
               <label>
                 Base URL
                 <input
                   name="baseUrl"
+                  defaultValue={editing?.base_url ?? ""}
                   type="url"
                   required
                   placeholder="https://approved-host.example/v1"
                 />
                 <small>
-                  Hostname must be approved in the API server settings.
+                  Custom hosts require server approval through
+                  MODEL_ALLOWED_HOSTS. Restart the API and worker after changing
+                  that setting.
                 </small>
               </label>
             )}
@@ -298,7 +394,7 @@ export function Models({
               <input
                 name="contextWindow"
                 type="number"
-                defaultValue={32768}
+                defaultValue={editing?.context_window ?? 32768}
                 min={256}
                 max={2000000}
                 required
@@ -309,7 +405,7 @@ export function Models({
               <input
                 name="maxOutputTokens"
                 type="number"
-                defaultValue={4096}
+                defaultValue={editing?.max_output_tokens ?? 4096}
                 min={1}
                 max={32768}
                 required
@@ -318,16 +414,35 @@ export function Models({
           </div>
           <div className="checkbox-row">
             <label>
-              <input name="temperature" type="checkbox" defaultChecked />
+              <input
+                name="temperature"
+                type="checkbox"
+                defaultChecked={editing?.capabilities.temperature ?? true}
+              />
               Supports temperature
             </label>
             <label>
-              <input name="topP" type="checkbox" defaultChecked />
+              <input
+                name="topP"
+                type="checkbox"
+                defaultChecked={editing?.capabilities.topP ?? true}
+              />
               Supports top-p
             </label>
           </div>
           <Button disabled={busy} type="submit">
-            {busy ? "Registering…" : "Save model"}
+            {busy ? "Saving…" : editing ? "Save changes" : "Save model"}
+          </Button>
+          <Button
+            type="button"
+            className="secondary"
+            disabled={busy}
+            onClick={() => {
+              setEditing(null);
+              setFormOpen(false);
+            }}
+          >
+            Cancel
           </Button>
         </form>
       )}
@@ -343,7 +458,7 @@ export function Models({
                 <th>Name</th>
                 <th>Provider / model</th>
                 <th>Context</th>
-                <th>Connection</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -357,13 +472,40 @@ export function Models({
                   <td>{m.context_window.toLocaleString()}</td>
                   <td>
                     {canManage && (
-                      <Button
-                        className="secondary"
-                        disabled={busy}
-                        onClick={() => testModel(m)}
-                      >
-                        Test connection
-                      </Button>
+                      <>
+                        <Button
+                          className="secondary"
+                          disabled={busy}
+                          onClick={() => {
+                            setEditing(m);
+                            setProvider(m.provider);
+                            setCredential(m.secret_id ?? "");
+                            setFormOpen(true);
+                            setError("");
+                            setNotice("");
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          className="danger"
+                          disabled={busy}
+                          onClick={() => {
+                            setDeleting(m);
+                            setError("");
+                            setNotice("");
+                          }}
+                        >
+                          Delete
+                        </Button>
+                        <Button
+                          className="secondary"
+                          disabled={busy}
+                          onClick={() => testModel(m)}
+                        >
+                          Test connection
+                        </Button>
+                      </>
                     )}
                   </td>
                 </tr>
@@ -535,6 +677,11 @@ export function AgentStudio({
             canBuild && (
               <Button
                 disabled={!models.data?.length}
+                title={
+                  !models.data?.length
+                    ? "Register a model in Models before creating an agent."
+                    : undefined
+                }
                 onClick={() => {
                   setDraft(emptyDraft(models.data![0]!.id));
                   setTab("configure");
@@ -558,6 +705,20 @@ export function AgentStudio({
             {notice}
           </p>
         )}
+        {!draft &&
+          canBuild &&
+          (models.isPending ? (
+            <p role="status">Loading workspace models…</p>
+          ) : models.error ? (
+            <p className="error-banner" role="alert">
+              Cannot load workspace models: {models.error.message}
+            </p>
+          ) : !models.data?.length ? (
+            <p className="notice" role="status">
+              To enable Create agent, register a model in Models for this
+              workspace.
+            </p>
+          ) : null)}
         {!draft &&
           (agents.isPending ? (
             <p className="empty">Loading agents…</p>
