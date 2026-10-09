@@ -13,6 +13,7 @@ import { Button } from "./button";
 import { Citations, type Citation } from "./citations";
 import { ToolTraces, type ToolTrace } from "./tool-studio";
 import { ChatPanel } from "./chat-panel";
+import { AgentAttachments } from "./agent-attachments";
 import { requestJson } from "./agent-client";
 type Model = {
   id: string;
@@ -528,9 +529,11 @@ export function Models({
 export function AgentStudio({
   workspaceId,
   role,
+  onNavigate,
 }: {
   workspaceId: string;
   role: string;
+  onNavigate: (destination: "Knowledge" | "Tools") => void;
 }) {
   const cache = useQueryClient();
   const canBuild = [
@@ -567,6 +570,16 @@ export function AgentStudio({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [savedDraft, setSavedDraft] = useState("");
   const dirty = !!draft?.id && JSON.stringify(draft) !== savedDraft;
+  function navigateAttachments(destination: "Knowledge" | "Tools") {
+    if (
+      (dirty || (draft && !draft.id)) &&
+      !window.confirm(
+        "Leave this agent? Unsaved changes will be lost. Save your agent first to keep them.",
+      )
+    )
+      return;
+    onNavigate(destination);
+  }
   const [tab, setTab] = useState<"configure" | "playground" | "publish">(
     "configure",
   );
@@ -820,42 +833,32 @@ export function AgentStudio({
                       />
                     </label>
                   </div>
-                  <h4>Attached tools</h4>
-                  <p className="muted">
-                    Agents select from these approved read-only tools. Public
-                    deployments require public access on every attachment. Tool
-                    definitions use current workspace settings.
-                  </p>
-                  {tools.error && (
-                    <p className="error">{tools.error.message}</p>
-                  )}
-                  {tools.data
-                    ?.filter((t) => t.enabled)
-                    .map((t) => (
-                      <label className="checkbox-row" key={t.id}>
-                        <input
-                          type="checkbox"
-                          checked={draft.config.tools.toolIds.includes(t.id)}
-                          onChange={(e) =>
-                            configField("tools", {
-                              ...draft.config.tools,
-                              toolIds: e.target.checked
-                                ? [...draft.config.tools.toolIds, t.id]
-                                : draft.config.tools.toolIds.filter(
-                                    (id) => id !== t.id,
-                                  ),
-                            })
-                          }
-                        />
-                        {t.name} ·{" "}
-                        {t.public_access ? "Public access" : "Workspace only"}
-                      </label>
-                    ))}
-                  {!tools.data?.length && (
-                    <p className="muted">
-                      Ask a workspace administrator to register tools in Tools.
-                    </p>
-                  )}
+                  <AgentAttachments
+                    kind="tools"
+                    items={tools.data?.filter((t) => t.enabled) ?? []}
+                    selected={draft.config.tools.toolIds}
+                    loading={tools.isPending}
+                    error={tools.error}
+                    onRetry={() => {
+                      void tools.refetch();
+                    }}
+                    onNavigate={() => navigateAttachments("Tools")}
+                    canManage={[
+                      "owner",
+                      "org_admin",
+                      "workspace_admin",
+                    ].includes(role)}
+                    onToggle={(id, checked) =>
+                      configField("tools", {
+                        ...draft.config.tools,
+                        toolIds: checked
+                          ? [...draft.config.tools.toolIds, id]
+                          : draft.config.tools.toolIds.filter(
+                              (value) => value !== id,
+                            ),
+                      })
+                    }
+                  />
                   {!!draft.config.tools.toolIds.length && (
                     <label>
                       Maximum tool calls per response
@@ -873,44 +876,28 @@ export function AgentStudio({
                       />
                     </label>
                   )}
-                  <h4>Attached knowledge</h4>
-                  <p className="muted">
-                    Knowledge uses current ready sources. Public deployments
-                    require public chat access on every attached knowledge base.
-                  </p>
-                  {knowledge.error && (
-                    <p className="error">{knowledge.error.message}</p>
-                  )}
-                  <div className="checkbox-row">
-                    {knowledge.data?.map((k) => (
-                      <label key={k.id}>
-                        <input
-                          type="checkbox"
-                          checked={draft.config.rag.knowledgeBaseIds.includes(
-                            k.id,
-                          )}
-                          onChange={(e) =>
-                            configField("rag", {
-                              ...draft.config.rag,
-                              knowledgeBaseIds: e.target.checked
-                                ? [...draft.config.rag.knowledgeBaseIds, k.id]
-                                : draft.config.rag.knowledgeBaseIds.filter(
-                                    (id) => id !== k.id,
-                                  ),
-                            })
-                          }
-                        />
-                        {k.name} ·{" "}
-                        {k.public_access ? "Public chat enabled" : "Internal"}
-                      </label>
-                    ))}
-                  </div>
-                  {!knowledge.data?.length && (
-                    <p className="muted">
-                      Create a knowledge base in Knowledge to enable grounded
-                      answers.
-                    </p>
-                  )}
+                  <AgentAttachments
+                    kind="knowledge"
+                    items={knowledge.data ?? []}
+                    selected={draft.config.rag.knowledgeBaseIds}
+                    loading={knowledge.isPending}
+                    error={knowledge.error}
+                    onRetry={() => {
+                      void knowledge.refetch();
+                    }}
+                    onNavigate={() => navigateAttachments("Knowledge")}
+                    canManage={canBuild}
+                    onToggle={(id, checked) =>
+                      configField("rag", {
+                        ...draft.config.rag,
+                        knowledgeBaseIds: checked
+                          ? [...draft.config.rag.knowledgeBaseIds, id]
+                          : draft.config.rag.knowledgeBaseIds.filter(
+                              (value) => value !== id,
+                            ),
+                      })
+                    }
+                  />
                   {!!draft.config.rag.knowledgeBaseIds.length && (
                     <div className="form-grid">
                       <label>
