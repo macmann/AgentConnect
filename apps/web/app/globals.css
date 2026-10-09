@@ -1508,3 +1508,33 @@ form small {
     padding: 16px;
   }
 }
+
+.tool-studio form {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tool-studio textarea {
+  min-height: 90px;
+}
+.tool-studio pre,
+.tool-traces pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
+}
+.tool-traces details,
+.tool-connector {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 8px 0;
+}
+.tool-traces summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+.tool-studio td button {
+  margin: 3px;
+}

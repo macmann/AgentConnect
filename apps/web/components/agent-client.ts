@@ -17,6 +17,12 @@ export async function requestJson<T>(
   return data as T;
 }
 export interface StreamData {
+  error_code?: string;
+  executionId?: string;
+  toolId?: string;
+  name?: string;
+  durationMs?: number;
+  result?: unknown;
   conversationId?: string;
   guestToken?: string;
   text?: string;

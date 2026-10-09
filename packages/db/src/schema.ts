@@ -273,3 +273,51 @@ export const knowledgeJobs = pgTable("knowledge_jobs", {
   finishedAt: timestamp("finished_at", { withTimezone: true }),
   createdAt: created(),
 });
+export const mcpConnectors = pgTable("mcp_connectors", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  url: text("url").notNull(),
+  secretId: uuid("secret_id"),
+  enabled: boolean("enabled").notNull().default(true),
+  capabilities: jsonb("capabilities").notNull(),
+  discoveredAt: timestamp("discovered_at", { withTimezone: true }),
+  revision: integer("revision").notNull().default(1),
+  createdAt: created(),
+});
+export const tools = pgTable("tools", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  kind: text("kind").notNull(),
+  config: jsonb("config").notNull(),
+  inputSchema: jsonb("input_schema").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  publicAccess: boolean("public_access").notNull().default(false),
+  timeoutMs: integer("timeout_ms").notNull(),
+  revision: integer("revision").notNull().default(1),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  createdAt: created(),
+});
+export const toolExecutions = pgTable("tool_executions", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  toolId: uuid("tool_id").notNull(),
+  runId: uuid("run_id"),
+  userId: uuid("user_id"),
+  toolName: text("tool_name").notNull(),
+  toolRevision: integer("tool_revision").notNull(),
+  arguments: jsonb("arguments").notNull(),
+  result: jsonb("result"),
+  status: text("status").notNull(),
+  errorCode: text("error_code"),
+  durationMs: integer("duration_ms"),
+  startedAt: timestamp("started_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});

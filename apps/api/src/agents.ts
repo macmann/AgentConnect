@@ -1,3 +1,4 @@
+import { validateToolIds, runAgentTools, ToolError } from "./tool-runtime.js";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
@@ -260,7 +261,23 @@ async function streamChat(
       if (!sources.length) throw new KnowledgeError("NO_RELEVANT_SOURCES");
       write("sources", { sources });
     }
-    const grounding = sources.length ? groundedPrompt(sources) : "";
+    const toolsResult = await runAgentTools(
+      c,
+      provider,
+      message,
+      {
+        workspaceId: conversation.workspace_id,
+        organizationId: conversation.organization_id,
+        publicAccess: !!conversation.deployment_id,
+        userId: conversation.user_id ?? undefined,
+        runId,
+      },
+      controller.signal,
+      (data) => write("tool", data),
+      model.contextWindow - c.maxOutputTokens,
+    );
+    const grounding =
+      (sources.length ? groundedPrompt(sources) : "") + toolsResult.grounding;
     // Conservative UTF-8 byte budget avoids sending an oversized context to providers.
     if (
       Buffer.byteLength(JSON.stringify(messages)) +
@@ -282,8 +299,14 @@ async function streamChat(
         if (output.length > 256000) throw new ProviderError("OUTPUT_LIMIT");
         write("token", { text: event.text });
       } else {
-        inputTokens = event.inputTokens;
-        outputTokens = event.outputTokens;
+        inputTokens =
+          event.inputTokens === null || toolsResult.inputTokens === null
+            ? null
+            : event.inputTokens + toolsResult.inputTokens;
+        outputTokens =
+          event.outputTokens === null || toolsResult.outputTokens === null
+            ? null
+            : event.outputTokens + toolsResult.outputTokens;
       }
     }
     citations = citedSources(output, sources);
@@ -301,7 +324,9 @@ async function streamChat(
     status = controller.signal.aborted ? "cancelled" : "failed";
     errorCode = controller.signal.aborted
       ? "CANCELLED"
-      : e instanceof ProviderError || e instanceof KnowledgeError
+      : e instanceof ProviderError ||
+          e instanceof KnowledgeError ||
+          e instanceof ToolError
         ? e.code
         : "RUNTIME_ERROR";
     span.setStatus({ code: SpanStatusCode.ERROR, message: errorCode });
@@ -326,7 +351,10 @@ async function streamChat(
                 ? "The response could not be verified against its source references."
                 : errorCode === "KNOWLEDGE_NOT_PUBLIC"
                   ? "This knowledge is unavailable in public chat."
-                  : c.fallbackResponse,
+                  : errorCode.startsWith("TOOL_") ||
+                      errorCode.startsWith("MCP_")
+                    ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
+                    : c.fallbackResponse,
           status,
         });
       else
@@ -355,6 +383,7 @@ async function streamChat(
   }
 }
 export async function recoverInterruptedRuns() {
+  await sql`UPDATE tool_executions SET status='failed',error_code='PROCESS_INTERRUPTED',finished_at=now() WHERE status='running' AND started_at<now()-interval '5 minutes'`;
   await sql`UPDATE agent_runs SET status='failed',error_code='PROCESS_INTERRUPTED',finished_at=now() WHERE status='running' AND started_at<now()-interval '5 minutes'`;
 }
 export async function registerAgentRoutes(
@@ -497,6 +526,10 @@ export async function registerAgentRoutes(
         w.id,
         w.organization_id,
       );
+      await validateToolIds(data.config.tools.toolIds, {
+        workspaceId: w.id,
+        organizationId: w.organization_id,
+      });
       validateAgentModel(
         data.config,
         await modelSnapshot(data.config.modelId, w.id),
@@ -529,6 +562,10 @@ export async function registerAgentRoutes(
       w.id,
       w.organization_id,
     );
+    await validateToolIds(data.config.tools.toolIds, {
+      workspaceId: w.id,
+      organizationId: w.organization_id,
+    });
     validateAgentModel(
       data.config,
       await modelSnapshot(data.config.modelId, w.id),
@@ -570,6 +607,10 @@ export async function registerAgentRoutes(
           w.id,
           w.organization_id,
         );
+        await validateToolIds(c.tools.toolIds, {
+          workspaceId: w.id,
+          organizationId: w.organization_id,
+        });
         const model = await modelSnapshot(c.modelId, w.id);
         validateAgentModel(c, model);
         await connection(model, w.id, w.organization_id);
@@ -637,6 +678,11 @@ export async function registerAgentRoutes(
         w.organization_id,
         true,
       );
+      await validateToolIds(agentConfig.parse(v.config).tools.toolIds, {
+        workspaceId: w.id,
+        organizationId: w.organization_id,
+        publicAccess: true,
+      });
       const deploymentId = randomUUID();
       await sql.begin(async (tx) => {
         await tx`INSERT INTO deployments(id,organization_id,workspace_id,agent_id,version_id,name) VALUES (${deploymentId},${w.organization_id},${w.id},${a.id},${v.id},${data.name})`;
@@ -701,7 +747,7 @@ export async function registerAgentRoutes(
     >`SELECT * FROM conversations WHERE id=${id(params(r).conversationId)}`;
     if (!c) throw new HttpError(404, "Conversation not found");
     await workspaceAccess(u.id, c.workspace_id, "conversation:view");
-    return sql`SELECT m.id,m.role,m.content,m.citations,m.created_at,ar.status FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${c.id} ORDER BY m.created_at,m.id`;
+    return sql`SELECT m.id,m.role,m.content,m.citations,m.created_at,ar.status,m.run_id FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${c.id} ORDER BY m.created_at,m.id`;
   });
   app.post(
     "/agents/:agentId/chat",

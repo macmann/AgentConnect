@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowUp, Square, RefreshCw, Sparkles } from "lucide-react";
 import { Button } from "./button";
 import { Citations, type Citation } from "./citations";
+import { ToolTraces, type ToolTrace } from "./tool-studio";
 import { streamChat } from "./agent-client";
 export function ChatPanel({
   endpoint,
@@ -16,7 +17,12 @@ export function ChatPanel({
   starters?: string[];
 }) {
   const [messages, setMessages] = useState<
-    { role: "user" | "assistant"; content: string; citations?: Citation[] }[]
+    {
+      role: "user" | "assistant";
+      content: string;
+      citations?: Citation[];
+      tools?: ToolTrace[];
+    }[]
   >([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -53,6 +59,23 @@ export function ChatPanel({
             guest.current = data.guestToken ?? guest.current;
             setTraceId(data.traceId ?? "");
           }
+          if (event === "tool")
+            setMessages((m) =>
+              m.map((item, i) =>
+                i === m.length - 1
+                  ? {
+                      ...item,
+                      tools: [
+                        ...(item.tools ?? []).filter(
+                          (t) =>
+                            t.toolId !== data.toolId || t.status !== "running",
+                        ),
+                        { ...data, status: data.status ?? "running" },
+                      ],
+                    }
+                  : item,
+              ),
+            );
           if (event === "token")
             setMessages((m) =>
               m.map((item, i) =>
@@ -136,6 +159,7 @@ export function ChatPanel({
               {m.content || (busy ? "Thinking…" : "No response content.")}
             </div>
             {m.citations && <Citations sources={m.citations} />}
+            {m.tools && <ToolTraces traces={m.tools} />}
           </div>
         ))}
         <div ref={bottom} />

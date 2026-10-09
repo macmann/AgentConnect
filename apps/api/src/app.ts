@@ -1,3 +1,5 @@
+import { registerToolRoutes } from "./tools.js";
+import { ToolError } from "./tool-runtime.js";
 import { registerKnowledgeRoutes } from "./knowledge.js";
 import { KnowledgeError } from "@agentconnect/rag/parsers";
 import { ProviderError } from "@agentconnect/provider-sdk";
@@ -204,6 +206,8 @@ export async function buildApp(
       throw new HttpError(403, "Invalid request origin");
   });
   app.setErrorHandler((error, _r, reply) => {
+    if (error instanceof ToolError)
+      return reply.code(400).send({ error: error.code });
     if (error instanceof KnowledgeError)
       return reply
         .code(
@@ -598,6 +602,7 @@ export async function buildApp(
     await closeDb();
   });
   await registerKnowledgeRoutes(app, options.embeddingFactory);
+  await registerToolRoutes(app);
   await registerAgentRoutes(
     app,
     options.providerFactory,
