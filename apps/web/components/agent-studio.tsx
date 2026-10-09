@@ -1,0 +1,1230 @@
+"use client";
+import { useState, type FormEvent } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Plus,
+  ArrowUpRight,
+  Save,
+  Upload,
+  Trash2,
+  ChevronLeft,
+} from "lucide-react";
+import { Button } from "./button";
+import { Citations, type Citation } from "./citations";
+import { ChatPanel } from "./chat-panel";
+import { requestJson } from "./agent-client";
+type Model = {
+  id: string;
+  name: string;
+  provider: string;
+  model_id: string;
+  max_output_tokens: number;
+  context_window: number;
+};
+type AgentSummary = {
+  id: string;
+  name: string;
+  description: string;
+  revision: number;
+};
+type Prompt = {
+  role: string;
+  objective: string;
+  instructions: string;
+  constraints: string;
+  tone: string;
+  outputFormat: string;
+  escalationPolicy: string;
+  advanced: string | null;
+};
+type Config = {
+  schemaVersion: 1;
+  rag: {
+    knowledgeBaseIds: string[];
+    topK: number;
+    minScore: number;
+    mode: "vector" | "hybrid";
+    requireCitations: boolean;
+  };
+  category: "hybrid" | "structured" | "unstructured";
+  modelId: string;
+  prompt: Prompt;
+  temperature: number;
+  topP: number | null;
+  maxOutputTokens: number;
+  historyWindow: number;
+  language: string;
+  timezone: string;
+  welcomeMessage: string;
+  conversationStarters: string[];
+  fallbackResponse: string;
+};
+type Draft = {
+  id?: string;
+  name: string;
+  description: string;
+  publicDescription: string;
+  config: Config;
+  revision: number;
+};
+type AgentRow = {
+  id: string;
+  name: string;
+  description: string;
+  public_description: string;
+  draft_config: Config;
+  revision: number;
+};
+type Version = {
+  id: string;
+  version: number;
+  name: string;
+  config: Config;
+  published_at: string;
+};
+type Deployment = {
+  id: string;
+  name: string;
+  version: number;
+  enabled: boolean;
+};
+const defaultPrompt: Prompt = {
+  role: "You are a helpful assistant.",
+  objective: "",
+  instructions: "",
+  constraints: "",
+  tone: "",
+  outputFormat: "",
+  escalationPolicy: "",
+  advanced: null,
+};
+function emptyDraft(modelId: string): Draft {
+  return {
+    name: "",
+    description: "",
+    publicDescription: "",
+    revision: 1,
+    config: {
+      schemaVersion: 1,
+      rag: {
+        knowledgeBaseIds: [],
+        topK: 5,
+        minScore: 0.2,
+        mode: "hybrid",
+        requireCitations: true,
+      },
+      category: "hybrid",
+      modelId,
+      prompt: defaultPrompt,
+      temperature: 0.7,
+      topP: null,
+      maxOutputTokens: 1024,
+      historyWindow: 10,
+      language: "English",
+      timezone: "UTC",
+      welcomeMessage: "How can I help you today?",
+      conversationStarters: [],
+      fallbackResponse: "The model is unavailable. Please try again later.",
+    },
+  };
+}
+export function Models({
+  workspaceId,
+  role,
+}: {
+  workspaceId: string;
+  role: string;
+}) {
+  const cache = useQueryClient();
+  const models = useQuery({
+    queryKey: ["models", workspaceId],
+    queryFn: () => requestJson<Model[]>(`/workspaces/${workspaceId}/models`),
+  });
+  const canManage = ["owner", "org_admin", "workspace_admin"].includes(role);
+  const secrets = useQuery({
+    queryKey: ["secrets", workspaceId],
+    queryFn: () =>
+      requestJson<{ id: string; name: string }[]>(
+        `/workspaces/${workspaceId}/secrets`,
+      ),
+    enabled: canManage,
+  });
+  const [formOpen, setFormOpen] = useState(false);
+  const [provider, setProvider] = useState("openai");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function create(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    setBusy(true);
+    setError("");
+    try {
+      await requestJson(`/workspaces/${workspaceId}/models`, "POST", {
+        name: f.get("name"),
+        provider,
+        modelId: f.get("modelId"),
+        secretId: f.get("secretId") || null,
+        baseUrl:
+          provider === "openai-compatible" ? f.get("baseUrl") : undefined,
+        contextWindow: Number(f.get("contextWindow")),
+        maxOutputTokens: Number(f.get("maxOutputTokens")),
+        capabilities: {
+          streaming: true,
+          temperature: f.get("temperature") === "on",
+          topP: f.get("topP") === "on",
+        },
+      });
+      await cache.invalidateQueries({ queryKey: ["models", workspaceId] });
+      setFormOpen(false);
+      setNotice("Model registered");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function testModel(model: Model) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await requestJson<{ response: string }>(
+        `/models/${model.id}/test`,
+        "POST",
+      );
+      setNotice(`Connected to ${model.name}: ${result.response}`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h3>Model registry</h3>
+          <p>
+            Workspace-owned providers. Credentials stay encrypted on the server.
+          </p>
+        </div>
+        {canManage && (
+          <Button onClick={() => setFormOpen(!formOpen)}>
+            <Plus size={15} />
+            Register model
+          </Button>
+        )}
+      </div>
+      {error && (
+        <p className="error-banner" role="alert">
+          {error}
+        </p>
+      )}
+      {notice && (
+        <p className="notice" role="status">
+          {notice}
+        </p>
+      )}
+      {formOpen && (
+        <form className="studio-form" onSubmit={create}>
+          <div className="form-grid">
+            <label>
+              Display name
+              <input name="name" required maxLength={100} />
+            </label>
+            <label>
+              Provider
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+              >
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="gemini">Google Gemini</option>
+                <option value="openai-compatible">OpenAI-compatible</option>
+              </select>
+            </label>
+            <label>
+              Model identifier
+              <input
+                name="modelId"
+                required
+                placeholder="Provider model identifier"
+                maxLength={150}
+              />
+            </label>
+            <label>
+              Workspace credential
+              <select
+                name="secretId"
+                required={provider !== "openai-compatible"}
+              >
+                <option value="">
+                  {provider === "openai-compatible"
+                    ? "None (local provider)"
+                    : "Select encrypted secret"}
+                </option>
+                {secrets.data?.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+              <small>
+                Add credentials under Secrets first. Values are never returned
+                here.
+              </small>
+            </label>
+            {provider === "openai-compatible" && (
+              <label>
+                Base URL
+                <input
+                  name="baseUrl"
+                  type="url"
+                  required
+                  placeholder="https://approved-host.example/v1"
+                />
+                <small>
+                  Hostname must be approved in the API server settings.
+                </small>
+              </label>
+            )}
+            <label>
+              Context window
+              <input
+                name="contextWindow"
+                type="number"
+                defaultValue={32768}
+                min={256}
+                max={2000000}
+                required
+              />
+            </label>
+            <label>
+              Maximum output tokens
+              <input
+                name="maxOutputTokens"
+                type="number"
+                defaultValue={4096}
+                min={1}
+                max={32768}
+                required
+              />
+            </label>
+          </div>
+          <div className="checkbox-row">
+            <label>
+              <input name="temperature" type="checkbox" defaultChecked />
+              Supports temperature
+            </label>
+            <label>
+              <input name="topP" type="checkbox" defaultChecked />
+              Supports top-p
+            </label>
+          </div>
+          <Button disabled={busy} type="submit">
+            {busy ? "Registering…" : "Save model"}
+          </Button>
+        </form>
+      )}
+      {models.isPending ? (
+        <p className="empty">Loading models…</p>
+      ) : models.error ? (
+        <p className="error-banner">{models.error.message}</p>
+      ) : models.data?.length ? (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Provider / model</th>
+                <th>Context</th>
+                <th>Connection</th>
+              </tr>
+            </thead>
+            <tbody>
+              {models.data.map((m) => (
+                <tr key={m.id}>
+                  <td>{m.name}</td>
+                  <td>
+                    {m.provider}
+                    <small className="block muted">{m.model_id}</small>
+                  </td>
+                  <td>{m.context_window.toLocaleString()}</td>
+                  <td>
+                    {canManage && (
+                      <Button
+                        className="secondary"
+                        disabled={busy}
+                        onClick={() => testModel(m)}
+                      >
+                        Test connection
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="empty">
+          <h3>Connect your first model</h3>
+          <p>
+            Register a provider and encrypted workspace credential to enable
+            agent chat.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+export function AgentStudio({
+  workspaceId,
+  role,
+}: {
+  workspaceId: string;
+  role: string;
+}) {
+  const cache = useQueryClient();
+  const canBuild = [
+    "owner",
+    "org_admin",
+    "workspace_admin",
+    "builder",
+  ].includes(role);
+  const agents = useQuery({
+    queryKey: ["agents", workspaceId],
+    queryFn: () =>
+      requestJson<AgentSummary[]>(`/workspaces/${workspaceId}/agents`),
+  });
+  const models = useQuery({
+    queryKey: ["models", workspaceId],
+    queryFn: () => requestJson<Model[]>(`/workspaces/${workspaceId}/models`),
+  });
+  const knowledge = useQuery({
+    queryKey: ["knowledge", workspaceId],
+    queryFn: () =>
+      requestJson<{ id: string; name: string; public_access: boolean }[]>(
+        `/workspaces/${workspaceId}/knowledge-bases`,
+      ),
+    enabled: canBuild,
+  });
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [savedDraft, setSavedDraft] = useState("");
+  const dirty = !!draft?.id && JSON.stringify(draft) !== savedDraft;
+  const [tab, setTab] = useState<"configure" | "playground" | "publish">(
+    "configure",
+  );
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [chatKey, setChatKey] = useState(0);
+  const versions = useQuery({
+    queryKey: ["versions", draft?.id],
+    queryFn: () => requestJson<Version[]>(`/agents/${draft?.id}/versions`),
+    enabled: !!draft?.id,
+  });
+  const deployments = useQuery({
+    queryKey: ["deployments", draft?.id],
+    queryFn: () =>
+      requestJson<Deployment[]>(`/agents/${draft?.id}/deployments`),
+    enabled: !!draft?.id,
+  });
+  async function action(task: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await task();
+      await cache.invalidateQueries();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function open(id: string) {
+    await action(async () => {
+      const a = await requestJson<AgentRow>(`/agents/${id}`);
+      const loaded: Draft = {
+        id: a.id,
+        name: a.name,
+        description: a.description,
+        publicDescription: a.public_description,
+        config: {
+          ...a.draft_config,
+          rag: a.draft_config.rag ?? {
+            knowledgeBaseIds: [],
+            topK: 5,
+            minScore: 0.2,
+            mode: "hybrid",
+            requireCitations: true,
+          },
+        },
+        revision: a.revision,
+      };
+      setDraft(loaded);
+      setSavedDraft(JSON.stringify(loaded));
+      setChatKey((k) => k + 1);
+      setTab("configure");
+    });
+  }
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    if (!draft) return;
+    await action(async () => {
+      const result = await requestJson<{ id: string; revision: number }>(
+        draft.id ? `/agents/${draft.id}` : `/workspaces/${workspaceId}/agents`,
+        draft.id ? "PUT" : "POST",
+        draft,
+      );
+      const saved = { ...draft, id: result.id, revision: result.revision };
+      setDraft(saved);
+      setSavedDraft(JSON.stringify(saved));
+      setChatKey((k) => k + 1);
+      setNotice("Draft saved. Start a new chat to use these changes.");
+    });
+  }
+  function configField<K extends keyof Config>(field: K, value: Config[K]) {
+    if (draft)
+      setDraft({ ...draft, config: { ...draft.config, [field]: value } });
+  }
+  function promptField(field: keyof Prompt, value: string | null) {
+    if (draft)
+      configField("prompt", { ...draft.config.prompt, [field]: value });
+  }
+  return (
+    <>
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>{draft ? "Agent studio" : "Your agents"}</h3>
+            <p>
+              {draft
+                ? `Draft revision ${draft.revision}${dirty ? " · Unsaved changes" : ""} · save before chat or publication`
+                : "Create, test, version, and deploy your AI agents."}
+            </p>
+          </div>
+          {draft ? (
+            <button
+              className="text-button"
+              onClick={() => {
+                setDraft(null);
+                setError("");
+                setNotice("");
+              }}
+            >
+              <ChevronLeft size={14} />
+              All agents
+            </button>
+          ) : (
+            canBuild && (
+              <Button
+                disabled={!models.data?.length}
+                onClick={() => {
+                  setDraft(emptyDraft(models.data![0]!.id));
+                  setTab("configure");
+                  setError("");
+                  setNotice("");
+                }}
+              >
+                <Plus size={15} />
+                Create agent
+              </Button>
+            )
+          )}
+        </div>
+        {error && (
+          <p className="error-banner" role="alert">
+            {error}
+          </p>
+        )}
+        {notice && (
+          <p className="notice" role="status">
+            {notice}
+          </p>
+        )}
+        {!draft &&
+          (agents.isPending ? (
+            <p className="empty">Loading agents…</p>
+          ) : agents.error ? (
+            <p className="error-banner">{agents.error.message}</p>
+          ) : agents.data?.length ? (
+            <div className="workspace-grid">
+              {agents.data.map((a) => (
+                <button
+                  className="workspace-card"
+                  key={a.id}
+                  onClick={() => open(a.id)}
+                >
+                  <div>
+                    <h4>{a.name}</h4>
+                    <p>{a.description || "No description"}</p>
+                  </div>
+                  <ArrowUpRight size={17} />
+                  <span className="workspace-footer">
+                    Draft revision {a.revision}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="empty">
+              <h3>Your next agent starts here</h3>
+              <p>
+                {models.data?.length
+                  ? "Create an agent, define its instructions, and test it in the playground."
+                  : "Register a model in Models before creating an agent."}
+              </p>
+            </div>
+          ))}
+        {draft && (
+          <>
+            <div className="studio-tabs">
+              {(["configure", "playground", "publish"] as const).map((t) => (
+                <button
+                  className={tab === t ? "active" : ""}
+                  key={t}
+                  onClick={() => setTab(t)}
+                  disabled={(!draft.id || dirty) && t !== "configure"}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            {tab === "configure" && (
+              <form className="studio-form" onSubmit={save}>
+                <fieldset disabled={!canBuild || busy}>
+                  <div className="form-grid">
+                    <label>
+                      Agent name
+                      <input
+                        required
+                        value={draft.name}
+                        onChange={(e) =>
+                          setDraft({ ...draft, name: e.target.value })
+                        }
+                        maxLength={100}
+                      />
+                    </label>
+                    <label>
+                      Model
+                      <select
+                        value={draft.config.modelId}
+                        onChange={(e) => configField("modelId", e.target.value)}
+                        required
+                      >
+                        {models.data?.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Internal description
+                      <input
+                        value={draft.description}
+                        onChange={(e) =>
+                          setDraft({ ...draft, description: e.target.value })
+                        }
+                        maxLength={2000}
+                      />
+                    </label>
+                    <label>
+                      Public description
+                      <input
+                        value={draft.publicDescription}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            publicDescription: e.target.value,
+                          })
+                        }
+                        maxLength={2000}
+                      />
+                    </label>
+                  </div>
+                  <h4>Attached knowledge</h4>
+                  <p className="muted">
+                    Knowledge uses current ready sources. Public deployments
+                    require public chat access on every attached knowledge base.
+                  </p>
+                  {knowledge.error && (
+                    <p className="error">{knowledge.error.message}</p>
+                  )}
+                  <div className="checkbox-row">
+                    {knowledge.data?.map((k) => (
+                      <label key={k.id}>
+                        <input
+                          type="checkbox"
+                          checked={draft.config.rag.knowledgeBaseIds.includes(
+                            k.id,
+                          )}
+                          onChange={(e) =>
+                            configField("rag", {
+                              ...draft.config.rag,
+                              knowledgeBaseIds: e.target.checked
+                                ? [...draft.config.rag.knowledgeBaseIds, k.id]
+                                : draft.config.rag.knowledgeBaseIds.filter(
+                                    (id) => id !== k.id,
+                                  ),
+                            })
+                          }
+                        />
+                        {k.name} ·{" "}
+                        {k.public_access ? "Public chat enabled" : "Internal"}
+                      </label>
+                    ))}
+                  </div>
+                  {!knowledge.data?.length && (
+                    <p className="muted">
+                      Create a knowledge base in Knowledge to enable grounded
+                      answers.
+                    </p>
+                  )}
+                  {!!draft.config.rag.knowledgeBaseIds.length && (
+                    <div className="form-grid">
+                      <label>
+                        Knowledge passages
+                        <input
+                          type="number"
+                          min={1}
+                          max={10}
+                          value={draft.config.rag.topK}
+                          onChange={(e) =>
+                            configField("rag", {
+                              ...draft.config.rag,
+                              topK: Number(e.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        Knowledge minimum similarity
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={draft.config.rag.minScore}
+                          onChange={(e) =>
+                            configField("rag", {
+                              ...draft.config.rag,
+                              minScore: Number(e.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        Knowledge retrieval mode
+                        <select
+                          aria-label="Knowledge retrieval mode"
+                          value={draft.config.rag.mode}
+                          onChange={(e) =>
+                            configField("rag", {
+                              ...draft.config.rag,
+                              mode: e.target.value as "vector" | "hybrid",
+                            })
+                          }
+                        >
+                          <option value="hybrid">Hybrid vector + text</option>
+                          <option value="vector">Vector similarity</option>
+                        </select>
+                      </label>
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={draft.config.rag.requireCitations}
+                          onChange={(e) =>
+                            configField("rag", {
+                              ...draft.config.rag,
+                              requireCitations: e.target.checked,
+                            })
+                          }
+                        />{" "}
+                        Require citation references
+                      </label>
+                    </div>
+                  )}
+                  <h4>Prompt configuration</h4>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={draft.config.prompt.advanced !== null}
+                      onChange={(e) =>
+                        promptField("advanced", e.target.checked ? "" : null)
+                      }
+                    />
+                    Advanced prompt mode
+                  </label>
+                  {draft.config.prompt.advanced !== null ? (
+                    <label>
+                      System prompt
+                      <textarea
+                        value={draft.config.prompt.advanced}
+                        onChange={(e) =>
+                          promptField("advanced", e.target.value)
+                        }
+                        maxLength={24000}
+                      />
+                    </label>
+                  ) : (
+                    <div className="form-grid">
+                      {(
+                        [
+                          "role",
+                          "objective",
+                          "instructions",
+                          "constraints",
+                          "tone",
+                          "outputFormat",
+                          "escalationPolicy",
+                        ] as const
+                      ).map((key) => (
+                        <label key={key}>
+                          {
+                            {
+                              role: "Role",
+                              objective: "Objective",
+                              instructions: "Instructions",
+                              constraints: "Constraints",
+                              tone: "Tone",
+                              outputFormat: "Output format",
+                              escalationPolicy: "Escalation policy",
+                            }[key]
+                          }
+                          <textarea
+                            value={draft.config.prompt[key]}
+                            onChange={(e) => promptField(key, e.target.value)}
+                            maxLength={
+                              key === "instructions"
+                                ? 12000
+                                : key === "tone"
+                                  ? 1000
+                                  : key === "outputFormat" ||
+                                      key === "escalationPolicy"
+                                    ? 2000
+                                    : 4000
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  <div className="form-grid">
+                    <label>
+                      Temperature
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.1}
+                        value={draft.config.temperature}
+                        onChange={(e) =>
+                          configField("temperature", Number(e.target.value))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Top-p (optional)
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.1}
+                        value={draft.config.topP ?? ""}
+                        onChange={(e) =>
+                          configField(
+                            "topP",
+                            e.target.value === ""
+                              ? null
+                              : Number(e.target.value),
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Maximum output tokens
+                      <input
+                        type="number"
+                        min={1}
+                        max={32768}
+                        value={draft.config.maxOutputTokens}
+                        onChange={(e) =>
+                          configField("maxOutputTokens", Number(e.target.value))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Conversation history (turns)
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={draft.config.historyWindow}
+                        onChange={(e) =>
+                          configField("historyWindow", Number(e.target.value))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Language
+                      <input
+                        value={draft.config.language}
+                        onChange={(e) =>
+                          configField("language", e.target.value)
+                        }
+                      />
+                    </label>
+                    <label>
+                      Timezone
+                      <input
+                        value={draft.config.timezone}
+                        onChange={(e) =>
+                          configField("timezone", e.target.value)
+                        }
+                      />
+                    </label>
+                    <label>
+                      Welcome message
+                      <input
+                        value={draft.config.welcomeMessage}
+                        onChange={(e) =>
+                          configField("welcomeMessage", e.target.value)
+                        }
+                        maxLength={2000}
+                      />
+                    </label>
+                    <label>
+                      Fallback response
+                      <input
+                        value={draft.config.fallbackResponse}
+                        onChange={(e) =>
+                          configField("fallbackResponse", e.target.value)
+                        }
+                        maxLength={2000}
+                      />
+                    </label>
+                    <label>
+                      Conversation starters (one per line)
+                      <textarea
+                        value={draft.config.conversationStarters.join("\n")}
+                        onChange={(e) =>
+                          configField(
+                            "conversationStarters",
+                            e.target.value
+                              .split("\n")
+                              .filter(Boolean)
+                              .slice(0, 6),
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Category
+                      <select
+                        value={draft.config.category}
+                        onChange={(e) =>
+                          configField(
+                            "category",
+                            e.target.value as Config["category"],
+                          )
+                        }
+                      >
+                        <option value="hybrid">Hybrid</option>
+                        <option value="unstructured">Unstructured</option>
+                        <option value="structured">Structured</option>
+                      </select>
+                      <small>
+                        Knowledge and database tools are added in later phases.
+                      </small>
+                    </label>
+                  </div>
+                  {canBuild && (
+                    <div className="studio-actions">
+                      <Button type="submit" disabled={busy}>
+                        <Save size={15} />
+                        {busy ? "Saving…" : "Save draft"}
+                      </Button>
+                      {draft.id && (
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                "Archive this agent and disable its deployments?",
+                              )
+                            )
+                              void action(async () => {
+                                await requestJson(
+                                  `/agents/${draft.id}`,
+                                  "DELETE",
+                                );
+                                setDraft(null);
+                              });
+                          }}
+                        >
+                          <Trash2 size={14} />
+                          Archive agent
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </fieldset>
+              </form>
+            )}
+            {tab === "playground" && draft.id && canBuild && (
+              <ChatPanel
+                key={`${draft.id}-${chatKey}`}
+                endpoint={`/agents/${draft.id}/chat`}
+                name={draft.name}
+                welcomeMessage={draft.config.welcomeMessage}
+                starters={draft.config.conversationStarters}
+              />
+            )}{" "}
+            {tab === "playground" && !canBuild && (
+              <p className="empty">
+                Playground execution requires builder access.
+              </p>
+            )}
+            {tab === "publish" && draft.id && (
+              <div className="studio-form">
+                <div className="publish-heading">
+                  <div>
+                    <h3>Immutable versions</h3>
+                    <p className="muted">
+                      A deployment keeps its published prompt and model
+                      settings.
+                    </p>
+                  </div>
+                  {canBuild && (
+                    <Button
+                      disabled={busy}
+                      onClick={() =>
+                        action(async () => {
+                          const v = await requestJson<Version>(
+                            `/agents/${draft.id}/publish`,
+                            "POST",
+                            { revision: draft.revision },
+                          );
+                          setNotice(`Version ${v.version} published`);
+                        })
+                      }
+                    >
+                      <Upload size={15} />
+                      Publish saved draft
+                    </Button>
+                  )}
+                </div>
+                {versions.error && (
+                  <p className="error">{versions.error.message}</p>
+                )}
+                {versions.data?.map((v) => (
+                  <div className="version-row" key={v.id}>
+                    <div>
+                      <strong>Version {v.version}</strong>
+                      <small>{new Date(v.published_at).toLocaleString()}</small>
+                      <details>
+                        <summary>Inspect configuration</summary>
+                        <pre>{JSON.stringify(v.config, null, 2)}</pre>
+                      </details>
+                    </div>
+                    {canBuild && (
+                      <div className="studio-actions">
+                        <Button
+                          className="secondary"
+                          disabled={busy}
+                          onClick={() =>
+                            action(async () => {
+                              await requestJson(
+                                `/agents/${draft.id}/deployments`,
+                                "POST",
+                                {
+                                  versionId: v.id,
+                                  name: `${draft.name} v${v.version}`,
+                                },
+                              );
+                              setNotice("Hosted deployment created");
+                            })
+                          }
+                        >
+                          Create hosted deployment
+                        </Button>
+                        <button
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() =>
+                            action(async () => {
+                              await requestJson(
+                                `/agents/${draft.id}/rollback/${v.id}`,
+                                "POST",
+                                { revision: draft.revision },
+                              );
+                              await open(draft.id!);
+                              setNotice(
+                                `Version ${v.version} restored into draft. Deployments are unchanged.`,
+                              );
+                            })
+                          }
+                        >
+                          Restore draft
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {!versions.data?.length && (
+                  <p className="empty">
+                    Publish the saved draft to create its first version.
+                  </p>
+                )}
+                <h3 className="section-gap">Hosted deployments</h3>
+                {deployments.data?.map((d) => (
+                  <div className="version-row" key={d.id}>
+                    <div>
+                      <strong>{d.name}</strong>
+                      <small>
+                        Version {d.version} ·{" "}
+                        {d.enabled ? "Active" : "Disabled"}
+                      </small>
+                    </div>
+                    {d.enabled && (
+                      <div className="studio-actions">
+                        <a
+                          href={`/chat/${d.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="button secondary"
+                        >
+                          Open hosted chat
+                          <ArrowUpRight size={14} />
+                        </a>
+                        {canBuild && (
+                          <button
+                            className="text-button"
+                            disabled={busy}
+                            onClick={() =>
+                              action(async () => {
+                                await requestJson(
+                                  `/agents/${draft.id}/deployments/${d.id}`,
+                                  "DELETE",
+                                );
+                                setNotice("Deployment disabled");
+                              })
+                            }
+                          >
+                            Disable
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {!deployments.data?.length && (
+                  <p className="empty">
+                    Create a deployment from a published version.
+                  </p>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </section>
+    </>
+  );
+}
+export function Conversations({ workspaceId }: { workspaceId: string }) {
+  const [pages, setPages] = useState<
+    { id: string; name: string; created_at: string }[]
+  >([]);
+  const [before, setBefore] = useState("");
+  const [beforeId, setBeforeId] = useState("");
+  const [selected, setSelected] = useState("");
+  const conversations = useQuery({
+    queryKey: ["conversations", workspaceId, before, beforeId],
+    queryFn: () =>
+      requestJson<{ id: string; name: string; created_at: string }[]>(
+        `/workspaces/${workspaceId}/conversations${before ? `?before=${encodeURIComponent(before)}&beforeId=${beforeId}` : ""}`,
+      ),
+  });
+  const messages = useQuery({
+    queryKey: ["conversation-messages", selected],
+    queryFn: () =>
+      requestJson<
+        {
+          id: string;
+          role: string;
+          content: string;
+          status: string;
+          citations: Citation[];
+        }[]
+      >(`/conversations/${selected}/messages`),
+    enabled: !!selected,
+  });
+  const rows = [...pages, ...(conversations.data ?? [])];
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h3>Conversation history</h3>
+        <p>Workspace-scoped conversation records and run outcomes.</p>
+      </div>
+      {conversations.error && (
+        <p className="error-banner">{conversations.error.message}</p>
+      )}
+      <div className="conversation-grid">
+        <div>
+          {rows.map((c) => (
+            <button
+              key={c.id}
+              className={`conversation-row ${selected === c.id ? "selected" : ""}`}
+              onClick={() => setSelected(c.id)}
+            >
+              <strong>{c.name}</strong>
+              <small>{new Date(c.created_at).toLocaleString()}</small>
+            </button>
+          ))}
+          {conversations.data?.length === 30 && (
+            <Button
+              className="secondary"
+              onClick={() => {
+                setPages(rows);
+                const last = rows[rows.length - 1]!;
+                setBefore(last.created_at);
+                setBeforeId(last.id);
+              }}
+            >
+              Load more
+            </Button>
+          )}
+          {!rows.length && (
+            <p className="empty">
+              Conversations appear after a playground or hosted run.
+            </p>
+          )}
+        </div>
+        <div className="conversation-detail">
+          {messages.isPending && selected && <p>Loading messages…</p>}
+          {messages.error && <p className="error">{messages.error.message}</p>}
+          {messages.data?.map((m) => (
+            <div key={m.id} className={`chat-message ${m.role}`}>
+              <small>
+                {m.role} · {m.status}
+              </small>
+              <div>{m.content}</div>
+              <Citations sources={m.citations ?? []} />
+            </div>
+          ))}
+          {!selected && (
+            <p className="empty">
+              Select a conversation to inspect its messages.
+            </p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}

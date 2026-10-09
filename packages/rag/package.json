@@ -1,0 +1,20 @@
+{
+  "name": "@agentconnect/rag",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "fast-xml-parser": "^5.3.8",
+    "cheerio": "^1.2.0",
+    "csv-parse": "^6.1.0",
+    "pdfjs-dist": "^5.4.624",
+    "@agentconnect/schemas": "workspace:*"
+  }
+}

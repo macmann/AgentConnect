@@ -1,0 +1,275 @@
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  jsonb,
+  integer,
+  boolean,
+  customType,
+} from "drizzle-orm/pg-core";
+const created = () =>
+  timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
+export const users = pgTable("users", {
+  id: uuid("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  name: text("name").notNull(),
+  passwordHash: text("password_hash").notNull(),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  createdAt: created(),
+});
+export const organizations = pgTable("organizations", {
+  id: uuid("id").primaryKey(),
+  name: text("name").notNull(),
+  createdAt: created(),
+});
+export const workspaces = pgTable("workspaces", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  name: text("name").notNull(),
+  createdAt: created(),
+});
+export const memberships = pgTable("memberships", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  workspaceId: uuid("workspace_id"),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  role: text("role").notNull(),
+});
+export const sessions = pgTable("sessions", {
+  idHash: text("id_hash").primaryKey(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: created(),
+});
+export const secrets = pgTable("secrets", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  ciphertext: jsonb("ciphertext").notNull(),
+  createdBy: uuid("created_by").notNull(),
+  createdAt: created(),
+});
+export const auditEvents = pgTable("audit_events", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id"),
+  workspaceId: uuid("workspace_id"),
+  actorId: uuid("actor_id").notNull(),
+  action: text("action").notNull(),
+  entityId: uuid("entity_id"),
+  metadata: jsonb("metadata").notNull(),
+  ip: text("ip").notNull(),
+  userAgent: text("user_agent").notNull(),
+  createdAt: created(),
+});
+// Explicit migration is authoritative for composite foreign keys and indexes.
+
+export const modelConfigurations = pgTable("model_configurations", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  provider: text("provider").notNull(),
+  modelId: text("model_id").notNull(),
+  baseUrl: text("base_url").notNull(),
+  secretId: uuid("secret_id"),
+  contextWindow: integer("context_window").notNull(),
+  maxOutputTokens: integer("max_output_tokens").notNull(),
+  capabilities: jsonb("capabilities").notNull(),
+  createdAt: created(),
+});
+
+export const agents = pgTable("agents", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  publicDescription: text("public_description").notNull(),
+  draftConfig: jsonb("draft_config").notNull(),
+  revision: integer("revision").notNull(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  createdBy: uuid("created_by").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  createdAt: created(),
+});
+
+export const agentVersions = pgTable("agent_versions", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  agentId: uuid("agent_id").notNull(),
+  version: integer("version").notNull(),
+  name: text("name").notNull(),
+  publicDescription: text("public_description").notNull(),
+  config: jsonb("config").notNull(),
+  modelSnapshot: jsonb("model_snapshot").notNull(),
+  modelId: uuid("model_id").notNull(),
+  publishedBy: uuid("published_by").notNull(),
+  publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+});
+
+export const deployments = pgTable("deployments", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  agentId: uuid("agent_id").notNull(),
+  versionId: uuid("version_id").notNull(),
+  name: text("name").notNull(),
+  enabled: boolean("enabled").notNull(),
+  createdAt: created(),
+});
+
+export const conversations = pgTable("conversations", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  agentId: uuid("agent_id").notNull(),
+  versionId: uuid("version_id"),
+  deploymentId: uuid("deployment_id"),
+  userId: uuid("user_id"),
+  guestTokenHash: text("guest_token_hash"),
+  configSnapshot: jsonb("config_snapshot").notNull(),
+  modelSnapshot: jsonb("model_snapshot").notNull(),
+  createdAt: created(),
+});
+
+export const agentRuns = pgTable("agent_runs", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  status: text("status").notNull(),
+  traceId: text("trace_id").notNull(),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  errorCode: text("error_code"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  retrieval: jsonb("retrieval").notNull(),
+  retrievalMs: integer("retrieval_ms"),
+});
+
+export const messages = pgTable("messages", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  runId: uuid("run_id").notNull(),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  citations: jsonb("citations").notNull(),
+  createdAt: created(),
+});
+
+const vector = customType<{ data: string }>({ dataType: () => "vector" });
+const tsvector = customType<{ data: string }>({ dataType: () => "tsvector" });
+
+export const embeddingModels = pgTable("embedding_models", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  provider: text("provider").notNull(),
+  modelId: text("model_id").notNull(),
+  baseUrl: text("base_url").notNull(),
+  secretId: uuid("secret_id"),
+  dimensions: integer("dimensions").notNull(),
+  createdAt: created(),
+});
+
+export const knowledgeBases = pgTable("knowledge_bases", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  embeddingModelId: uuid("embedding_model_id").notNull(),
+  dimensions: integer("dimensions").notNull(),
+  chunkSize: integer("chunk_size").notNull(),
+  chunkOverlap: integer("chunk_overlap").notNull(),
+  chunkStrategy: text("chunk_strategy").notNull(),
+  publicAccess: boolean("public_access").notNull(),
+  revision: integer("revision").notNull(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  createdAt: created(),
+});
+
+export const knowledgeSources = pgTable("knowledge_sources", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  knowledgeBaseId: uuid("knowledge_base_id").notNull(),
+  kind: text("kind").notNull(),
+  title: text("title").notNull(),
+  filename: text("filename"),
+  objectKey: text("object_key"),
+  sourceUrl: text("source_url"),
+  byteSize: integer("byte_size").notNull(),
+  metadata: jsonb("metadata").notNull(),
+  revision: integer("revision").notNull(),
+  status: text("status").notNull(),
+  errorCode: text("error_code"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  createdAt: created(),
+});
+
+export const knowledgeDocuments = pgTable("knowledge_documents", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  sourceId: uuid("source_id").notNull(),
+  knowledgeBaseId: uuid("knowledge_base_id").notNull(),
+  title: text("title").notNull(),
+  sourceUrl: text("source_url"),
+  metadata: jsonb("metadata").notNull(),
+  pageCount: integer("page_count").notNull(),
+  contentHash: text("content_hash").notNull(),
+  revision: integer("revision").notNull(),
+  createdAt: created(),
+});
+
+export const knowledgeChunks = pgTable("knowledge_chunks", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  documentId: uuid("document_id").notNull(),
+  sourceId: uuid("source_id").notNull(),
+  knowledgeBaseId: uuid("knowledge_base_id").notNull(),
+  embeddingModelId: uuid("embedding_model_id").notNull(),
+  dimensions: integer("dimensions").notNull(),
+  ordinal: integer("ordinal").notNull(),
+  content: text("content").notNull(),
+  page: integer("page"),
+  heading: text("heading"),
+  metadata: jsonb("metadata").notNull(),
+  embedding: vector("embedding").notNull(),
+  searchVector: tsvector("search_vector").notNull(),
+});
+
+export const knowledgeJobs = pgTable("knowledge_jobs", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  sourceId: uuid("source_id").notNull(),
+  knowledgeBaseId: uuid("knowledge_base_id").notNull(),
+  sourceRevision: integer("source_revision").notNull(),
+  payload: jsonb("payload").notNull(),
+  status: text("status").notNull(),
+  attempts: integer("attempts").notNull(),
+  availableAt: timestamp("available_at", { withTimezone: true }).notNull(),
+  lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  leaseToken: uuid("lease_token"),
+  errorCode: text("error_code"),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  createdAt: created(),
+});

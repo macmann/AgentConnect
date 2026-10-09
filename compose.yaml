@@ -1,0 +1,75 @@
+name: agentconnect
+services:
+  mail:
+    image: axllent/mailpit:latest@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48
+    ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 2s
+      retries: 30
+  postgres:
+    image: pgvector/pgvector:pg18@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11
+    environment:
+      POSTGRES_USER: agentconnect
+      POSTGRES_DB: agentconnect
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run pnpm local:init}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["postgres:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentconnect -d agentconnect"]
+      interval: 2s
+      retries: 30
+  redis:
+    image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
+  storage:
+    image: rustfs/rustfs:latest@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:?Run pnpm local:init}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:?Run pnpm local:init}
+      RUSTFS_VOLUMES: /data
+      RUSTFS_CONSOLE_ENABLE: "false"
+    ports: ["127.0.0.1:9000:9000"]
+    volumes: ["storage:/data"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 2s
+      retries: 30
+  temporal-init:
+    image: temporalio/temporal:latest@sha256:ad4c82c97bd12b417d1ea942610dbcd511afb250c4d5ed26c694009533df447e
+    user: "0:0"
+    entrypoint: /bin/sh
+    command: ["-c", "chown 1000:1000 /data"]
+    volumes: ["temporal:/data"]
+  temporal:
+    image: temporalio/temporal:latest@sha256:ad4c82c97bd12b417d1ea942610dbcd511afb250c4d5ed26c694009533df447e
+    depends_on:
+      temporal-init:
+        condition: service_completed_successfully
+    environment:
+      NO_PROXY: localhost,127.0.0.1,0.0.0.0,::1
+      no_proxy: localhost,127.0.0.1,0.0.0.0,::1
+    command: server start-dev --ip 0.0.0.0 --db-filename /data/temporal.db
+    ports: ["127.0.0.1:7233:7233", "127.0.0.1:8233:8233"]
+    volumes: ["temporal:/data"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "temporal",
+          "operator",
+          "cluster",
+          "health",
+          "--address",
+          "localhost:7233",
+        ]
+      interval: 2s
+      retries: 30
+volumes:
+  postgres:
+  storage:
+  temporal:
