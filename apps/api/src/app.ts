@@ -145,6 +145,7 @@ export async function buildApp(
     logController: new QuietLogs(),
     logger: config.NODE_ENV !== "test",
     bodyLimit: 32 * 1024,
+    ajv: { customOptions: { coerceTypes: false } },
     trustProxy: false,
   });
   const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 2 });

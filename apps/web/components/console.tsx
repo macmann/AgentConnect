@@ -565,6 +565,7 @@ function Studio() {
               <p className="empty">Choose or create a workspace first.</p>
             ) : view === "Agents" ? (
               <AgentStudio
+                onNavigate={setView}
                 key={wid}
                 workspaceId={wid}
                 role={currentWorkspace?.role ?? "viewer"}
