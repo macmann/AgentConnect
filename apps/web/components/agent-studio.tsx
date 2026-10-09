@@ -535,6 +535,11 @@ export function AgentStudio({
             canBuild && (
               <Button
                 disabled={!models.data?.length}
+                title={
+                  !models.data?.length
+                    ? "Register a model in Models before creating an agent."
+                    : undefined
+                }
                 onClick={() => {
                   setDraft(emptyDraft(models.data![0]!.id));
                   setTab("configure");
@@ -558,6 +563,20 @@ export function AgentStudio({
             {notice}
           </p>
         )}
+        {!draft &&
+          canBuild &&
+          (models.isPending ? (
+            <p role="status">Loading workspace models…</p>
+          ) : models.error ? (
+            <p className="error-banner" role="alert">
+              Cannot load workspace models: {models.error.message}
+            </p>
+          ) : !models.data?.length ? (
+            <p className="notice" role="status">
+              To enable Create agent, register a model in Models for this
+              workspace.
+            </p>
+          ) : null)}
         {!draft &&
           (agents.isPending ? (
             <p className="empty">Loading agents…</p>

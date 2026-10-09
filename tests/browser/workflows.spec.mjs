@@ -140,6 +140,29 @@ test("Visual workflow publishes, pauses for review and resumes two agent handoff
   await page.getByLabel("Workflow name", { exact: true }).fill("Launch review");
   await page.getByRole("button", { name: "Two-agent review template" }).click();
   await expect(page.locator(".react-flow__node")).toHaveCount(5);
+  const canvasWarnings = [];
+  page.on("console", (message) => {
+    if (message.text().includes("not initialized"))
+      canvasWarnings.push(message.text());
+  });
+  const researchNode = page.locator('.react-flow__node[data-id="research"]');
+  await researchNode.scrollIntoViewIfNeeded();
+  const beforeDrag = await researchNode.getAttribute("style");
+  for (let i = 0; i < 2; i++) {
+    const box = await researchNode.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(
+      box.x + box.width / 2 + 35,
+      box.y + box.height / 2 + 30,
+      { steps: 10 },
+    );
+    await page.mouse.up();
+  }
+  await expect(researchNode).not.toHaveAttribute("style", beforeDrag);
+  expect(canvasWarnings).toEqual([]);
+
   await page
     .getByRole("button", { name: "Save workflow", exact: true })
     .click();

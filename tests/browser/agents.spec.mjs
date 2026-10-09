@@ -95,6 +95,15 @@ test("model registration, agent editor, streaming playground, publish and anonym
     },
   ]);
   await page.goto("/");
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Create agent", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText(
+      "To enable Create agent, register a model in Models for this workspace.",
+    ),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Models", exact: true }).click();
   await page
     .getByRole("button", { name: "Register model", exact: true })

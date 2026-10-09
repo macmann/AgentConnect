@@ -88,3 +88,9 @@ The API exposes `verificationRequired` separately from the actual verified-email
 - Lint, typecheck and all eight build targets passed.
 - The focused browser scenario passed against compiled API and production web output with local bypass enabled: the verification banner is absent, an unverified account creates an organization, and its verification timestamp remains null. That scenario explicitly skips when a server requires verification.
 - This cloud instance's ignored `.env` now disables the development verification gate. No account verification timestamps or existing SMTP credentials were changed. SMTP and Mailpit configuration are documented in deployment.md.
+
+## Phase 4 local usability fixes
+
+User-provided logs contained repeated generic workflow-worker failures and React Flow node initialization warnings. Generic worker messages do not establish the underlying database error. Worker diagnostics now expose sanitized error codes with migration/connection hints and retry backoff. A focused unit test confirms that raw connection/provider details are not logged.
+
+Canvas nodes now retain React Flow measurement state through controlled node changes. The workflow browser scenario drags a node twice, checks position changes, asserts no initialization warning, and completes publication/approval/resume. The agent browser scenario checks the disabled button and missing-model explanation before registration, then creates an agent after registration. Both browser scenarios passed against compiled services and production web output; typecheck, lint and all eight build targets passed.

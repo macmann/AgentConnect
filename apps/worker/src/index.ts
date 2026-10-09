@@ -1,3 +1,4 @@
+import { workerFailure } from "./failure.js";
 import {
   processWorkflowRun,
   closeWorkflowSaver,
@@ -19,13 +20,19 @@ async function loop(
   delay: number,
   label: string,
 ) {
+  let failures = 0;
   while (!stopping) {
     try {
       await task();
-    } catch {
-      console.error(label + " failed; durable jobs retained");
+      failures = 0;
+    } catch (error) {
+      failures++;
+      console.error(workerFailure(error, label));
     }
-    if (!stopping) await new Promise((r) => setTimeout(r, delay));
+    if (!stopping)
+      await new Promise((r) =>
+        setTimeout(r, Math.min(30000, delay * 2 ** Math.min(failures, 5))),
+      );
   }
 }
 await Promise.all([

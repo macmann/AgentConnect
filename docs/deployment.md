@@ -53,3 +53,9 @@ For development without an inbox, set `REQUIRE_EMAIL_VERIFICATION=false` in the 
 To enable verification, set `REQUIRE_EMAIL_VERIFICATION=true`, configure `SMTP_URL` and `MAIL_FROM` in `.env` (or your deployment's secure environment settings), and restart both API and worker. The worker delivers the persisted email outbox. The default development SMTP service is Mailpit: messages appear in its local capture inbox rather than your personal mailbox. On your own machine, open `http://localhost:8025` to read captured verification emails. Real SMTP credentials belong in secure environment settings and must not be committed. SMTP administration through the product UI is not implemented yet.
 
 API tests that exercise the required-verification flow can be run with `REQUIRE_EMAIL_VERIFICATION=true pnpm test`. Browser foundation tests still verify the real SMTP capture and verification flow even when local bypass is enabled.
+
+## After pulling a new phase
+
+Stop `pnpm dev`, pull the intended branch, run `pnpm install --frozen-lockfile` and `pnpm db:migrate`, then restart `pnpm dev`. Phase 4 adds workflow tables in migration 0005. Older database schemas can produce repeated workflow worker failures even when API health reports ready. Worker diagnostics now print sanitized error codes and a migration hint for missing tables/columns, with bounded backoff during repeated failures.
+
+Create agent requires a registered model in the selected workspace. Administrators register it under Models; builders can then create agents. Store hosted-provider credentials under Secrets and select the credential in the model configuration. Model registration does not itself verify that the provider accepts the credential: test the connection before chatting.
