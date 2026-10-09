@@ -67,3 +67,11 @@ Select OpenAI-compatible in Models and use the provider's supported base URL and
 Append `api.deepseek.com` to `MODEL_ALLOWED_HOSTS` in the repository-root `.env`, preserving the existing hosts, then restart both API and worker. With the default host list, the resulting setting is `MODEL_ALLOWED_HOSTS=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.deepseek.com`. If developing in the managed cloud, its outbound network policy must also permit the destination; local server approval does not change cloud egress policy.
 
 Store the DeepSeek API key under Secrets in the same workspace, then explicitly select that secret in Workspace credential. The success message for saving a secret does not mean it is selected in the model form. Leave None selected only for providers that require no authentication. Save the model and test its connection before creating an agent.
+
+## Editing and deleting registered models
+
+Model administrators can use Edit, Delete and Test connection in Models. Editing preloads all settings and uses a revision check to reject stale saves. Updated registry settings apply to agent drafts and future draft chats; published agent/workflow snapshots retain their original model settings. Changes that would reduce token limits below an active draft's configuration are rejected.
+
+Delete requires confirmation and removes the model from the active registry. An active agent draft must switch to another model or be archived first. The underlying model record is retained so published versions and run history remain valid. Migration 0006 adds revision and archive metadata; run `pnpm db:migrate` after pulling these changes.
+
+Connection tests now expose sanitized provider diagnostics instead of replacing all provider failures with Internal server error. Authentication failures point to the selected credential/provider; other HTTP errors point to the base URL, model identifier and supported parameters. Raw upstream responses and secrets remain private. Stored credentials that cannot be decrypted produce a MASTER_KEY configuration hint rather than a generic server error.

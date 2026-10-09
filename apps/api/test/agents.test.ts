@@ -26,10 +26,12 @@ let modelId = "",
   deploymentId = "";
 let lastConnection: ModelConnection | undefined;
 let fail = false;
+let testFailure: Error | undefined;
 const factory: ProviderFactory = (connection) => {
   lastConnection = connection;
   return {
     async *stream() {
+      if (testFailure) throw testFailure;
       if (fail) throw new ProviderError("RATE_LIMITED");
       yield { type: "token", text: "Fixture answer" };
       yield { type: "usage", inputTokens: 5, outputTokens: 2 };
@@ -441,4 +443,155 @@ test("Rollback restores a draft without changing the deployment; disable and arc
   );
   assert.equal((await call("DELETE", `/agents/${agentId}`)).statusCode, 200);
   assert.equal((await call("GET", `/agents/${agentId}`)).statusCode, 404);
+});
+
+test("Model edits are scoped and revision checked; published snapshots survive registry changes and deletion", async () => {
+  const [secret] =
+    await sql`SELECT id FROM secrets WHERE workspace_id=${workspace}`;
+  const input = {
+    name: "Editable",
+    provider: "openai-compatible",
+    modelId: "editable-fixture",
+    baseUrl: "https://api.openai.com/v1",
+    secretId: secret!.id,
+  };
+  const created = await call("POST", `/workspaces/${workspace}/models`, input);
+  assert.equal(created.statusCode, 201, created.body);
+  const mid = created.json().id;
+  for (const actor of [sessions.viewer, sessions.outsider]) {
+    assert.equal(
+      (await call("PUT", `/models/${mid}`, { ...input, revision: 1 }, actor))
+        .statusCode,
+      403,
+    );
+    assert.equal(
+      (await call("DELETE", `/models/${mid}`, { revision: 1 }, actor))
+        .statusCode,
+      403,
+    );
+  }
+  const a = await call("POST", `/workspaces/${workspace}/agents`, {
+    name: "Model lifecycle",
+    config: { modelId: mid },
+  });
+  assert.equal(a.statusCode, 201, a.body);
+  const published = await call("POST", `/agents/${a.json().id}/publish`, {
+    revision: 1,
+  });
+  assert.equal(published.statusCode, 201, published.body);
+  const updated = await call("PUT", `/models/${mid}`, {
+    ...input,
+    name: "Updated",
+    modelId: "updated-fixture",
+    revision: 1,
+  });
+  assert.equal(updated.statusCode, 200, updated.body);
+  assert.equal(updated.json().revision, 2);
+  assert.equal(
+    (await call("PUT", `/models/${mid}`, { ...input, revision: 1 })).statusCode,
+    409,
+  );
+  assert.equal(
+    (
+      await call("PUT", `/models/${mid}`, {
+        ...input,
+        secretId: randomUUID(),
+        revision: 2,
+      })
+    ).statusCode,
+    400,
+  );
+  assert.equal(
+    (
+      await call("PUT", `/models/${mid}`, {
+        ...input,
+        maxOutputTokens: 1,
+        revision: 2,
+      })
+    ).statusCode,
+    400,
+  );
+  const blocked = await call("DELETE", `/models/${mid}`, { revision: 2 });
+  assert.equal(blocked.statusCode, 409);
+  assert.match(blocked.body, /active agent draft/);
+  const [snapshot] =
+    await sql`SELECT model_snapshot FROM agent_versions WHERE id=${published.json().id}`;
+  assert.equal(snapshot!.model_snapshot.modelId, "editable-fixture");
+  await call("DELETE", `/agents/${a.json().id}`);
+  assert.equal(
+    (await call("DELETE", `/models/${mid}`, { revision: 1 })).statusCode,
+    409,
+  );
+  assert.equal(
+    (await call("DELETE", `/models/${mid}`, { revision: 2 })).statusCode,
+    200,
+  );
+  const registry = (
+    await call("GET", `/workspaces/${workspace}/models`)
+  ).json();
+  assert(!registry.some((m: { id: string }) => m.id === mid));
+  assert.equal((await call("POST", `/models/${mid}/test`)).statusCode, 404);
+  assert.equal(
+    (
+      await call("POST", `/workspaces/${workspace}/agents`, {
+        name: "Archived model",
+        config: { modelId: mid },
+      })
+    ).statusCode,
+    400,
+  );
+  const [retained] =
+    await sql`SELECT model_snapshot FROM agent_versions WHERE id=${published.json().id}`;
+  assert.equal(retained!.model_snapshot.modelId, "editable-fixture");
+});
+test("Connection test exposes sanitized provider diagnostics and handles undecryptable credentials", async () => {
+  try {
+    testFailure = new ProviderError("AUTHENTICATION_FAILED");
+    let result = await call("POST", `/models/${modelId}/test`);
+    assert.equal(result.statusCode, 502);
+    assert.match(result.body, /AUTHENTICATION_FAILED/);
+    assert.match(result.body, /workspace credential/);
+    testFailure = new Error("sensitive upstream credential body");
+    result = await call("POST", `/models/${modelId}/test`);
+    assert.equal(result.statusCode, 502);
+    assert(!result.body.includes("sensitive"));
+    assert.match(result.body, /NETWORK_OR_PROVIDER_ERROR/);
+    testFailure = undefined;
+    const [credential] =
+      await sql`SELECT s.id,s.ciphertext FROM secrets s JOIN model_configurations m ON m.secret_id=s.id WHERE m.id=${modelId}`;
+    await sql`UPDATE secrets SET ciphertext=${sql.json({ version: 1, iv: "bad", tag: "bad", data: "bad" })} WHERE id=${credential!.id}`;
+    try {
+      result = await call("POST", `/models/${modelId}/test`);
+      assert.equal(result.statusCode, 409);
+      assert.match(result.body, /cannot be decrypted/);
+    } finally {
+      await sql`UPDATE secrets SET ciphertext=${sql.json(credential!.ciphertext)} WHERE id=${credential!.id}`;
+    }
+  } finally {
+    testFailure = undefined;
+  }
+});
+
+test("Browser preflight permits authenticated model edit and delete methods", async () => {
+  for (const method of ["PUT", "DELETE"]) {
+    const preflight = await app.inject({
+      method: "OPTIONS",
+      url: `/models/${modelId}`,
+      headers: {
+        origin: config.WEB_ORIGIN,
+        "access-control-request-method": method,
+        "access-control-request-headers": "content-type",
+      },
+    });
+    assert.equal(preflight.statusCode, 204);
+    assert.equal(
+      preflight.headers["access-control-allow-origin"],
+      config.WEB_ORIGIN,
+    );
+    assert(
+      String(preflight.headers["access-control-allow-methods"]).includes(
+        method,
+      ),
+    );
+  }
 });

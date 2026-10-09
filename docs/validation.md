@@ -100,3 +100,13 @@ Canvas nodes now retain React Flow measurement state through controlled node cha
 The model-registry screenshot showed an unapproved DeepSeek hostname and no selected workspace credential. Registration errors now distinguish host approval, HTTPS and malformed endpoints. Form guidance explains custom-host approval, restarting API/worker, and explicitly selecting a saved API-key secret. No server allowlist was broadened automatically.
 
 All 10 focused agent API tests passed, including rejection of an unapproved DeepSeek host, acceptance after explicit approval, persistence of the selected workspace secret, and rejection of HTTP for that hosted endpoint. Lint, typecheck and all eight build targets passed. These tests validate registration policy; live DeepSeek authentication/model acceptance was not tested.
+
+## Model management and connection-test diagnostics
+
+Migration 0006 adds optimistic revision and archive metadata to model configurations. Administrators can edit all registry settings and remove a model after confirmation. Active agent drafts block removal; published snapshots and historical rows remain intact. Endpoint approval, credential tenancy and output/context limits apply on updates. Browser preflight now permits PUT/DELETE while retaining the configured origin and write-origin validation.
+
+The API previously masked sanitized model-test 502 messages as Internal server error. Model tests now report safe provider error codes with configuration hints, protect initialization/credential failures, and identify undecryptable stored credentials without exposing ciphertext or raw errors. The user's browser logs confirmed 502 responses but did not identify the actual DeepSeek failure; live DeepSeek acceptance remains unverified.
+
+- `REQUIRE_EMAIL_VERIFICATION=true pnpm test`: 73 tests passed, no failures/skips. New checks cover model lifecycle permissions, stale revisions, active-draft deletion protection, snapshot retention, archived-model exclusion, sanitized provider errors, undecryptable credentials and browser preflight methods.
+- The updated agent browser scenario passed against compiled API and production web output: register, prefilled edit/save, confirmed deletion, create/chat/publish and hosted chat. The workflow browser scenario also passed during this change.
+- Lint, typecheck, all eight build targets, and repeated migration passed.

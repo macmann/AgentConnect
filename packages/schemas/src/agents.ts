@@ -23,6 +23,9 @@ export const modelInput = z.object({
     })
     .default({ streaming: true, temperature: true, topP: true }),
 });
+export const modelUpdate = modelInput.extend({
+  revision: z.number().int().positive(),
+});
 export type ModelInput = z.infer<typeof modelInput>;
 export const promptSchema = z.object({
   role: z.string().max(4000).default("You are a helpful assistant."),

@@ -11,6 +11,8 @@ import { z } from "zod";
 import { trace, SpanStatusCode } from "@opentelemetry/api";
 import {
   modelInput,
+  modelUpdate,
+  type ModelInput,
   agentInput,
   agentUpdate,
   agentConfig,
@@ -75,9 +77,57 @@ type ConversationRow = {
   model_snapshot: ModelSnapshot;
 };
 const runtime = new SingleAgentRuntime();
+async function validateModelRegistration(
+  data: ModelInput,
+  workspaceId: string,
+  organizationId: string,
+) {
+  const baseUrl = data.baseUrl ?? defaultBaseUrls[data.provider];
+  try {
+    validateEndpoint(baseUrl, allowedHosts(), privateHosts());
+  } catch (error) {
+    if (error instanceof ProviderError && error.code === "ENDPOINT_NOT_ALLOWED")
+      throw new HttpError(
+        400,
+        `Model endpoint ${new URL(baseUrl).host} is not approved. Add this host to MODEL_ALLOWED_HOSTS in the API and worker environment, preserving existing hosts, then restart both services.`,
+      );
+    if (error instanceof ProviderError && error.code === "HTTPS_REQUIRED")
+      throw new HttpError(
+        400,
+        "Model endpoint requires HTTPS. Use the provider's HTTPS base URL.",
+      );
+    throw new HttpError(
+      400,
+      "Model endpoint must be an approved HTTPS URL without embedded credentials, query parameters or fragments.",
+    );
+  }
+  if (data.provider !== "openai-compatible" && !data.secretId)
+    throw new HttpError(400, "This provider requires a workspace secret");
+  if (
+    data.provider !== "openai-compatible" &&
+    baseUrl !== defaultBaseUrls[data.provider]
+  )
+    throw new HttpError(
+      400,
+      "Use the OpenAI-compatible adapter for custom endpoints",
+    );
+  if (data.secretId) {
+    const [secret] =
+      await sql`SELECT id FROM secrets WHERE id=${data.secretId} AND workspace_id=${workspaceId} AND organization_id=${organizationId}`;
+    if (!secret)
+      throw new HttpError(400, "Choose a secret from this workspace");
+  }
+
+  if (data.maxOutputTokens >= data.contextWindow)
+    throw new HttpError(
+      400,
+      "Output limit must fit in the model context window",
+    );
+  return baseUrl;
+}
 async function modelSnapshot(modelId: string, workspaceId: string) {
   const [m] =
-    await sql`SELECT id,provider,model_id,base_url,secret_id,capabilities,context_window,max_output_tokens FROM model_configurations WHERE id=${modelId} AND workspace_id=${workspaceId}`;
+    await sql`SELECT id,provider,model_id,base_url,secret_id,capabilities,context_window,max_output_tokens FROM model_configurations WHERE id=${modelId} AND workspace_id=${workspaceId} AND archived_at IS NULL`;
   if (!m) throw new HttpError(400, "Select a model from this workspace");
   return modelSnapshotSchema.parse({
     id: m.id,
@@ -388,7 +438,7 @@ export async function registerAgentRoutes(
   app.get("/workspaces/:workspaceId/models", async (r) => {
     const u = await actor(r);
     const w = await workspaceAccess(u.id, id(params(r).workspaceId));
-    return sql`SELECT id,name,provider,model_id,base_url,secret_id,context_window,max_output_tokens,capabilities FROM model_configurations WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} ORDER BY name`;
+    return sql`SELECT id,name,provider,model_id,base_url,secret_id,context_window,max_output_tokens,capabilities,revision FROM model_configurations WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL ORDER BY name`;
   });
   app.post(
     "/workspaces/:workspaceId/models",
@@ -401,44 +451,11 @@ export async function registerAgentRoutes(
         "model:manage",
       );
       const data = modelInput.parse(r.body);
-      const baseUrl = data.baseUrl ?? defaultBaseUrls[data.provider];
-      try {
-        validateEndpoint(baseUrl, allowedHosts(), privateHosts());
-      } catch (error) {
-        if (
-          error instanceof ProviderError &&
-          error.code === "ENDPOINT_NOT_ALLOWED"
-        )
-          throw new HttpError(
-            400,
-            `Model endpoint ${new URL(baseUrl).host} is not approved. Add this host to MODEL_ALLOWED_HOSTS in the API and worker environment, preserving existing hosts, then restart both services.`,
-          );
-        if (error instanceof ProviderError && error.code === "HTTPS_REQUIRED")
-          throw new HttpError(
-            400,
-            "Model endpoint requires HTTPS. Use the provider's HTTPS base URL.",
-          );
-        throw new HttpError(
-          400,
-          "Model endpoint must be an approved HTTPS URL without embedded credentials, query parameters or fragments.",
-        );
-      }
-      if (data.provider !== "openai-compatible" && !data.secretId)
-        throw new HttpError(400, "This provider requires a workspace secret");
-      if (
-        data.provider !== "openai-compatible" &&
-        baseUrl !== defaultBaseUrls[data.provider]
-      )
-        throw new HttpError(
-          400,
-          "Use the OpenAI-compatible adapter for custom endpoints",
-        );
-      if (data.secretId) {
-        const [secret] =
-          await sql`SELECT id FROM secrets WHERE id=${data.secretId} AND workspace_id=${w.id} AND organization_id=${w.organization_id}`;
-        if (!secret)
-          throw new HttpError(400, "Choose a secret from this workspace");
-      }
+      const baseUrl = await validateModelRegistration(
+        data,
+        w.id,
+        w.organization_id,
+      );
       const modelId = randomUUID();
       await sql.begin(async (tx) => {
         await tx`INSERT INTO model_configurations(id,organization_id,workspace_id,name,provider,model_id,base_url,secret_id,context_window,max_output_tokens,capabilities) VALUES (${modelId},${w.organization_id},${w.id},${data.name},${data.provider},${data.modelId},${baseUrl},${data.secretId},${data.contextWindow},${data.maxOutputTokens},${tx.json(data.capabilities)})`;
@@ -455,17 +472,72 @@ export async function registerAgentRoutes(
       return reply.code(201).send({ id: modelId });
     },
   );
+  async function ownedModel(r: FastifyRequest) {
+    const u = await actor(r);
+    const [m] =
+      await sql`SELECT * FROM model_configurations WHERE id=${id(params(r).modelId)} AND archived_at IS NULL`;
+    if (!m) throw new HttpError(404, "Model not found");
+    const w = await workspaceAccess(u.id, m.workspace_id, "model:manage");
+    return { u, m, w };
+  }
+  app.put("/models/:modelId", schema(modelUpdate), async (r) => {
+    const { u, m, w } = await ownedModel(r);
+    const data = modelUpdate.parse(r.body);
+    const baseUrl = await validateModelRegistration(
+      data,
+      w.id,
+      w.organization_id,
+    );
+    return sql.begin(async (tx) => {
+      const [locked] =
+        await tx`SELECT revision FROM model_configurations WHERE id=${m.id} AND archived_at IS NULL FOR UPDATE`;
+      if (!locked || locked.revision !== data.revision)
+        throw new HttpError(409, "Model changed; reload before saving");
+      const drafts =
+        await tx`SELECT draft_config FROM agents WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL AND draft_config->>'modelId'=${m.id}`;
+      for (const a of drafts)
+        validateAgentModel(agentConfig.parse(a.draft_config), {
+          id: m.id,
+          ...data,
+          baseUrl,
+        });
+      const [saved] =
+        await tx`UPDATE model_configurations SET name=${data.name},provider=${data.provider},model_id=${data.modelId},base_url=${baseUrl},secret_id=${data.secretId},context_window=${data.contextWindow},max_output_tokens=${data.maxOutputTokens},capabilities=${tx.json(data.capabilities)},revision=revision+1 WHERE id=${m.id} RETURNING revision`;
+      await audit(tx, r, u.id, "model.updated", m.id, w.organization_id, w.id);
+      return { id: m.id, revision: saved!.revision };
+    });
+  });
+  app.delete("/models/:modelId", schema(publishInput), async (r) => {
+    const { u, m, w } = await ownedModel(r),
+      data = publishInput.parse(r.body);
+    return sql.begin(async (tx) => {
+      const [locked] =
+        await tx`SELECT revision FROM model_configurations WHERE id=${m.id} AND archived_at IS NULL FOR UPDATE`;
+      if (!locked || locked.revision !== data.revision)
+        throw new HttpError(409, "Model changed; reload before deleting");
+      const [used] =
+        await tx`SELECT id FROM agents WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL AND draft_config->>'modelId'=${m.id} LIMIT 1`;
+      if (used)
+        throw new HttpError(
+          409,
+          "An active agent draft uses this model. Select another model in that agent or archive the agent before deleting it.",
+        );
+      await tx`UPDATE model_configurations SET archived_at=now(),revision=revision+1 WHERE id=${m.id}`;
+      await audit(tx, r, u.id, "model.deleted", m.id, w.organization_id, w.id);
+      return { ok: true };
+    });
+  });
   app.post("/models/:modelId/test", async (r) => {
     const u = await actor(r);
     const [m] =
-      await sql`SELECT workspace_id FROM model_configurations WHERE id=${id(params(r).modelId)}`;
+      await sql`SELECT workspace_id FROM model_configurations WHERE id=${id(params(r).modelId)} AND archived_at IS NULL`;
     if (!m) throw new HttpError(404, "Model not found");
     const w = await workspaceAccess(u.id, m.workspace_id, "model:manage");
     const model = await modelSnapshot(id(params(r).modelId), w.id);
-    const p = factory(await connection(model, w.id, w.organization_id));
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
     try {
+      const p = factory(await connection(model, w.id, w.organization_id));
       let text = "";
       for await (const e of p.stream({
         system: "Reply briefly.",
@@ -478,12 +550,25 @@ export async function registerAgentRoutes(
         if (e.type === "token") text += e.text;
       return { ok: true, response: text.slice(0, 500) };
     } catch (e) {
-      throw new HttpError(
-        502,
-        e instanceof ProviderError
-          ? `Provider test failed: ${e.code}`
-          : "Provider test failed",
-      );
+      if (e instanceof HttpError) throw e;
+      if (controller.signal.aborted)
+        throw new HttpError(
+          504,
+          "Provider test timed out. Check provider availability and network access.",
+        );
+      const code =
+        e instanceof ProviderError ? e.code : "NETWORK_OR_PROVIDER_ERROR";
+      const hint =
+        code === "AUTHENTICATION_FAILED"
+          ? "Check the selected workspace credential and ensure the provider matches its API key."
+          : code === "RATE_LIMITED"
+            ? "The provider rate limit or quota was reached. Retry later and check account limits."
+            : code === "PROVIDER_HTTP_ERROR"
+              ? "Check the base URL, exact model identifier, account access and supported parameters."
+              : code === "ENDPOINT_NOT_ALLOWED"
+                ? "Approve the provider host in MODEL_ALLOWED_HOSTS and restart the API and worker."
+                : "Check provider configuration and network access.";
+      throw new HttpError(502, `Provider test failed: ${code}. ${hint}`);
     } finally {
       clearTimeout(timeout);
     }

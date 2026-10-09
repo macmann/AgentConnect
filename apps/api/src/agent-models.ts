@@ -25,7 +25,14 @@ export async function connection(
     const [s] =
       await sql`SELECT name,ciphertext FROM secrets WHERE id=${model.secretId} AND workspace_id=${workspaceId} AND organization_id=${orgId}`;
     if (!s) throw new HttpError(409, "Model credential is no longer available");
-    apiKey = decrypt(s.ciphertext, `${orgId}:${workspaceId}:${s.name}`);
+    try {
+      apiKey = decrypt(s.ciphertext, `${orgId}:${workspaceId}:${s.name}`);
+    } catch {
+      throw new HttpError(
+        409,
+        "Stored model credential cannot be decrypted. Ensure the API and worker use the MASTER_KEY that encrypted it; recreate the secret if that key was lost.",
+      );
+    }
   }
   if (!apiKey && model.provider !== "openai-compatible")
     throw new HttpError(409, "Configure a workspace secret for this model");
