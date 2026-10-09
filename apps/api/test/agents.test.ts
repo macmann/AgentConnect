@@ -26,6 +26,7 @@ let modelId = "",
   deploymentId = "";
 let lastConnection: ModelConnection | undefined;
 let fail = false;
+let emptyTestResponse = false;
 let testFailure: Error | undefined;
 const factory: ProviderFactory = (connection) => {
   lastConnection = connection;
@@ -33,6 +34,10 @@ const factory: ProviderFactory = (connection) => {
     async *stream() {
       if (testFailure) throw testFailure;
       if (fail) throw new ProviderError("RATE_LIMITED");
+      if (emptyTestResponse) {
+        yield { type: "usage", inputTokens: 5, outputTokens: 2 };
+        return;
+      }
       yield { type: "token", text: "Fixture answer" };
       yield { type: "usage", inputTokens: 5, outputTokens: 2 };
     },
@@ -551,6 +556,28 @@ test("Connection test exposes sanitized provider diagnostics and handles undecry
     assert.equal(result.statusCode, 502);
     assert.match(result.body, /AUTHENTICATION_FAILED/);
     assert.match(result.body, /workspace credential/);
+    testFailure = new ProviderError("PROVIDER_HTTP_ERROR", false, 404, {
+      providerCode: "model_not_found",
+      parameter: "model",
+    });
+    result = await call("POST", `/models/${modelId}/test`);
+    assert.equal(result.statusCode, 502);
+    assert.match(result.body, /HTTP 404/);
+    assert.match(result.body, /model_not_found/);
+    assert.match(result.body, /account\/project/);
+    testFailure = new ProviderError("PROVIDER_HTTP_ERROR", false, 400, {
+      providerCode: "unsupported_parameter",
+      parameter: "temperature",
+    });
+    result = await call("POST", `/models/${modelId}/test`);
+    assert.match(result.body, /parameter temperature/);
+    assert.match(result.body, /Disable the corresponding capability/);
+    testFailure = undefined;
+    emptyTestResponse = true;
+    result = await call("POST", `/models/${modelId}/test`);
+    assert.equal(result.statusCode, 502);
+    assert.match(result.body, /EMPTY_PROVIDER_RESPONSE/);
+    emptyTestResponse = false;
     testFailure = new Error("sensitive upstream credential body");
     result = await call("POST", `/models/${modelId}/test`);
     assert.equal(result.statusCode, 502);
@@ -569,6 +596,7 @@ test("Connection test exposes sanitized provider diagnostics and handles undecry
     }
   } finally {
     testFailure = undefined;
+    emptyTestResponse = false;
   }
 });
 

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import {
   createProvider,
+  ProviderError,
   decodeSSE,
   safeTransport,
   validateEndpoint,
@@ -90,6 +91,8 @@ test("OpenAI streams text and provider-reported usage", async () => {
         (body as { messages: { role: string }[] }).messages[0]!.role,
         "system",
       );
+      assert.equal((body as Record<string, unknown>).max_completion_tokens, 32);
+      assert.equal((body as Record<string, unknown>).max_tokens, undefined);
       captured = true;
     },
   );
@@ -139,10 +142,20 @@ test("Gemini maps roles and streams candidates without credentials in URL", asyn
   ]);
 });
 test("Compatible provider preserves unknown usage as unavailable", async () => {
-  const events = await output("openai-compatible", [
-    'data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":"stop"}]}\n\n',
-    "data: [DONE]\n\n",
-  ]);
+  const events = await output(
+    "openai-compatible",
+    [
+      'data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":"stop"}]}\n\n',
+      "data: [DONE]\n\n",
+    ],
+    (_url, _headers, body) => {
+      assert.equal((body as Record<string, unknown>).max_tokens, 32);
+      assert.equal(
+        (body as Record<string, unknown>).max_completion_tokens,
+        undefined,
+      );
+    },
+  );
   assert.deepEqual(events, [{ type: "token", text: "Hello" }]);
 });
 test("Provider failures and incomplete streams are explicit and redact upstream bodies", async () => {
@@ -223,5 +236,89 @@ test("Explicitly approved private transport performs real HTTP and does not foll
     await new Promise<void>((resolve, reject) =>
       server.close((e) => (e ? reject(e) : resolve())),
     );
+  }
+});
+
+test("HTTP diagnostics keep recognized codes/parameters but redact arbitrary provider data", async () => {
+  for (const [status, errorBody, expected] of [
+    [
+      404,
+      {
+        error: {
+          code: "model_not_found",
+          param: "model",
+          message: "SECRET echoed text",
+          request: { apiKey: "SECRET" },
+        },
+      },
+      { providerCode: "model_not_found", parameter: "model" },
+    ],
+    [
+      400,
+      {
+        error: {
+          code: "unsupported_parameter",
+          param: "temperature",
+          message: "SECRET",
+        },
+      },
+      { providerCode: "unsupported_parameter", parameter: "temperature" },
+    ],
+    [
+      400,
+      {
+        error: {
+          code: "SECRET",
+          type: "invalid_request_error",
+          param: "SECRET",
+        },
+      },
+      { providerCode: "invalid_request_error", parameter: undefined },
+    ],
+    [500, "SECRET non-JSON", undefined],
+    [400, "x".repeat(17000), undefined],
+  ] as const) {
+    let closed = false;
+    const provider = createProvider(
+      {
+        provider: "openai",
+        modelId: "fixture-only",
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "fixture-only",
+        capabilities: { temperature: false, topP: false },
+      },
+      async (_url, _headers, body) => {
+        assert.equal((body as Record<string, unknown>).temperature, undefined);
+        assert.equal((body as Record<string, unknown>).top_p, undefined);
+        return {
+          status,
+          body: (async function* () {
+            const data = encoder.encode(
+              typeof errorBody === "string"
+                ? errorBody
+                : JSON.stringify(errorBody),
+            );
+            yield data.slice(0, 10);
+            yield data.slice(10);
+          })(),
+          close: async () => {
+            closed = true;
+          },
+        };
+      },
+    );
+    await assert.rejects(
+      async () => {
+        for await (const e of provider.stream(input)) void e;
+      },
+      (error) => {
+        assert(error instanceof ProviderError);
+        assert.equal(error.httpStatus, status);
+        assert.deepEqual(error.details, expected);
+        assert(!JSON.stringify(error).includes("SECRET"));
+        return true;
+      },
+    );
+    assert.equal(closed, true);
   }
 });

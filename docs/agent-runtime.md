@@ -32,3 +32,13 @@ History is bounded by configured message count and a conservative UTF-8 byte bud
 API tests inject an explicit provider fixture; adapter tests use protocol fixtures and actual local HTTP transport. Browser tests exercise editing, chat, cancellation, conflicting requests, publication and anonymous continuation through an explicit local HTTP fixture. Production code has no fixture mode. No live provider credential is available in this environment, so external provider acceptance and billing behavior remain unverified.
 
 Public chat currently has per-IP rate limits. Organization spending caps, bot protection, moderation, retention jobs, production observability review and enterprise KMS are later hardening work. Avoid exposing an unrestricted paid deployment before those controls match your requirements.
+
+## OpenAI request compatibility and connection diagnostics
+
+The OpenAI provider uses the fixed `https://api.openai.com/v1` base URL and Chat Completions API with `max_completion_tokens`. OpenAI-compatible providers retain `max_tokens`. Selecting OpenAI does not select a model or prove that a model ID is available to the API project attached to your selected workspace credential. Use the exact provider API identifier and confirmed account access; model names exposed in other products are not an API availability guarantee.
+
+Connection tests request at most 1,024 completion tokens, bounded by the registered model limit, rather than the registry's entire maximum. This provides room for models whose completion budget includes reasoning tokens. A test that returns no visible text is reported as `EMPTY_PROVIDER_RESPONSE`, not Connected. Generative chat and ordinary agent execution still use the agent's separately configured output budget.
+
+If a provider rejects the request, the UI includes the HTTP status and recognized provider error code/parameter when available. `model_not_found` indicates an unavailable identifier or account/project access; a rejected `temperature` or `top_p` parameter requires checking the corresponding model capability and disabling it if unsupported. Supported sampling behavior remains configurable rather than being guessed from a model-name prefix.
+
+The API terminal emits **Model connection test failed** with status, recognized code/parameter and request configuration metadata. Chat failure logs include the same recognized details. Provider response messages/bodies, credentials, prompts and arbitrary provider error fields are excluded. Diagnostics read at most 16 KB and retain only fixed allowlisted identifiers. Embedding HTTP errors also preserve status and the same safe structured metadata. Protocol tests do not establish live-provider acceptance.
