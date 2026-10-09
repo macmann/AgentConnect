@@ -6,7 +6,8 @@
     "./schema": "./src/schema.ts"
   },
   "dependencies": {
-    "drizzle-orm": "0.45.4"
+    "drizzle-orm": "0.45.4",
+    "pg": "8.23.1"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

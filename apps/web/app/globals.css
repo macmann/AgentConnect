@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
 :root {
   --ink: #1c2724;
   --muted: #77827d;
@@ -1537,4 +1538,202 @@ form small {
 }
 .tool-studio td button {
   margin: 3px;
+}
+
+.workflow-picker,
+.workflow-toolbar,
+.workflow-run-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+  align-items: center;
+}
+.workflow-toolbar label {
+  min-width: 120px;
+}
+.workflow-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 16px;
+  margin: 20px 0;
+}
+.workflow-canvas {
+  height: 480px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f5f8f5;
+}
+.workflow-node {
+  width: 170px;
+  border: 2px solid #bccbc0;
+  border-radius: 10px;
+  background: white;
+  padding: 12px 18px;
+  position: relative;
+  min-height: 76px;
+  box-shadow: 0 2px 8px #1834260b;
+}
+.workflow-node small,
+.workflow-node strong,
+.workflow-node > span:not(.branch-label) {
+  display: block;
+}
+.workflow-node small {
+  text-transform: uppercase;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 5px;
+  letter-spacing: 1px;
+}
+.workflow-node strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.workflow-node.selected {
+  border-color: #256a53;
+}
+.workflow-node.status-completed {
+  border-color: #288156;
+  background: #f1faf4;
+}
+.workflow-node.status-running {
+  border-color: #2d75ae;
+}
+.workflow-node.status-waiting {
+  border-color: #b98225;
+  background: #fff9e9;
+}
+.workflow-node.status-failed,
+.workflow-node.status-cancelled {
+  border-color: #bc5f5f;
+}
+.branch-label {
+  position: absolute;
+  right: 8px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.branch-true {
+  top: 28%;
+}
+.branch-false {
+  top: 68%;
+}
+.workflow-properties {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+}
+.workflow-properties label,
+.workflow-run-form label {
+  display: block;
+  margin: 12px 0;
+}
+.workflow-properties input,
+.workflow-properties select,
+.workflow-properties textarea {
+  width: 100%;
+}
+.workflow-validation {
+  border: 1px solid #ecd5ac;
+  background: #fffaf1;
+  padding: 14px;
+  border-radius: 8px;
+}
+.workflow-run-form,
+.workflow-inspector {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+  margin-top: 20px;
+}
+.workflow-studio pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
+  background: #f5f7f3;
+  padding: 12px;
+  border-radius: 8px;
+}
+.workflow-approval {
+  padding: 18px;
+  background: #fff9e9;
+  border: 1px solid #ecd5ac;
+  border-radius: 12px;
+}
+.workflow-approval label {
+  display: block;
+  margin: 12px 0;
+}
+.workflow-node-traces details {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.workflow-node-traces summary {
+  cursor: pointer;
+}
+.workflow-version {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0;
+}
+@media (max-width: 1000px) {
+  .workflow-editor {
+    grid-template-columns: 1fr;
+  }
+  .workflow-properties {
+    max-width: 100%;
+  }
+  .workflow-canvas {
+    height: 380px;
+  }
+}
+.workflow-studio > .form-grid,
+.workflow-studio > .workflow-picker,
+.workflow-studio > .workflow-toolbar,
+.workflow-studio > .workflow-editor,
+.workflow-studio > .workflow-run-form,
+.workflow-studio > .workflow-inspector,
+.workflow-studio > details,
+.workflow-studio > .workflow-validation,
+.workflow-studio > p {
+  margin-left: 24px;
+  margin-right: 24px;
+}
+.workflow-studio label {
+  display: block;
+  font-size: 12px;
+  color: #566550;
+  margin: 12px 0;
+}
+.workflow-studio input,
+.workflow-studio select,
+.workflow-studio textarea {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #dce3d7;
+  border-radius: 6px;
+  margin-top: 8px;
+  background: #fcfdfb;
+  color: var(--ink);
+  font: inherit;
+}
+.workflow-studio textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+.workflow-node {
+  height: 100px;
+  overflow-wrap: anywhere;
+}
+.workflow-properties fieldset {
+  min-width: 0;
+  padding: 0;
+  border: 0;
 }

@@ -1,3 +1,7 @@
+import {
+  processWorkflowRun,
+  closeWorkflowSaver,
+} from "@agentconnect/api/workflows";
 import { deliverMail } from "@agentconnect/api/mail";
 import {
   processKnowledgeJob,
@@ -25,8 +29,10 @@ async function loop(
   }
 }
 await Promise.all([
+  loop(processWorkflowRun, 1000, "Workflow execution"),
   loop(deliverMail, 3000, "Mail delivery"),
   loop(processKnowledgeJob, 1000, "Knowledge ingestion"),
   loop(purgeDeletedKnowledge, 5000, "Knowledge object cleanup"),
 ]);
+await closeWorkflowSaver();
 process.exit(0);

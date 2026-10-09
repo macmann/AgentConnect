@@ -308,6 +308,8 @@ export const toolExecutions = pgTable("tool_executions", {
   workspaceId: uuid("workspace_id").notNull(),
   toolId: uuid("tool_id").notNull(),
   runId: uuid("run_id"),
+  workflowRunId: uuid("workflow_run_id"),
+  workflowNodeId: text("workflow_node_id"),
   userId: uuid("user_id"),
   toolName: text("tool_name").notNull(),
   toolRevision: integer("tool_revision").notNull(),
@@ -320,4 +322,88 @@ export const toolExecutions = pgTable("tool_executions", {
     .notNull()
     .defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
+export const workflows = pgTable("workflows", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  draftGraph: jsonb("draft_graph").notNull(),
+  revision: integer("revision").notNull().default(1),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  createdBy: uuid("created_by").notNull(),
+  createdAt: created(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const workflowVersions = pgTable("workflow_versions", {
+  id: uuid("id").primaryKey(),
+  workflowId: uuid("workflow_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  version: integer("version").notNull(),
+  name: text("name").notNull(),
+  graph: jsonb("graph").notNull(),
+  publishedBy: uuid("published_by").notNull(),
+  publishedAt: timestamp("published_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const workflowRuns = pgTable("workflow_runs", {
+  id: uuid("id").primaryKey(),
+  workflowId: uuid("workflow_id").notNull(),
+  versionId: uuid("version_id"),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  userId: uuid("user_id").notNull(),
+  graphSnapshot: jsonb("graph_snapshot").notNull(),
+  input: text("input").notNull(),
+  status: text("status").notNull(),
+  output: jsonb("output"),
+  errorCode: text("error_code"),
+  cancelRequested: boolean("cancel_requested").notNull().default(false),
+  leaseOwner: uuid("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  attempts: integer("attempts").notNull().default(0),
+  createdAt: created(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+export const workflowNodeRuns = pgTable("workflow_node_runs", {
+  runId: uuid("run_id").notNull(),
+  nodeId: text("node_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  label: text("label").notNull(),
+  kind: text("kind").notNull(),
+  status: text("status").notNull(),
+  input: jsonb("input"),
+  output: jsonb("output"),
+  errorCode: text("error_code"),
+  durationMs: integer("duration_ms"),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  citations: jsonb("citations").notNull().default([]),
+  startedAt: timestamp("started_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+export const workflowApprovals = pgTable("workflow_approvals", {
+  id: uuid("id").primaryKey(),
+  runId: uuid("run_id").notNull(),
+  nodeId: text("node_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  prompt: text("prompt").notNull(),
+  input: jsonb("input").notNull(),
+  decision: text("decision").notNull(),
+  comment: text("comment").notNull().default(""),
+  editedInput: jsonb("edited_input"),
+  decidedBy: uuid("decided_by"),
+  createdAt: created(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
 });

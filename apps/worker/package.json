@@ -10,18 +10,23 @@
   },
   "dependencies": {
     "@agentconnect/api": "workspace:*",
-    "nodemailer": "^7.0.12",
-    "postgres": "^3.4.8",
-    "drizzle-orm": "0.45.4",
-    "zod": "4.6.5",
-    "@agentconnect/rag": "workspace:*",
     "@agentconnect/provider-sdk": "workspace:*",
+    "@agentconnect/rag": "workspace:*",
     "@aws-sdk/client-s3": "^3.1000.0",
-    "undici": "^7.24.0",
+    "@langchain/langgraph": "^1.4.21",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.6",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "ajv": "^8.20.0",
     "cheerio": "^1.2.0",
-    "fflate": "^0.8.2",
-    "fast-xml-parser": "^5.3.8",
     "csv-parse": "^6.1.0",
-    "pdfjs-dist": "^5.4.624"
+    "drizzle-orm": "0.45.4",
+    "fast-xml-parser": "^5.3.8",
+    "fflate": "^0.8.2",
+    "nodemailer": "^7.0.12",
+    "pdfjs-dist": "^5.4.624",
+    "pg": "8.23.1",
+    "postgres": "^3.4.8",
+    "undici": "^7.24.0",
+    "zod": "4.6.5"
   }
 }

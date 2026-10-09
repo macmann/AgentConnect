@@ -1,3 +1,9 @@
+import {
+  modelSnapshotSchema,
+  connection,
+  validateAgentModel,
+  type ModelSnapshot,
+} from "./agent-models.js";
 import { validateToolIds, runAgentTools, ToolError } from "./tool-runtime.js";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -35,7 +41,7 @@ import type { EmbeddingFactory } from "@agentconnect/provider-sdk/embeddings";
 import { SingleAgentRuntime } from "@agentconnect/agent-sdk";
 import { actor, workspaceAccess, audit, HttpError, id, params } from "./app.js";
 import { sql } from "./db.js";
-import { decrypt, token, digest } from "./security.js";
+import { token, digest } from "./security.js";
 import { config } from "./config.js";
 const allowedHosts = () =>
   config.MODEL_ALLOWED_HOSTS.split(",")
@@ -45,17 +51,6 @@ const privateHosts = () =>
   config.MODEL_PRIVATE_HOSTS.split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-const modelSnapshotSchema = z.object({
-  id: z.uuid(),
-  provider: modelInput.shape.provider,
-  modelId: z.string(),
-  baseUrl: z.url(),
-  secretId: z.uuid().nullable(),
-  capabilities: modelInput.shape.capabilities,
-  contextWindow: z.number(),
-  maxOutputTokens: z.number(),
-});
-type ModelSnapshot = z.infer<typeof modelSnapshotSchema>;
 type AgentRow = {
   id: string;
   organization_id: string;
@@ -95,22 +90,6 @@ async function modelSnapshot(modelId: string, workspaceId: string) {
     maxOutputTokens: m.max_output_tokens,
   });
 }
-async function connection(
-  model: ModelSnapshot,
-  workspaceId: string,
-  orgId: string,
-): Promise<ModelConnection> {
-  let apiKey: string | undefined;
-  if (model.secretId) {
-    const [s] =
-      await sql`SELECT name,ciphertext FROM secrets WHERE id=${model.secretId} AND workspace_id=${workspaceId} AND organization_id=${orgId}`;
-    if (!s) throw new HttpError(409, "Model credential is no longer available");
-    apiKey = decrypt(s.ciphertext, `${orgId}:${workspaceId}:${s.name}`);
-  }
-  if (!apiKey && model.provider !== "openai-compatible")
-    throw new HttpError(409, "Configure a workspace secret for this model");
-  return { ...model, apiKey };
-}
 async function ownedAgent(
   r: FastifyRequest,
   cap?: Parameters<typeof workspaceAccess>[2],
@@ -122,15 +101,6 @@ async function ownedAgent(
   if (!a) throw new HttpError(404, "Agent not found");
   const w = await workspaceAccess(u.id, a.workspace_id, cap);
   return { u, a, w };
-}
-function validateAgentModel(c: AgentConfig, m: ModelSnapshot) {
-  if (c.maxOutputTokens > m.maxOutputTokens)
-    throw new HttpError(400, "Agent output limit exceeds the model limit");
-  if (c.maxOutputTokens >= m.contextWindow)
-    throw new HttpError(
-      400,
-      "Output limit must fit in the model context window",
-    );
 }
 function equalToken(candidate: string, hash: string) {
   const a = Buffer.from(digest(candidate));

@@ -4,6 +4,8 @@ export default defineConfig({
   format: ["esm"],
   splitting: false,
   external: [
+    "@langchain/langgraph",
+    "@langchain/langgraph-checkpoint-postgres",
     "@modelcontextprotocol/sdk",
     "ajv",
     "undici",

@@ -4,7 +4,7 @@ try {
   await sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(801100)`;
     await tx`CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`;
-    for (const version of ["0001", "0002", "0003", "0004"]) {
+    for (const version of ["0001", "0002", "0003", "0004", "0005"]) {
       const done =
         await tx`SELECT version FROM schema_migrations WHERE version=${version}`;
       if (!done.length) {
@@ -15,7 +15,9 @@ try {
               ? "0002_single_agent.sql"
               : version === "0003"
                 ? "0003_knowledge.sql"
-                : "0004_tools.sql";
+                : version === "0004"
+                  ? "0004_tools.sql"
+                  : "0005_workflows.sql";
         await tx.unsafe(
           await readFile(
             new URL(`../../../packages/db/migrations/${file}`, import.meta.url),

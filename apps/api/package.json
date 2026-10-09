@@ -26,6 +26,8 @@
     "@fastify/multipart": "^9.4.0",
     "@fastify/rate-limit": "11.2.1",
     "@fastify/swagger": "^9.7.0",
+    "@langchain/langgraph": "^1.4.21",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.6",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/auto-instrumentations-node": "^0.71.0",
@@ -43,6 +45,7 @@
     "ioredis": "^5.8.2",
     "nodemailer": "^7.0.12",
     "pdfjs-dist": "^5.4.624",
+    "pg": "8.23.1",
     "postgres": "^3.4.8",
     "undici": "^7.30.0",
     "zod": "4.6.5"
@@ -53,6 +56,7 @@
   "exports": {
     "./mail": "./src/mail.ts",
     "./config": "./src/config.ts",
-    "./ingestion": "./src/ingestion.ts"
+    "./ingestion": "./src/ingestion.ts",
+    "./workflows": "./src/workflow-runtime.ts"
   }
 }
