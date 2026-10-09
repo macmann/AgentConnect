@@ -1,4 +1,8 @@
-import { ProviderError, type Transport } from "./index.js";
+import {
+  ProviderError,
+  providerErrorDetails,
+  type Transport,
+} from "./index.js";
 export interface EmbeddingConnection {
   provider: "openai" | "openai-compatible" | "gemini";
   modelId: string;
@@ -85,6 +89,8 @@ export function createEmbeddingProvider(
                 ? "AUTHENTICATION_FAILED"
                 : "EMBEDDING_HTTP_ERROR",
             response.status === 429 || response.status >= 500,
+            response.status,
+            await providerErrorDetails(response.body),
           );
         const chunks: Uint8Array[] = [];
         let bytes = 0;

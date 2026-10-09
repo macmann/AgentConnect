@@ -34,6 +34,7 @@ export class ProviderError extends Error {
     public code: string,
     public retryable = false,
     public httpStatus?: number,
+    public details?: { providerCode?: string; parameter?: string },
   ) {
     super("Model provider request failed");
   }
@@ -43,6 +44,59 @@ export interface TransportResponse {
   body: AsyncIterable<Uint8Array>;
   close: () => Promise<void>;
   headers?: Record<string, string | string[] | undefined>;
+}
+// Only these fixed identifiers can leave a provider error body. Never expose
+// upstream messages, echoed requests, headers, arbitrary codes or field names.
+export async function providerErrorDetails(body: AsyncIterable<Uint8Array>) {
+  const codes = new Set([
+    "model_not_found",
+    "invalid_model",
+    "unsupported_parameter",
+    "unsupported_value",
+    "invalid_value",
+    "invalid_request_error",
+    "context_length_exceeded",
+    "insufficient_quota",
+    "rate_limit_exceeded",
+    "invalid_api_key",
+    "permission_denied",
+  ]);
+  const parameters = new Set([
+    "model",
+    "temperature",
+    "top_p",
+    "max_tokens",
+    "max_completion_tokens",
+    "messages",
+    "stream",
+    "stream_options",
+    "dimensions",
+    "input",
+  ]);
+  try {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for await (const chunk of body) {
+      size += chunk.byteLength;
+      if (size > 16384) return undefined;
+      chunks.push(chunk);
+    }
+    const value = object(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    const error = object(value.error);
+    const code =
+      typeof error.code === "string" && codes.has(error.code)
+        ? error.code
+        : typeof error.type === "string" && codes.has(error.type)
+          ? error.type
+          : undefined;
+    const parameter =
+      typeof error.param === "string" && parameters.has(error.param)
+        ? error.param
+        : undefined;
+    return code || parameter ? { providerCode: code, parameter } : undefined;
+  } catch {
+    return undefined;
+  }
 }
 export type Transport = (
   url: string,
@@ -262,7 +316,9 @@ export function createProvider(
             { role: "system", content: input.system },
             ...input.messages,
           ],
-          max_tokens: input.maxOutputTokens,
+          ...(provider === "openai"
+            ? { max_completion_tokens: input.maxOutputTokens }
+            : { max_tokens: input.maxOutputTokens }),
           stream: true,
           ...parameters,
           ...(provider === "openai"
@@ -288,6 +344,7 @@ export function createProvider(
                 : "PROVIDER_HTTP_ERROR",
             response.status === 429 || response.status >= 500,
             response.status,
+            await providerErrorDetails(response.body),
           );
         for await (const frame of decodeSSE(response.body)) {
           if (frame.data === "[DONE]") {
