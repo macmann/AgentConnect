@@ -596,6 +596,21 @@ test("Browser preflight permits authenticated model edit and delete methods", as
   }
 });
 
+test("Optional top-p remains null and zero is rejected", async () => {
+  assert.equal(agentConfig.safeParse({ modelId, topP: 0 }).success, false);
+  const response = await call("POST", `/workspaces/${workspace}/agents`, {
+    name: "Nullable sampling fixture",
+    config: { modelId, topP: null, maxOutputTokens: 1 },
+  });
+  assert.equal(response.statusCode, 201);
+  const id = response.json().id;
+  try {
+    const [row] = await sql`SELECT draft_config FROM agents WHERE id=${id}`;
+    assert.equal(row!.draft_config.topP, null);
+  } finally {
+    await sql`DELETE FROM agents WHERE id=${id}`;
+  }
+});
 test("Models and agents support one million output tokens with model-specific validation", async () => {
   const registered = await call("POST", `/workspaces/${workspace}/models`, {
     name: "Large output model",

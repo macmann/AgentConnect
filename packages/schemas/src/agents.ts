@@ -54,7 +54,7 @@ export const agentConfig = z.object({
     advanced: null,
   }),
   temperature: z.number().min(0).max(1).default(0.7),
-  topP: z.number().min(0).max(1).nullable().default(null),
+  topP: z.number().gt(0).max(1).nullable().default(null),
   maxOutputTokens: z.number().int().min(1).max(2000000).default(1024),
   historyWindow: z.number().int().min(1).max(50).default(10),
   language: z.string().max(50).default("English"),
