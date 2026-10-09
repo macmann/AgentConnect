@@ -412,6 +412,10 @@ async function streamChat(
         modelId: model.modelId,
         hostname: new URL(model.baseUrl).hostname,
         httpStatus: e instanceof ProviderError ? e.httpStatus : undefined,
+        providerCode:
+          e instanceof ProviderError ? e.details?.providerCode : undefined,
+        parameter:
+          e instanceof ProviderError ? e.details?.parameter : undefined,
         retryable: e instanceof ProviderError ? e.retryable : false,
         temperature: c.temperature,
         topP: c.topP,
@@ -642,10 +646,11 @@ export async function registerAgentRoutes(
         messages: [{ role: "user", content: "Reply with the word Connected." }],
         temperature: 0,
         topP: null,
-        maxOutputTokens: Math.min(32, model.maxOutputTokens),
+        maxOutputTokens: Math.min(1024, model.maxOutputTokens),
         signal: controller.signal,
       }))
         if (e.type === "token") text += e.text;
+      if (!text.trim()) throw new ProviderError("EMPTY_PROVIDER_RESPONSE");
       return { ok: true, response: text.slice(0, 500) };
     } catch (e) {
       if (e instanceof HttpError) throw e;
@@ -656,17 +661,52 @@ export async function registerAgentRoutes(
         );
       const code =
         e instanceof ProviderError ? e.code : "NETWORK_OR_PROVIDER_ERROR";
+      const details = e instanceof ProviderError ? e.details : undefined;
+      const httpStatus = e instanceof ProviderError ? e.httpStatus : undefined;
+      r.log.warn(
+        {
+          code,
+          provider: model.provider,
+          modelId: model.modelId,
+          hostname: new URL(model.baseUrl).hostname,
+          httpStatus,
+          providerCode: details?.providerCode,
+          parameter: details?.parameter,
+          credentialSelected: !!model.secretId,
+          temperatureSent: model.capabilities.temperature,
+          maxOutputTokens: Math.min(1024, model.maxOutputTokens),
+        },
+        "Model connection test failed",
+      );
       const hint =
-        code === "AUTHENTICATION_FAILED"
-          ? "Check the selected workspace credential and ensure the provider matches its API key."
-          : code === "RATE_LIMITED"
-            ? "The provider rate limit or quota was reached. Retry later and check account limits."
-            : code === "PROVIDER_HTTP_ERROR"
-              ? "Check the base URL, exact model identifier, account access and supported parameters."
-              : code === "ENDPOINT_NOT_ALLOWED"
-                ? "Approve the provider host in MODEL_ALLOWED_HOSTS and restart the API and worker."
-                : "Check provider configuration and network access.";
-      throw new HttpError(502, `Provider test failed: ${code}. ${hint}`);
+        details?.providerCode === "model_not_found" ||
+        details?.providerCode === "invalid_model"
+          ? "The exact model identifier is unavailable to the selected provider account/project. Verify model access."
+          : details?.parameter === "temperature" ||
+              details?.parameter === "top_p"
+            ? "The provider rejected a sampling parameter. Disable the corresponding capability if this model does not support it."
+            : code === "EMPTY_PROVIDER_RESPONSE"
+              ? "The provider returned no visible text. Check the model's reasoning/output budget and API compatibility."
+              : code === "AUTHENTICATION_FAILED"
+                ? "Check the selected workspace credential and ensure the provider matches its API key."
+                : code === "RATE_LIMITED"
+                  ? "The provider rate limit or quota was reached. Retry later and check account limits."
+                  : code === "PROVIDER_HTTP_ERROR"
+                    ? "Check the base URL, exact model identifier, account access and supported parameters."
+                    : code === "ENDPOINT_NOT_ALLOWED"
+                      ? "Approve the provider host in MODEL_ALLOWED_HOSTS and restart the API and worker."
+                      : "Check provider configuration and network access.";
+      const context = [
+        httpStatus ? `HTTP ${httpStatus}` : "",
+        details?.providerCode,
+        details?.parameter ? `parameter ${details.parameter}` : "",
+      ]
+        .filter(Boolean)
+        .join("; ");
+      throw new HttpError(
+        502,
+        `Provider test failed: ${code}${context ? ` (${context})` : ""}. ${hint}`,
+      );
     } finally {
       clearTimeout(timeout);
     }
