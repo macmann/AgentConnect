@@ -1,3 +1,4 @@
+import { queueRunWebhooks } from "./webhooks.js";
 import {
   modelSnapshotSchema,
   connection,
@@ -384,6 +385,14 @@ async function streamChat(
         if (output)
           await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content,citations) VALUES (${randomUUID()},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'assistant',${output},${tx.json(citations.map((s) => ({ ...s })))})`;
         await tx`UPDATE agent_runs SET status=${status},input_tokens=${inputTokens},output_tokens=${outputTokens},error_code=${errorCode},finished_at=now(),retrieval=${tx.json(sources.map((s) => ({ ...s })))},retrieval_ms=${retrievalMs} WHERE id=${runId}`;
+        await tx`UPDATE agent_runs ar SET input_usd_per_million=p.input_usd_per_million,output_usd_per_million=p.output_usd_per_million FROM model_prices p WHERE ar.id=${runId} AND p.model_id=${model.id} AND p.workspace_id=${conversation.workspace_id}`;
+        await queueRunWebhooks(tx, {
+          id: runId,
+          workspaceId: conversation.workspace_id,
+          organizationId: conversation.organization_id,
+          status,
+          traceId,
+        });
       });
       if (errorCode)
         write("error", {
@@ -778,7 +787,7 @@ export async function registerAgentRoutes(
       });
       const deploymentId = randomUUID();
       await sql.begin(async (tx) => {
-        await tx`INSERT INTO deployments(id,organization_id,workspace_id,agent_id,version_id,name) VALUES (${deploymentId},${w.organization_id},${w.id},${a.id},${v.id},${data.name})`;
+        await tx`INSERT INTO deployments(id,organization_id,workspace_id,agent_id,version_id,name,environment) VALUES (${deploymentId},${w.organization_id},${w.id},${a.id},${v.id},${data.name},${data.environment})`;
         await audit(
           tx,
           r,
@@ -796,7 +805,7 @@ export async function registerAgentRoutes(
   );
   app.get("/agents/:agentId/deployments", async (r) => {
     const { a } = await ownedAgent(r);
-    return sql`SELECT d.id,d.name,d.enabled,v.version,d.version_id FROM deployments d JOIN agent_versions v ON v.id=d.version_id WHERE d.agent_id=${a.id} ORDER BY d.created_at DESC`;
+    return sql`SELECT d.id,d.name,d.enabled,d.environment,v.version,d.version_id FROM deployments d JOIN agent_versions v ON v.id=d.version_id WHERE d.agent_id=${a.id} ORDER BY d.created_at DESC`;
   });
   app.delete("/agents/:agentId/deployments/:deploymentId", async (r) => {
     const { u, a, w } = await ownedAgent(r, "agent:publish");
@@ -846,7 +855,16 @@ export async function registerAgentRoutes(
     "/agents/:agentId/chat",
     {
       ...schema(chatInput),
-      config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+          keyGenerator: (r: FastifyRequest) =>
+            /^Bearer ac_/.test(r.headers.authorization ?? "")
+              ? digest(r.headers.authorization!)
+              : r.ip,
+        },
+      },
     },
     async (r, reply) => {
       const { u, a, w } = await ownedAgent(r, "agent:execute");

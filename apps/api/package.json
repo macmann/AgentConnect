@@ -57,6 +57,7 @@
     "./mail": "./src/mail.ts",
     "./config": "./src/config.ts",
     "./ingestion": "./src/ingestion.ts",
-    "./workflows": "./src/workflow-runtime.ts"
+    "./workflows": "./src/workflow-runtime.ts",
+    "./webhooks": "./src/webhooks.ts"
   }
 }

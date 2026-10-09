@@ -24,6 +24,7 @@ const schema = z.object({
       "api.openai.com,api.anthropic.com,generativelanguage.googleapis.com",
     ),
   MODEL_PRIVATE_HOSTS: z.string().default(""),
+  WEBHOOK_ALLOWED_HOSTS: z.string().default(""),
   TOOL_ALLOWED_HOSTS: z.string().default(""),
   TOOL_PRIVATE_HOSTS: z.string().default(""),
   TOOL_DATABASE_HOSTS: z.string().default(""),

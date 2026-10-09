@@ -1,3 +1,5 @@
+import { registerOperationsRoutes } from "./operations.js";
+import { apiKeyChatRequest, apiKeyActor } from "./api-key-auth.js";
 import { registerWorkflowRoutes } from "./workflows.js";
 import { WorkflowError } from "./workflow-runtime.js";
 import { registerToolRoutes } from "./tools.js";
@@ -61,6 +63,7 @@ type Actor = {
   verified_at: Date | null;
 };
 export async function actor(r: FastifyRequest): Promise<Actor> {
+  if (apiKeyChatRequest(r)) return apiKeyActor(r);
   const session = r.cookies.session;
   if (!session) throw new HttpError(401, "Sign in required");
   const [u] = await sql<
@@ -203,9 +206,25 @@ export async function buildApp(
     };
   });
   app.addHook("onRequest", async (r) => {
+    if (apiKeyChatRequest(r)) {
+      const bucket = `api-chat-ip:${digest(r.ip)}:${Math.floor(Date.now() / 60000)}`;
+      const count = Number(
+        await redis.eval(
+          "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],75) end; return n",
+          1,
+          bucket,
+        ),
+      );
+      if (count > 300)
+        throw new HttpError(
+          429,
+          "API chat IP rate limit exceeded; retry next minute",
+        );
+    }
     if (
       !["GET", "HEAD", "OPTIONS"].includes(r.method) &&
-      r.headers.origin !== config.WEB_ORIGIN
+      r.headers.origin !== config.WEB_ORIGIN &&
+      !apiKeyChatRequest(r)
     )
       throw new HttpError(403, "Invalid request origin");
   });
@@ -648,6 +667,7 @@ export async function buildApp(
   await registerKnowledgeRoutes(app, options.embeddingFactory);
   await registerToolRoutes(app);
   await registerWorkflowRoutes(app);
+  await registerOperationsRoutes(app);
   await registerAgentRoutes(
     app,
     options.providerFactory,

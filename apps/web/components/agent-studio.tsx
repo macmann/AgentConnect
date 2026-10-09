@@ -13,6 +13,8 @@ import { Button } from "./button";
 import { Citations, type Citation } from "./citations";
 import { ToolTraces, type ToolTrace } from "./tool-studio";
 import { ChatPanel } from "./chat-panel";
+import { MessageReview } from "./message-review";
+import { permitted, type Role } from "@agentconnect/schemas/foundation";
 import { AgentAttachments } from "./agent-attachments";
 import { requestJson } from "./agent-client";
 type Model = {
@@ -1355,7 +1357,29 @@ export function AgentStudio({
     </>
   );
 }
-export function Conversations({ workspaceId }: { workspaceId: string }) {
+export function Conversations({
+  workspaceId,
+  role,
+}: {
+  workspaceId: string;
+  role: string;
+}) {
+  const [status, setStatus] = useState(""),
+    [rating, setRating] = useState(""),
+    [channel, setChannel] = useState(""),
+    [filterAgent, setFilterAgent] = useState(""),
+    [days, setDays] = useState(30);
+  const agents = useQuery({
+    queryKey: ["agents", workspaceId],
+    queryFn: () =>
+      requestJson<AgentSummary[]>(`/workspaces/${workspaceId}/agents`),
+  });
+  function resetFilters() {
+    setPages([]);
+    setBefore("");
+    setBeforeId("");
+    setSelected("");
+  }
   const [pages, setPages] = useState<
     { id: string; name: string; created_at: string }[]
   >([]);
@@ -1363,10 +1387,20 @@ export function Conversations({ workspaceId }: { workspaceId: string }) {
   const [beforeId, setBeforeId] = useState("");
   const [selected, setSelected] = useState("");
   const conversations = useQuery({
-    queryKey: ["conversations", workspaceId, before, beforeId],
+    queryKey: [
+      "conversations",
+      workspaceId,
+      before,
+      beforeId,
+      status,
+      rating,
+      channel,
+      filterAgent,
+      days,
+    ],
     queryFn: () =>
       requestJson<{ id: string; name: string; created_at: string }[]>(
-        `/workspaces/${workspaceId}/conversations${before ? `?before=${encodeURIComponent(before)}&beforeId=${beforeId}` : ""}`,
+        `/workspaces/${workspaceId}/operations/conversations?${new URLSearchParams({ days: String(days), ...(status ? { status } : {}), ...(rating ? { rating } : {}), ...(channel ? { channel } : {}), ...(filterAgent ? { agentId: filterAgent } : {}), ...(before ? { before, beforeId } : {}) })}`,
       ),
   });
   const messages = useQuery({
@@ -1396,6 +1430,88 @@ export function Conversations({ workspaceId }: { workspaceId: string }) {
         <h3>Conversation history</h3>
         <p>Workspace-scoped conversation records and run outcomes.</p>
       </div>
+      <div className="operations-filters">
+        <label>
+          Agent
+          <select
+            value={filterAgent}
+            onChange={(e) => {
+              resetFilters();
+              setFilterAgent(e.target.value);
+            }}
+          >
+            <option value="">All agents</option>
+            {agents.data?.map((a) => (
+              <option value={a.id} key={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Run status
+          <select
+            value={status}
+            onChange={(e) => {
+              resetFilters();
+              setStatus(e.target.value);
+            }}
+          >
+            <option value="">All statuses</option>
+            {["running", "completed", "failed", "cancelled"].map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Rating
+          <select
+            aria-label="Rating filter"
+            value={rating}
+            onChange={(e) => {
+              resetFilters();
+              setRating(e.target.value);
+            }}
+          >
+            <option value="">All ratings</option>
+            <option value="like">Like</option>
+            <option value="dislike">Dislike</option>
+          </select>
+        </label>
+        <label>
+          Channel
+          <select
+            value={channel}
+            onChange={(e) => {
+              resetFilters();
+              setChannel(e.target.value);
+            }}
+          >
+            <option value="">All channels</option>
+            <option value="playground">Playground</option>
+            <option value="hosted">Hosted chat</option>
+          </select>
+        </label>
+        <label>
+          Period
+          <select
+            value={days}
+            onChange={(e) => {
+              resetFilters();
+              setDays(Number(e.target.value));
+            }}
+          >
+            <option value={7}>Last 7 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+        </label>
+      </div>
+      {conversations.isPending && (
+        <p role="status" className="empty">
+          Loading conversations…
+        </p>
+      )}
       {conversations.error && (
         <p className="error-banner">{conversations.error.message}</p>
       )}
@@ -1424,9 +1540,10 @@ export function Conversations({ workspaceId }: { workspaceId: string }) {
               Load more
             </Button>
           )}
-          {!rows.length && (
+          {!rows.length && !conversations.isPending && !conversations.error && (
             <p className="empty">
-              Conversations appear after a playground or hosted run.
+              No conversations match these filters. Try a wider period or start
+              a playground chat.
             </p>
           )}
         </div>
@@ -1441,6 +1558,13 @@ export function Conversations({ workspaceId }: { workspaceId: string }) {
               </small>
               <div>{m.content}</div>
               <Citations sources={m.citations ?? []} />
+              {m.role === "assistant" && (
+                <MessageReview
+                  messageId={m.id}
+                  conversationId={selected}
+                  canReview={permitted(role as Role, "conversation:review")}
+                />
+              )}
             </div>
           ))}
           {!selected && (

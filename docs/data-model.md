@@ -42,3 +42,7 @@ Phase 3 adds `mcp_connectors` (secret-backed approved endpoints and cached capab
 Phase 4 migration 0005 adds workflows, immutable workflow_versions, snapshot-bearing workflow_runs, workflow_node_runs and workflow_approvals. Composite tenant foreign keys link all records; tool_executions gains workflow run/node references. The official LangGraph PostgreSQL saver owns checkpoint tables in workflow_checkpoints. Those tables store run-thread state and require the same restricted database access and retention policy as run inputs and outputs.
 
 Migration 0006 adds revision and archived_at to model_configurations. Registry removal archives the row, preserving composite foreign keys from published agent versions. Current agent drafts must switch models or be archived before registry removal. Published model snapshots remain immutable when registry settings are edited.
+
+## Phase 5 operations
+
+Migration 0007 adds tenant-bound `conversation_reviews`, `model_prices`, `workspace_api_keys`, `workspace_webhooks` and `webhook_deliveries`. Review records reference an assistant message and reviewer without changing historical content. API keys store hashes and a single agent/workspace scope; webhook signing secrets remain encrypted. Agent runs retain input/output USD rates at completion so future price edits do not change estimates. Deployments add environment labels; promotions affect future conversation snapshots. The webhook outbox transaction is shared with terminal agent-run persistence, and delivery claims use leases and bounded retries.
