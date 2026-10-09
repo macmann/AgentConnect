@@ -1,0 +1,16 @@
+{
+  "name": "@agentconnect/provider-sdk",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./embeddings": "./src/embeddings.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "undici": "^7.24.0"
+  }
+}

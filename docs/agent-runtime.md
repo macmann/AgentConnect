@@ -1,0 +1,34 @@
+# Single-agent runtime
+
+Phase 1 implements model registration, agent CRUD, structured or advanced prompts, streaming playground, conversations, immutable publication and hosted chat. The runtime and provider SDK are separate packages; the single-agent runtime does not yet use LangGraph. Graph workflows are Phase 4.
+
+## Connect a provider and deploy
+
+1. Register, verify your email, and create an organization/workspace.
+2. In **Secrets**, save a provider API key as an encrypted workspace secret. Never paste credentials into chat or commit them. Values are not returned to the browser.
+3. In **Models**, register OpenAI, Anthropic, Google Gemini or an approved OpenAI-compatible endpoint. Select the encrypted secret and enter a model identifier available to your account. Set its actual context/output limits and supported temperature/top-p parameters; these are operator declarations, not automatic model discovery. Hosted providers require a secret; compatible local servers may omit it.
+4. Test the connection. In **Agents**, create an agent, configure its model, prompt and settings, then save the draft.
+5. Open **playground** and send a message. New chats snapshot the saved draft; continuing chats retain their original settings. Unsaved changes must be saved before opening playground or publication.
+6. **Publish** the saved draft, create a hosted deployment from that version, then open hosted chat. Publication freezes prompt, model configuration and credential reference. Restore draft changes the editable draft and leaves deployed versions intact. Disable deployment to remove public access; archiving an agent disables its deployments.
+
+Workspace administrators manage models and credentials. Builders create, execute and publish agents. Operators can inspect conversations. Viewers can read agent definitions but cannot execute them. Authorization is enforced in API code, independently of model output.
+
+## Provider transport
+
+Adapters stream real HTTP responses from OpenAI chat completions, Anthropic messages and Gemini streamGenerateContent. Compatible providers use the chat-completions protocol. Unsupported declared sampling parameters are omitted. A provider API/model that rejects this protocol requires an adapter change; reasoning-only and non-streaming models are not universally supported.
+
+`MODEL_ALLOWED_HOSTS` defaults to the three official provider API hosts. Compatible endpoints require explicit server approval. HTTPS, exact hostname/port checks, private-address rejection, direct DNS pinning and no redirects prevent arbitrary outbound fetches. `MODEL_PRIVATE_HOSTS` is an explicit host:port exception for trusted private model servers, empty by default. Hosted traffic honors the cloud outbound proxy. Cloud egress must also permit the destination. Requests include secret values only in provider authorization headers.
+
+## Streaming and persistence
+
+POST chat returns SSE protocol version 1: `meta` (conversation/run/trace IDs), `token`, then `done` or `error`. Anonymous hosted conversations also receive an opaque token in `meta`; continuation requires it in Authorization Bearer. Tokens remain in page memory, are hashed in storage and disappear on reload. Public deployment metadata omits prompts, provider settings and credential references.
+
+Runs store user input before provider execution and save assistant output, status and available provider-reported token counts afterward. Missing usage remains null; no token counts or pricing are invented. Provider error bodies and credentials are not exposed. Abort on disconnect and a 90-second timeout cancel upstream work. Concurrent responses in one conversation return 409. Interrupted processes leave no guaranteed final output; startup and minute-by-minute recovery mark runs older than five minutes failed and release their conversation locks.
+
+History is bounded by configured message count and a conservative UTF-8 byte budget. This is not a model-specific tokenizer. Trace spans include tenant/resource IDs and provider/model identity, without explicit message content or authorization headers. Configure an OTLP collector for external traces.
+
+## Validation limits
+
+API tests inject an explicit provider fixture; adapter tests use protocol fixtures and actual local HTTP transport. Browser tests exercise editing, chat, cancellation, conflicting requests, publication and anonymous continuation through an explicit local HTTP fixture. Production code has no fixture mode. No live provider credential is available in this environment, so external provider acceptance and billing behavior remain unverified.
+
+Public chat currently has per-IP rate limits. Organization spending caps, bot protection, moderation, retention jobs, production observability review and enterprise KMS are later hardening work. Avoid exposing an unrestricted paid deployment before those controls match your requirements.
