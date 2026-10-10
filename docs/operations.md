@@ -59,10 +59,12 @@ Backend/browser tests use explicit fixtures. Live external receiver acceptance r
 
 ## Support enrichment roadmap
 
-The [support roadmap](human-support.md) prioritizes product enrichment over deployment automation and additional monitoring. Phase A supports manual queues, exclusive claims and case histories through tenant-scoped APIs; the dedicated console and intelligent routing follow in B/C. No guaranteed staffing or notification is implied.
+The [support roadmap](human-support.md) prioritizes product enrichment over deployment automation and additional monitoring. Phase A supports manual queues, exclusive claims and case histories through tenant-scoped APIs; the dedicated console, deterministic routing and policy-controlled AI triage are implemented in B–D. No guaranteed staffing or notification is implied.
 
 ## Human Support staff workflow
 
-Use Human Support for live backlog counts, paginated case filters, assignment/acceptance, replies, private notes and resolution. Updates poll every five seconds. SLA, presence and copilot are subsequent phases; the current console does not claim guaranteed staffing. See [support operations](human-support.md).
+Use Human Support for live backlog counts, paginated case filters, assignment/acceptance, replies, private notes and resolution. Updates poll every five seconds. SLA and copilot are subsequent phases; the current console does not claim guaranteed staffing. See [support operations](human-support.md).
 
 The worker now polls support routing every three seconds (25 cases per batch). Apply migration **0019** before restarting both services. Unmatched cases remain queued and retry after 15 seconds; ordering by the persisted next-attempt time prevents starvation. No new provider credentials or deployment automation are needed. For a missing assignment, check queue enablement, strategy and assignment mode, queue membership, profile availability, heartbeat expiry, reserved capacity and required skills/language. Presence expires after 90 seconds; background/closed browser tabs stop renewing it.
+
+Apply migration **0020** before restarting API/worker. Human Support → Handoff policy controls customer access and private triage. The triage worker processes one leased job per iteration, polling every second; provider calls have a 30-second timeout, leases expire after 60 seconds and failures release routing to the existing default queue. Operators can work manually while triage runs and request a deduplicated refresh. Inspect private case triage status/provenance and events for a failed brief. Optional runtime handoff decisions and triage have separate recorded usage purposes; they are not added to the existing main-chat usage dashboard totals. See [Phase D operations](human-support.md#phase-d-escalation-policy-and-ai-handoff).

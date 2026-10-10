@@ -458,6 +458,10 @@ function deny(
   );
 }
 const collections = [
+  "support/policy",
+  "support/policy/targets",
+  "support/cases",
+  "support/profiles",
   "retention",
   "agents",
   "models",

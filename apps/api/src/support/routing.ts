@@ -57,6 +57,17 @@ export async function routingCandidates(tx: TransactionSql, s: SupportCase) {
   if (!queue || !queue.enabled)
     throw new HttpError(409, "Support queue is disabled or unavailable");
   const policy = routingPolicy.parse(queue.routing_config);
+  const [caseSignals] =
+    await tx`SELECT routing_requirements,triage_status FROM support_cases WHERE id=${s.id}`;
+  const signals = caseSignals?.routing_requirements ?? {};
+  policy.requiredSkills = [
+    ...new Set([...policy.requiredSkills, ...(signals.requiredSkills ?? [])]),
+  ];
+  policy.preferredSkills = [
+    ...new Set([...policy.preferredSkills, ...(signals.preferredSkills ?? [])]),
+  ];
+  policy.preferredLanguage =
+    policy.preferredLanguage ?? signals.preferredLanguage ?? null;
   // Revoked roles are checked live, including after a profile was configured.
   const rows =
     await tx`SELECT p.*,u.name,qm.priority_weight AS queue_weight,qm.last_assigned_at AS queue_last_assigned_at,
@@ -158,6 +169,10 @@ export async function routeCase(
   await lockSupportCapacity(tx, s.workspace_id);
   if (s.status !== "queued")
     return { assigned: false, reason: "Case is no longer queued" };
+  const [triage] =
+    await tx`SELECT triage_status FROM support_cases WHERE id=${s.id}`;
+  if (["pending", "running"].includes(triage?.triage_status))
+    return { assigned: false, reason: "Waiting for bounded handoff triage" };
   const result = await routingCandidates(tx, s);
   if (result.strategy === "manual" || result.assignmentMode === "manual")
     return { assigned: false, reason: "Queue uses manual assignment" };
@@ -192,7 +207,7 @@ export async function routeCase(
 // Bounded, durable backlog polling; no in-memory job can lose a queued case after restart.
 export async function processSupportRouting() {
   const backlog =
-    await sql`SELECT s.id,s.workspace_id FROM support_cases s JOIN support_queues q ON q.id=s.queue_id WHERE s.status='queued' AND s.routing_next_attempt_at<=clock_timestamp() AND q.enabled AND q.assignment_mode='automatic' AND q.routing_strategy<>'manual' ORDER BY s.routing_next_attempt_at,CASE s.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,s.queued_at,s.id LIMIT 25`;
+    await sql`SELECT s.id,s.workspace_id FROM support_cases s JOIN support_queues q ON q.id=s.queue_id WHERE s.status='queued' AND s.triage_status NOT IN ('pending','running') AND s.routing_next_attempt_at<=clock_timestamp() AND q.enabled AND q.assignment_mode='automatic' AND q.routing_strategy<>'manual' ORDER BY s.routing_next_attempt_at,CASE s.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,s.queued_at,s.id LIMIT 25`;
   for (const row of backlog) {
     try {
       await sql.begin(async (tx) => {

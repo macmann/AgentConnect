@@ -65,6 +65,7 @@ before(async () => {
   await sql.begin(async (tx) => {
     await tx`INSERT INTO organizations(id,name) VALUES (${org},'Channel fixtures')`;
     await tx`INSERT INTO workspaces(id,organization_id,name) VALUES (${workspace},${org},'Channel workspace')`;
+    await tx`INSERT INTO support_policies(id,organization_id,workspace_id,scope,target_id,policy) VALUES (${randomUUID()},${org},${workspace},'workspace',${workspace},${tx.json({ humanEntryMode: "always_available", aiTriageEnabled: false, generateHandoffSummary: false })})`;
     for (const role of ["owner", "operator", "analyst", "outsider"]) {
       const u = randomUUID(),
         raw = randomUUID();

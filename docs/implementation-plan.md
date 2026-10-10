@@ -173,4 +173,4 @@ Proceed to product-spec.md Phase 10 hardening after Teams and Slack validation. 
 
 ## Current priority: human support enrichment
 
-Deployment automation and additional monitoring are on hold. Follow the seven-phase [human support roadmap](human-support.md). Phases A–C now provide the support foundation, console and operator/routing configuration. Next is Phase D: escalation policy, AI triage and handoff brief, followed by the private copilot, structured AI continuation and SLA/analytics.
+Deployment automation and additional monitoring are on hold. Follow the seven-phase [human support roadmap](human-support.md). Phases A–D now provide the support foundation, console, operator/routing configuration and policy-controlled escalation with AI triage/handoff briefs. Next is Phase E: the private operator copilot, followed by structured AI continuation and SLA/analytics.

@@ -3565,3 +3565,97 @@ footer {
     padding: 14px;
   }
 }
+
+.support-policy {
+  padding: 24px;
+}
+.support-policy fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.support-policy-grid,
+.support-policy-scope {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  margin: 20px 0;
+}
+.support-policy label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.support-policy input,
+.support-policy select {
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
+}
+.support-policy small,
+.support-policy .muted {
+  color: var(--muted);
+  line-height: 1.6;
+}
+.support-policy-checks {
+  display: grid;
+  gap: 14px;
+  margin: 24px 0;
+}
+.support-policy-checks label {
+  flex-direction: row;
+  align-items: center;
+}
+.support-policy-checks input {
+  width: 18px;
+  flex-shrink: 0;
+}
+.support-policy-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+.support-intent-rule {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  padding: 16px;
+  margin: 16px 0;
+  border-radius: 12px;
+}
+.support-brief {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-top: 16px;
+  overflow-wrap: anywhere;
+}
+.support-brief h5 {
+  margin: 16px 0 8px;
+}
+.support-brief p {
+  white-space: pre-wrap;
+}
+.support-brief small {
+  display: block;
+  color: var(--muted);
+  margin: 12px 0;
+  line-height: 1.6;
+}
+@media (max-width: 640px) {
+  .support-policy {
+    padding: 16px;
+  }
+  .support-policy-grid,
+  .support-policy-scope,
+  .support-intent-rule {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .support-section-tabs {
+    flex-wrap: wrap;
+  }
+}

@@ -1,4 +1,5 @@
 "use client";
+import { SupportBrief } from "./support-brief";
 import { SupportRoutingPanel } from "./support-routing-panel";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
@@ -428,6 +429,12 @@ export function SupportCasePanel({
               </small>
             </div>
           )}
+          <SupportBrief
+            s={s}
+            base={base}
+            workspaceId={workspaceId}
+            role={role}
+          />
           <SupportRoutingPanel
             s={s}
             base={base}

@@ -1,3 +1,4 @@
+import { evaluateEscalation } from "./support/policy.js";
 import { assertQualityGate } from "./quality-gate.js";
 import { requireWidgetOrigin } from "./channels.js";
 import {
@@ -466,6 +467,14 @@ async function streamChat(
           traceId,
         });
       });
+      try {
+        await evaluateEscalation(conversation.id, runId, provider);
+      } catch {
+        r.log.warn(
+          { runId, traceId, code: "SUPPORT_DECISION_FAILED" },
+          "Support escalation evaluation failed",
+        );
+      }
       if (errorCode)
         write("error", {
           code: errorCode,

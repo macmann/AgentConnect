@@ -709,6 +709,14 @@ export const supportQueues = pgTable("support_queues", {
     .defaultNow(),
 });
 export const supportCases = pgTable("support_cases", {
+  policySnapshot: jsonb("policy_snapshot").notNull().default({}),
+  triageStatus: text("triage_status").notNull().default("none"),
+  triageResult: jsonb("triage_result").notNull().default({}),
+  handoffBrief: jsonb("handoff_brief").notNull().default({}),
+  triageProvenance: jsonb("triage_provenance").notNull().default({}),
+  triageLeaseToken: uuid("triage_lease_token"),
+  triageLeaseUntil: timestamp("triage_lease_until", { withTimezone: true }),
+  routingRequirements: jsonb("routing_requirements").notNull().default({}),
   routingNextAttemptAt: timestamp("routing_next_attempt_at", {
     withTimezone: true,
   })
@@ -815,5 +823,41 @@ export const supportQueueMembers = pgTable("support_queue_members", {
   enabled: boolean("enabled").notNull().default(true),
   priorityWeight: integer("priority_weight").notNull().default(1),
   lastAssignedAt: timestamp("last_assigned_at", { withTimezone: true }),
+  createdAt: created(),
+});
+
+export const supportPolicies = pgTable("support_policies", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  scope: text("scope").notNull(),
+  targetId: uuid("target_id").notNull(),
+  policy: jsonb("policy").notNull(),
+  revision: integer("revision").notNull().default(1),
+  createdAt: created(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const supportOffers = pgTable("support_offers", {
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  status: text("status").notNull().default("offered"),
+  reasonCode: text("reason_code").notNull(),
+  policySnapshot: jsonb("policy_snapshot").notNull(),
+  signals: jsonb("signals").notNull().default({}),
+  createdAt: created(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+export const supportDecisions = pgTable("support_decisions", {
+  runId: uuid("run_id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  signals: jsonb("signals").notNull(),
+  reasonCode: text("reason_code"),
   createdAt: created(),
 });

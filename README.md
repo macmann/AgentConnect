@@ -36,3 +36,5 @@ The next product roadmap is [Human Support, Intelligent Handoff and AI Copilot](
 Apply migration 0018, then open **Human Support** to filter cases, assign/claim, inspect a unified timeline, add private notes and resolve back to AI. See [the support guide](docs/human-support.md).
 
 Human Support Phase C adds optional operator profiles, fresh presence, reserved capacity, skills/languages, queue membership and deterministic routing. Run `pnpm db:migrate` (migration **0019**) and restart API/worker. Configure profiles and queues under **Human Support → Operators & routing**; operators must choose Available before automatic assignment. See [human-support.md](docs/human-support.md) for strategies, recommendations, capacity and compatibility limits.
+
+Human Support Phase D adds policy-controlled customer offers, strict AI triage and private handoff briefs. Apply migration **0020** and restart API/worker. Configure **Human Support → Handoff policy**; customer requests default to an offer after two explicit asks, with confirmation required. AI failure preserves manual support and the default queue.

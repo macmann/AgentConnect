@@ -1,3 +1,4 @@
+import { registerPolicyRoutes } from "./policy-routes.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Capability } from "@agentconnect/schemas/foundation";
 import { permitted } from "@agentconnect/schemas/foundation";
@@ -70,6 +71,7 @@ export async function registerSupportRoutes(
     return { u, w, a };
   }
 
+  await registerPolicyRoutes(app, helpers);
   await registerSupportConsoleRoutes(app, helpers);
   await registerOperatorRoutes(app, helpers);
   const base = "/workspaces/:workspaceId/support";
