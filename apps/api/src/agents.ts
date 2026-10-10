@@ -214,7 +214,9 @@ async function streamChat(
     await sql.begin(async (tx) => {
       const [locked] =
         await tx`SELECT handoff_status FROM conversations WHERE id=${conversation.id} FOR UPDATE`;
-      if (["pending", "active"].includes(locked?.handoff_status))
+      if (!locked)
+        throw new HttpError(404, "Conversation expired or unavailable");
+      if (["pending", "active"].includes(locked.handoff_status))
         throw new HttpError(
           409,
           "This conversation is with the human support team",

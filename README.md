@@ -24,3 +24,5 @@ Teams and Slack channel ingestion builds on all unmerged Phase 9 changes on `fea
 The next Phase 10 slice on `feat/tenant-isolation-hardening` adds `pnpm test:security` and closes the widget artifact/action origin-policy gap. See [tenant isolation coverage](docs/tenant-isolation.md).
 
 Run `pnpm recovery:drill` for the isolated local database/object/secret recovery check. See [backup and recovery verification](docs/backup-recovery.md) for prerequisites and production limits.
+
+Workspace administrators can configure retention, preview eligible data and track cleanup under **Retention**. See [workspace retention](docs/retention.md) for scope and worker behavior; migration 0016 is required.

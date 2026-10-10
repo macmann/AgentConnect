@@ -150,8 +150,9 @@ See connectors.md for setup, permissions and the initial release's sync semantic
 - [x] Executable local readiness concurrency smoke and deployment/recovery runbook.
 - [x] Adversarial tenant/workspace reference checks across registries, histories, attachments, six connector providers, public tokens and revocation; widget artifact/action origin-policy guard.
 - [x] Isolated synthetic PostgreSQL/S3 encrypted recovery drill with tenant, vector, secret and corruption verification.
+- [x] Workspace retention settings, non-destructive preview, scheduled atomic cleanup, audit counts and durable generated-object deletion with tenant/race regressions.
 - [ ] Independent penetration testing, broader concurrency/race assessment and realistic agent/workflow load tests.
-- [ ] Production HA/failover, measured backup/restore RPO/RTO, comprehensive data retention, release automation and on-premise packaging.
+- [ ] Production HA/failover, measured backup/restore RPO/RTO, remaining data-category/backup retention and legal holds, release automation and on-premise packaging.
 - [ ] Performance targets, accessibility review and live provider/SMTP acceptance.
 
 See hardening.md for checks, operational limits and remaining production acceptance.

@@ -88,4 +88,6 @@ Teams uses the same Graph/login grants, with Channel.ReadBasic.All and ChannelMe
 
 ## Phase 10 deployment checks
 
-Read [hardening](hardening.md) before production rollout. `pnpm deployment:check` performs read-only production preflight; `pnpm deployment:check --development` is explicitly a local dependency/schema check. Readiness now requires all release migrations (through 0015) and the actual pgvector extension, with bounded shared dependency probes.
+Read [hardening](hardening.md) before production rollout. `pnpm deployment:check` performs read-only production preflight; `pnpm deployment:check --development` is explicitly a local dependency/schema check. Readiness now requires all release migrations (through 0016) and the actual pgvector extension, with bounded shared dependency probes.
+
+Apply migration 0016 and restart both API and worker for workspace retention. Cleanup defaults to disabled and all periods to indefinite; configure it under Retention after reviewing [the retention runbook](retention.md). Monitor database cleanup failures and pending/blocked storage deletion jobs.
