@@ -1,3 +1,4 @@
+import { registerSupportRoutes } from "./support/routes.js";
 import { registerRetentionRoutes } from "./retention.js";
 import { registerConnectorRoutes, connectorHttpError } from "./connectors.js";
 import { registerQualityRoutes } from "./quality.js";
@@ -680,6 +681,13 @@ export async function buildApp(
   await registerOperationsRoutes(app);
   await registerGenerativeRoutes(app);
   await registerChannelRoutes(app);
+  await registerSupportRoutes(app, {
+    actor,
+    audit,
+    id,
+    params,
+    workspaceAccess,
+  });
   await registerQualityRoutes(app);
   await registerConnectorRoutes(app, options.sharePointClientFactory);
   await registerRetentionRoutes(app);

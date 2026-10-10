@@ -1,0 +1,283 @@
+import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { Capability } from "@agentconnect/schemas/foundation";
+import { permitted } from "@agentconnect/schemas/foundation";
+import {
+  caseInput,
+  queueInput,
+  queuePatch,
+  supportResolution,
+  supportTransition,
+  supportPage,
+  supportCaseQuery,
+} from "@agentconnect/schemas/support";
+import { z } from "zod";
+import { randomUUID } from "node:crypto";
+type Helpers = Pick<
+  typeof import("../app.js"),
+  "actor" | "audit" | "id" | "params" | "workspaceAccess"
+>;
+import { sql } from "../db.js";
+import { HttpError } from "../http-error.js";
+import {
+  createCase,
+  lockCase,
+  claimCase,
+  assignCase,
+  transitionCase,
+  resolveCase,
+  sendSupportMessage,
+  readCase,
+  type SupportActor,
+} from "./cases.js";
+const pageRows = (rows: Record<string, unknown>[], limit: number) => {
+  const items = rows.slice(0, limit),
+    last = items.at(-1);
+  return {
+    items,
+    nextCursor:
+      rows.length > limit && last
+        ? { before: last.created_at, beforeId: last.id }
+        : null,
+  };
+};
+const routeOptions = (summary: string) => ({
+  schema: { tags: ["Human support"], summary },
+});
+export async function registerSupportRoutes(
+  app: FastifyInstance,
+  helpers: Helpers,
+) {
+  const { actor, audit, id, params, workspaceAccess } = helpers;
+  async function context(r: FastifyRequest, capability: Capability) {
+    const u = await actor(r);
+    const w = await workspaceAccess(
+      u.id,
+      id(params(r).workspaceId),
+      capability,
+    );
+    const a: SupportActor = {
+      id: u.id,
+      type: permitted(w.role!, "support:supervise") ? "supervisor" : "operator",
+      supervise: permitted(w.role!, "support:supervise"),
+    };
+    return { u, w, a };
+  }
+
+  const base = "/workspaces/:workspaceId/support";
+  app.get(
+    base + "/queues",
+    routeOptions("List workspace support queues"),
+    async (r) => {
+      const { w } = await context(r, "support:queue:view");
+      const q = supportPage.parse(r.query);
+      const rows =
+        await sql`SELECT * FROM support_queues WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND (created_at,id)<(${q.before ?? new Date().toISOString()},${q.beforeId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"}) ORDER BY created_at DESC,id DESC LIMIT ${q.limit + 1}`;
+      return pageRows(rows, q.limit);
+    },
+  );
+  app.post(
+    base + "/queues",
+    routeOptions("Create a manual support queue"),
+    async (r, reply) => {
+      const { u, w } = await context(r, "support:queue:manage"),
+        input = queueInput.parse(r.body);
+      const queue = await sql
+        .begin(async (tx) => {
+          const [s] =
+            await tx`INSERT INTO support_queues(id,workspace_id,organization_id,name,description,enabled,priority,routing_strategy) VALUES (${randomUUID()},${w.id},${w.organization_id},${input.name},${input.description},${input.enabled},${input.priority},${input.routingStrategy}) RETURNING *`;
+          await audit(
+            tx,
+            r,
+            u.id,
+            "support.queue.created",
+            s!.id,
+            w.organization_id,
+            w.id,
+          );
+          return s;
+        })
+        .catch((e) => {
+          if (e.code === "23505")
+            throw new HttpError(409, "Queue name already exists");
+          throw e;
+        });
+      return reply.code(201).send(queue);
+    },
+  );
+  app.patch(
+    base + "/queues/:queueId",
+    routeOptions(
+      "Update or disable a support queue; retain historical references",
+    ),
+    async (r) => {
+      const { u, w } = await context(r, "support:queue:manage"),
+        input = queuePatch.parse(r.body);
+      return sql
+        .begin(async (tx) => {
+          const [s] =
+            await tx`SELECT * FROM support_queues WHERE id=${id(params(r).queueId)} AND workspace_id=${w.id} AND organization_id=${w.organization_id} FOR UPDATE`;
+          if (!s) throw new HttpError(404, "Support queue unavailable");
+          const [updated] =
+            await tx`UPDATE support_queues SET name=${input.name ?? s.name},description=${input.description ?? s.description},enabled=${input.enabled ?? s.enabled},priority=${input.priority ?? s.priority},updated_at=now() WHERE id=${s.id} RETURNING *`;
+          await audit(
+            tx,
+            r,
+            u.id,
+            "support.queue.updated",
+            s.id,
+            w.organization_id,
+            w.id,
+          );
+          return updated;
+        })
+        .catch((e) => {
+          if (e.code === "23505")
+            throw new HttpError(409, "Queue name already exists");
+          throw e;
+        });
+    },
+  );
+  app.get(
+    base + "/cases",
+    routeOptions(
+      "List support cases with filters and stable cursor pagination",
+    ),
+    async (r) => {
+      const { w } = await context(r, "support:view"),
+        q = supportCaseQuery.parse(r.query);
+      const rows =
+        await sql`SELECT * FROM support_cases WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND (${q.status ?? null}::text IS NULL OR status=${q.status ?? null}) AND (${q.queueId ?? null}::uuid IS NULL OR queue_id=${q.queueId ?? null}) AND (${q.assignedOperatorId ?? null}::uuid IS NULL OR assigned_operator_id=${q.assignedOperatorId ?? null}) AND (created_at,id)<(${q.before ?? new Date().toISOString()},${q.beforeId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"}) ORDER BY created_at DESC,id DESC LIMIT ${q.limit + 1}`;
+      return pageRows(rows, q.limit);
+    },
+  );
+  app.post(
+    base + "/cases",
+    routeOptions(
+      "Escalate an existing conversation without creating a second chat",
+    ),
+    async (r, reply) => {
+      const { u, w, a } = await context(r, "support:claim"),
+        input = caseInput.parse(r.body);
+      const result = await sql
+        .begin(async (tx) => {
+          const result = await createCase(
+            tx,
+            { ...input, workspaceId: w.id },
+            a,
+          );
+          if (result.created)
+            await audit(
+              tx,
+              r,
+              u.id,
+              "support.case.created",
+              result.supportCase.id,
+              w.organization_id,
+              w.id,
+            );
+          return result;
+        })
+        .catch((e) => {
+          if (e.code === "23505")
+            throw new HttpError(
+              409,
+              "Support request conflicts with an existing case or idempotency key",
+            );
+          throw e;
+        });
+      return reply.code(result.created ? 201 : 200).send(result.supportCase);
+    },
+  );
+  app.get(
+    base + "/cases/:caseId",
+    routeOptions("Read a tenant-scoped support case"),
+    async (r) => {
+      const { w } = await context(r, "support:view");
+      return readCase(id(params(r).caseId), w.id);
+    },
+  );
+  app.get(
+    base + "/cases/:caseId/events",
+    routeOptions("Read the internal append-only case timeline"),
+    async (r) => {
+      const { w } = await context(r, "support:view"),
+        q = supportPage.parse(r.query),
+        caseId = id(params(r).caseId);
+      await readCase(caseId, w.id);
+      const rows =
+        await sql`SELECT * FROM support_events WHERE support_case_id=${caseId} AND workspace_id=${w.id} AND organization_id=${w.organization_id} AND (created_at,id)<(${q.before ?? new Date().toISOString()},${q.beforeId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"}) ORDER BY created_at DESC,id DESC LIMIT ${q.limit + 1}`;
+      return pageRows(rows, q.limit);
+    },
+  );
+  const actions = ["claim", "assign", "status", "resolve", "messages"] as const;
+  for (const action of actions) {
+    app.post(
+      base + "/cases/:caseId/" + action,
+      routeOptions(`Support case ${action}`),
+      async (r) => {
+        const cap: Capability =
+          action === "claim"
+            ? "support:claim"
+            : action === "assign"
+              ? "support:assign"
+              : action === "messages"
+                ? "support:reply"
+                : "support:resolve";
+        const { u, w, a } = await context(r, cap),
+          caseId = id(params(r).caseId);
+        const input =
+          action === "assign"
+            ? z.strictObject({ operatorId: z.uuid() }).parse(r.body)
+            : action === "status"
+              ? supportTransition.parse(r.body)
+              : action === "resolve"
+                ? supportResolution.parse(r.body)
+                : action === "messages"
+                  ? z
+                      .strictObject({
+                        content: z.string().trim().min(1).max(4000),
+                      })
+                      .parse(r.body)
+                  : z.strictObject({}).parse(r.body ?? {});
+        await sql.begin(async (tx) => {
+          const s = await lockCase(tx, caseId, w.id);
+          if (action === "claim") await claimCase(tx, s, a);
+          else if (action === "assign")
+            await assignCase(
+              tx,
+              s,
+              (input as { operatorId: string }).operatorId,
+              a,
+            );
+          else if (action === "status")
+            await transitionCase(
+              tx,
+              s,
+              (input as { status: typeof s.status }).status,
+              a,
+            );
+          else if (action === "resolve") {
+            const resolution = input as { summary: string; code: string };
+            await resolveCase(tx, s, a, resolution.summary, resolution.code);
+          } else
+            await sendSupportMessage(
+              tx,
+              s,
+              a,
+              (input as { content: string }).content,
+            );
+          await audit(
+            tx,
+            r,
+            u.id,
+            `support.case.${action}`,
+            s.id,
+            w.organization_id,
+            w.id,
+          );
+        });
+        return readCase(caseId, w.id);
+      },
+    );
+  }
+}

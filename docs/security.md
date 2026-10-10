@@ -45,3 +45,8 @@ Webhook registration uses a separate exact-host HTTPS policy; delivery uses the 
 Run `pnpm test:security` against isolated test infrastructure; see [coverage](tenant-isolation.md). Widget-origin binding and the current widget allowlist apply to new guest generative actions and artifact download grants as well as chat and handoff. Previously issued signed artifact URLs remain bearer capabilities until their five-minute expiry. The suite verifies permission revocation for new requests and queued connector work; it does not claim independent penetration testing, RLS or interruption of already-authorized streams.
 
 Retention management is restricted to administrators and a saved current policy revision. Scheduled cleanup rechecks and locks current administrator membership, serializes policy updates, locks affected conversation roots and rechecks activity before deleting. Generated-object tombstones accept only the exact tenant/artifact key. Database failure rolls back content deletion and outbox writes; object failure retries without restoring application download access. Raw audit and retention metadata are preserved. Backup copies, old S3 versions, copied datasets, webhook payloads and legal holds require separate controls.
+
+
+## Support permissions
+
+Support administration uses existing workspace memberships and sessions. Builders/operators claim and act on their assigned cases; administrators supervise and assign. Analysts are read-only. Public guest endpoints retain token/deployment/origin checks and expose only legacy customer-visible status/messages. New internal case/event APIs require support capabilities. See [human support](human-support.md).

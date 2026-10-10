@@ -46,3 +46,8 @@ Migration 0006 adds revision and archived_at to model_configurations. Registry r
 ## Phase 5 operations
 
 Migration 0007 adds tenant-bound `conversation_reviews`, `model_prices`, `workspace_api_keys`, `workspace_webhooks` and `webhook_deliveries`. Review records reference an assistant message and reviewer without changing historical content. API keys store hashes and a single agent/workspace scope; webhook signing secrets remain encrypted. Agent runs retain input/output USD rates at completion so future price edits do not change estimates. Deployments add environment labels; promotions affect future conversation snapshots. The webhook outbox transaction is shared with terminal agent-run persistence, and delivery claims use leases and bounded retries.
+
+
+## Support foundation
+
+Migration 0017 adds support_cases, support_queues and support_events, with tenant-consistent composite foreign keys, one-open-case uniqueness and a conversation active-case pointer. Events reject updates but cascade with approved conversation retention. See [human support](human-support.md).

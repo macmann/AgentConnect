@@ -43,7 +43,9 @@ try {
                                       ? "0014_sharepoint_connectors.sql"
                                       : version === "0015"
                                         ? "0015_messaging_connectors.sql"
-                                        : "0016_retention.sql";
+                                        : version === "0016"
+                                          ? "0016_retention.sql"
+                                          : "0017_support.sql";
         await tx.unsafe(
           await readFile(
             new URL(`../../../packages/db/migrations/${file}`, import.meta.url),

@@ -26,3 +26,8 @@ The next Phase 10 slice on `feat/tenant-isolation-hardening` adds `pnpm test:sec
 Run `pnpm recovery:drill` for the isolated local database/object/secret recovery check. See [backup and recovery verification](docs/backup-recovery.md) for prerequisites and production limits.
 
 Workspace administrators can configure retention, preview eligible data and track cleanup under **Retention**. See [workspace retention](docs/retention.md) for scope and worker behavior; migration 0016 is required.
+
+
+## Human support enrichment
+
+The next product roadmap is [Human Support, Intelligent Handoff and AI Copilot](docs/human-support.md), delivered in phases A–G. Phase A adds durable cases, manual queues and exclusive assignments while keeping existing channel clients compatible. Apply migration 0017. Deployment automation and additional monitoring are paused.

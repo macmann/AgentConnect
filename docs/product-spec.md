@@ -4318,3 +4318,8 @@ It should not merely be:
 The platform should make it possible for users to build applications where AI can:
 
 **Understand → Retrieve → Reason → Collaborate → Act → Generate UI → Request Approval → Execute → Observe → Learn from Feedback.**
+
+
+## New enrichment specification
+
+The [Human Support, Intelligent Handoff and AI Copilot specification](human-support-spec.md) extends this product specification. Its phases A–G are tracked in [human-support.md](human-support.md). Deployment automation and additional monitoring are paused while this enrichment is implemented.

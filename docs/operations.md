@@ -56,3 +56,8 @@ Use a timing-safe comparison, reject stale timestamps, and deduplicate event IDs
 6. If an approved HTTPS receiver is available, register a webhook, verify its HMAC, run the agent and inspect delivery status. Registration alone does not establish live delivery.
 
 Backend/browser tests use explicit fixtures. Live external receiver acceptance remains unverified. Production retention, custom roles, budget enforcement, broader filters/channels, public end-user feedback, workflow cost estimates and additional event types require later operations slices.
+
+
+## Support enrichment roadmap
+
+The [support roadmap](human-support.md) prioritizes product enrichment over deployment automation and additional monitoring. Phase A supports manual queues, exclusive claims and case histories through tenant-scoped APIs; the dedicated console and intelligent routing follow in B/C. No guaranteed staffing or notification is implied.

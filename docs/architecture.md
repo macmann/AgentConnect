@@ -108,3 +108,8 @@ Teams and Slack adapters import bounded complete channel message/reply inventori
 Readiness uses a separate bounded PostgreSQL probe pool, concurrent dependency checks with abort/deadline enforcement, shared in-flight requests and a two-second cache. Required migration/version checks are shared with the migration CLI. Deployment preflight additionally checks the runtime database role and known credential placeholders without mutating infrastructure.
 
 Workspace retention uses daily/manual policy-revision jobs and PostgreSQL transactions to delete eligible history and LangGraph checkpoint payloads. Conversation activity timestamps and shared writer locks protect recently used or active conversations. Generated-object deletion is an independent durable outbox with bounded S3 calls and retries, committed atomically with artifact registry removal and cleanup audit counts. See retention.md for supported data categories and lifecycle limits.
+
+
+## Support conversation control
+
+The [support foundation](human-support.md) introduces tenant-scoped cases, queues and append-only events. Conversation mode is authoritative; AI and support actions serialize on the same conversation lock. Legacy channel routes project this domain for existing clients.
