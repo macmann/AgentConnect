@@ -12,7 +12,8 @@
     "mail:inspect": "tsx --env-file=../../.env src/local-mail.ts",
     "mail:worker": "tsx --env-file=../../.env src/mail-worker.ts",
     "start": "node --env-file=../../.env dist/server.js",
-    "deployment:check": "tsx --env-file=../../.env src/deployment-check.ts"
+    "deployment:check": "tsx --env-file=../../.env src/deployment-check.ts",
+    "test:security": "tsx --env-file=../../.env --test --test-concurrency=1 test/tenant-isolation.test.ts"
   },
   "dependencies": {
     "@agentconnect/agent-sdk": "workspace:*",

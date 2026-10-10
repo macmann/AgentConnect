@@ -18,7 +18,8 @@
     "storage:init": "pnpm --filter @agentconnect/api storage:init",
     "format": "prettier --write .",
     "test:e2e": "node --env-file=.env node_modules/@playwright/test/cli.js test",
-    "deployment:check": "pnpm --filter @agentconnect/api deployment:check"
+    "deployment:check": "pnpm --filter @agentconnect/api deployment:check",
+    "test:security": "pnpm --filter @agentconnect/api test:security"
   },
   "devDependencies": {
     "turbo": "2.11.7",
