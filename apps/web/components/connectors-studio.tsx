@@ -7,6 +7,7 @@ import { Button } from "./button";
 type Connector = {
   id: string;
   name: string;
+  kind: "s3" | "google-drive";
   knowledge_name: string;
   knowledge_base_id: string;
   secret_id: string;
@@ -17,10 +18,12 @@ type Connector = {
   status: string | null;
   error_code: string | null;
   selection: {
-    endpoint: string;
-    region: string;
-    bucket: string;
-    prefix: string;
+    endpoint?: string;
+    region?: string;
+    bucket?: string;
+    prefix?: string;
+    folderId?: string;
+    recursive?: boolean;
     maxObjects: number;
   };
 };
@@ -66,6 +69,9 @@ export function ConnectorsStudio({
   const [selected, setSelected] = useState(""),
     [editing, setEditing] = useState(false),
     [name, setName] = useState(""),
+    [kind, setKind] = useState<"s3" | "google-drive">("s3"),
+    [folderId, setFolderId] = useState(""),
+    [recursive, setRecursive] = useState(true),
     [kb, setKb] = useState(""),
     [secret, setSecret] = useState(""),
     [endpoint, setEndpoint] = useState("https://s3.us-east-1.amazonaws.com"),
@@ -104,6 +110,9 @@ export function ConnectorsStudio({
     setSelected(c?.id ?? "");
     setEditing(true);
     setName(c?.name ?? "");
+    setKind(c?.kind ?? "s3");
+    setFolderId(c?.selection.folderId ?? "");
+    setRecursive(c?.selection.recursive ?? true);
     setKb(c?.knowledge_base_id ?? "");
     setSecret(c?.secret_id ?? "");
     setEndpoint(c?.selection.endpoint ?? "https://s3.us-east-1.amazonaws.com");
@@ -130,14 +139,11 @@ export function ConnectorsStudio({
           <div>
             <h3>Enterprise sources</h3>
             <p>
-              Sync approved S3 files into a knowledge base. Google Drive and
-              other providers will use this connector pipeline in later
-              releases.
+              Sync approved S3 files or Google Drive folders into a knowledge
+              base.
             </p>
           </div>
-          {canManage && (
-            <Button onClick={() => edit()}>Add S3 connector</Button>
-          )}
+          {canManage && <Button onClick={() => edit()}>Add connector</Button>}
         </div>
         <div className="studio-form">
           {error && (
@@ -158,8 +164,8 @@ export function ConnectorsStudio({
             <div className="empty">
               <h4>No enterprise sources yet</h4>
               <p>
-                Create a knowledge base and save a read-only S3 credential, then
-                connect a bucket prefix.
+                Create a knowledge base and save a source credential, then
+                connect an S3 prefix or Google Drive folder.
               </p>
               <div className="button-row">
                 <Button onClick={() => onNavigate("Knowledge")}>
@@ -167,7 +173,7 @@ export function ConnectorsStudio({
                 </Button>
                 {canManage && (
                   <Button onClick={() => onNavigate("Secrets")}>
-                    Add S3 credential
+                    Add source credential
                   </Button>
                 )}
               </div>
@@ -186,14 +192,33 @@ export function ConnectorsStudio({
             >
               <strong>{c.name}</strong>
               <span>
-                {c.knowledge_name} · {c.selection.bucket}/{c.selection.prefix} ·{" "}
-                {c.enabled ? (c.status ?? "Not synced") : "Paused"}
+                {c.knowledge_name} ·{" "}
+                {c.kind === "s3"
+                  ? `${c.selection.bucket}/${c.selection.prefix}`
+                  : `Google Drive folder ${c.selection.folderId}`}{" "}
+                · {c.enabled ? (c.status ?? "Not synced") : "Paused"}
               </span>
             </button>
           ))}
           {editing && canManage && (
             <>
-              <h4>{connector ? "Edit connector" : "Connect S3 storage"}</h4>
+              <h4>
+                {connector ? "Edit connector" : "Connect a document source"}
+              </h4>
+              <label>
+                Provider
+                <select
+                  aria-label="Connector provider"
+                  disabled={!!connector}
+                  value={kind}
+                  onChange={(e) =>
+                    setKind(e.target.value as "s3" | "google-drive")
+                  }
+                >
+                  <option value="s3">S3 / S3-compatible</option>
+                  <option value="google-drive">Google Drive</option>
+                </select>
+              </label>
               <label>
                 Name
                 <input
@@ -227,7 +252,7 @@ export function ConnectorsStudio({
               <label>
                 Workspace credential
                 <select
-                  aria-label="S3 workspace credential"
+                  aria-label="Source workspace credential"
                   value={secret}
                   onChange={(e) => setSecret(e.target.value)}
                 >
@@ -240,61 +265,97 @@ export function ConnectorsStudio({
                 </select>
               </label>
               <p>
-                Save a JSON secret with accessKeyId, secretAccessKey and
-                optional sessionToken. Grant only ListBucket for the selected
-                prefix and GetObject for its files. Values remain encrypted on
-                the server.
+                {kind === "s3"
+                  ? "Save a JSON secret with accessKeyId, secretAccessKey and optional sessionToken. Grant only ListBucket and GetObject for the selected prefix."
+                  : "Enable Google Drive API in your Google Cloud project. Save the service-account JSON key in Secrets, then share this folder with its client_email as Viewer. Tokens refresh automatically; no user impersonation is used."}{" "}
+                Values remain encrypted on the server.
               </p>
               <Button onClick={() => onNavigate("Secrets")}>
                 Open Secrets
               </Button>
-              <label>
-                S3 endpoint
-                <input
-                  aria-label="S3 endpoint"
-                  disabled={!!connector}
-                  value={endpoint}
-                  onChange={(e) => setEndpoint(e.target.value)}
-                />
-              </label>
-              <p>
-                The exact host must be approved in CONNECTOR_ALLOWED_HOSTS on
-                the API and worker. Trusted private servers require an explicit
-                CONNECTOR_PRIVATE_HOSTS exception.
-              </p>
-              <label>
-                Region
-                <input
-                  aria-label="S3 region"
-                  disabled={!!connector}
-                  value={region}
-                  onChange={(e) => setRegion(e.target.value)}
-                />
-              </label>
-              <label>
-                Bucket
-                <input
-                  aria-label="S3 bucket"
-                  disabled={!!connector}
-                  value={bucket}
-                  onChange={(e) => setBucket(e.target.value)}
-                />
-              </label>
-              <label>
-                Folder prefix
-                <input
-                  aria-label="S3 prefix"
-                  disabled={!!connector}
-                  value={prefix}
-                  onChange={(e) => setPrefix(e.target.value)}
-                  placeholder="documents/"
-                />
-              </label>
-              <p>
-                Use a trailing slash to select a folder. An empty prefix selects
-                the whole bucket. Source location and knowledge base are fixed
-                after creation; create another connector to change them.
-              </p>
+              {kind === "s3" ? (
+                <>
+                  <label>
+                    S3 endpoint
+                    <input
+                      aria-label="S3 endpoint"
+                      disabled={!!connector}
+                      value={endpoint}
+                      onChange={(e) => setEndpoint(e.target.value)}
+                    />
+                  </label>
+                  <p>
+                    The exact host must be approved in CONNECTOR_ALLOWED_HOSTS
+                    on the API and worker. Trusted private servers require an
+                    explicit CONNECTOR_PRIVATE_HOSTS exception.
+                  </p>
+                  <label>
+                    Region
+                    <input
+                      aria-label="S3 region"
+                      disabled={!!connector}
+                      value={region}
+                      onChange={(e) => setRegion(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Bucket
+                    <input
+                      aria-label="S3 bucket"
+                      disabled={!!connector}
+                      value={bucket}
+                      onChange={(e) => setBucket(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Folder prefix
+                    <input
+                      aria-label="S3 prefix"
+                      disabled={!!connector}
+                      value={prefix}
+                      onChange={(e) => setPrefix(e.target.value)}
+                      placeholder="documents/"
+                    />
+                  </label>
+                  <p>
+                    Use a trailing slash to select a folder. An empty prefix
+                    selects the whole bucket. Source location and knowledge base
+                    are fixed after creation; create another connector to change
+                    them.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <label>
+                    Google Drive folder ID
+                    <input
+                      aria-label="Google Drive folder ID"
+                      value={folderId}
+                      disabled={!!connector}
+                      onChange={(e) => setFolderId(e.target.value)}
+                      placeholder="ID from drive.google.com/drive/folders/…"
+                    />
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="Include subfolders"
+                      checked={recursive}
+                      disabled={!!connector}
+                      onChange={(e) => setRecursive(e.target.checked)}
+                    />{" "}
+                    Include subfolders
+                  </label>
+                  <p>
+                    Approve www.googleapis.com and oauth2.googleapis.com in
+                    CONNECTOR_ALLOWED_HOSTS on both API and worker. Folder and
+                    target knowledge base are fixed after creation. Google Docs,
+                    Sheets and Slides are exported; shortcuts are skipped.
+                    Imported files inherit knowledge base access, so choose a
+                    folder whose documents can be shared with that audience.
+                  </p>
+                </>
+              )}
               <label>
                 Maximum listed objects
                 <input
@@ -325,7 +386,13 @@ export function ConnectorsStudio({
                 </select>
               </label>
               <Button
-                disabled={busy || !name.trim() || !kb || !secret || !bucket}
+                disabled={
+                  busy ||
+                  !name.trim() ||
+                  !kb ||
+                  !secret ||
+                  (kind === "s3" ? !bucket : !folderId)
+                }
                 onClick={() =>
                   void action(async () => {
                     if (connector) {
@@ -347,16 +414,19 @@ export function ConnectorsStudio({
                         "POST",
                         {
                           name,
-                          kind: "s3",
+                          kind,
                           knowledgeBaseId: kb,
                           secretId: secret,
-                          selection: {
-                            endpoint,
-                            region,
-                            bucket,
-                            prefix,
-                            maxObjects: limit,
-                          },
+                          selection:
+                            kind === "s3"
+                              ? {
+                                  endpoint,
+                                  region,
+                                  bucket,
+                                  prefix,
+                                  maxObjects: limit,
+                                }
+                              : { folderId, recursive, maxObjects: limit },
                           scheduleMinutes: schedule ? Number(schedule) : null,
                         },
                       );
@@ -500,10 +570,18 @@ export function ConnectorsStudio({
                   <p className="error" role="alert">
                     {s.error_code}
                     {s.error_code === "CONNECTOR_SOURCE_LIMIT"
-                      ? " — Narrow the prefix or increase the configured listing limit."
+                      ? " — Choose a narrower source or increase the configured listing limit."
                       : s.error_code === "CONNECTOR_ACCESS_DENIED"
-                        ? " — Check the selected credential, bucket/prefix permissions and region."
-                        : ""}
+                        ? connector.kind === "google-drive"
+                          ? " — Check the service-account key, enable Drive API, and share the selected folder with client_email as Viewer."
+                          : " — Check the selected credential, bucket/prefix permissions and region."
+                        : s.error_code === "CONNECTOR_FOLDER_UNAVAILABLE"
+                          ? " — Check the folder ID, trash status and service-account sharing."
+                          : s.error_code === "CONNECTOR_INCOMPLETE_LISTING"
+                            ? " — Google returned an incomplete search. Retry; existing knowledge was retained."
+                            : s.error_code === "CONNECTOR_OBJECT_CHANGED"
+                              ? " — A file changed during download. Retry the sync."
+                              : ""}
                   </p>
                 )}
                 {canSync && ["queued", "running"].includes(s.status) && (

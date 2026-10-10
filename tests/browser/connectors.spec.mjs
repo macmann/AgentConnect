@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID, createHash, generateKeyPairSync } from "node:crypto";
 import postgres from "postgres";
 import { cleanupKnowledgeFixtures } from "../../apps/api/test/knowledge-cleanup.mjs";
 const apiRequire = createRequire(
@@ -150,7 +150,7 @@ test("S3 setup, worker ingestion, incremental sync, schedule, pause and disconne
     page.getByText("No enterprise sources yet", { exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Add S3 connector", exact: true })
+    .getByRole("button", { name: "Add connector", exact: true })
     .click();
   await page
     .getByLabel("Connector name", { exact: true })
@@ -159,7 +159,7 @@ test("S3 setup, worker ingestion, incremental sync, schedule, pause and disconne
     .getByLabel("Connector knowledge base", { exact: true })
     .selectOption(kb.id);
   await page
-    .getByLabel("S3 workspace credential", { exact: true })
+    .getByLabel("Source workspace credential", { exact: true })
     .selectOption(secrets[0].id);
   await page
     .getByLabel("S3 endpoint", { exact: true })
@@ -244,4 +244,107 @@ test("S3 setup, worker ingestion, incremental sync, schedule, pause and disconne
   expect(retained).toHaveLength(1);
   expect(retained[0].status).not.toBe("deleted");
   expect(errors).toEqual([]);
+});
+
+test("Google Drive setup explains sharing, saves selected provider and locks source configuration", async ({
+  page,
+  context,
+}) => {
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  const base = `http://localhost:4000/workspaces/${workspace}`,
+    headers = { origin: "http://localhost:3000" };
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const saved = await context.request.post(base + "/secrets", {
+    headers,
+    data: {
+      name: "DRIVE_ACCOUNT",
+      value: JSON.stringify({
+        client_email: "fixture@project.iam.gserviceaccount.com",
+        private_key: privateKey
+          .export({ format: "pem", type: "pkcs8" })
+          .toString(),
+      }),
+    },
+  });
+  expect(saved.ok(), await saved.text()).toBe(true);
+  const secrets = await (await context.request.get(base + "/secrets")).json(),
+    bases = await (await context.request.get(base + "/knowledge-bases")).json();
+  await page.goto("/");
+  await page.getByRole("button", { name: "Connectors", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Add connector", exact: true })
+    .click();
+  await page
+    .getByLabel("Connector provider", { exact: true })
+    .selectOption("google-drive");
+  await expect(
+    page.getByText(/share this folder with its client_email as Viewer/),
+  ).toBeVisible();
+  await expect(page.getByLabel("S3 endpoint", { exact: true })).toHaveCount(0);
+  await page
+    .getByLabel("Connector name", { exact: true })
+    .fill("Drive policies");
+  await page
+    .getByLabel("Connector knowledge base", { exact: true })
+    .selectOption(bases[0].id);
+  await page
+    .getByLabel("Source workspace credential", { exact: true })
+    .selectOption(secrets.find((s) => s.name === "DRIVE_ACCOUNT").id);
+  await page
+    .getByLabel("Google Drive folder ID", { exact: true })
+    .fill("fixture-folder");
+  await page.getByLabel("Include subfolders", { exact: true }).uncheck();
+  await page
+    .getByRole("button", { name: "Save connector", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "Connector saved. Run Sync now to verify access and import files.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  const connectors = await (
+    await context.request.get(base + "/connectors")
+  ).json();
+  expect(connectors[0].kind).toBe("google-drive");
+  expect(connectors[0].selection).toEqual({
+    folderId: "fixture-folder",
+    recursive: false,
+    maxObjects: 100,
+  });
+  await page
+    .getByRole("button", { name: "Edit connector", exact: true })
+    .click();
+  await expect(
+    page.getByLabel("Connector provider", { exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByLabel("Google Drive folder ID", { exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByLabel("Include subfolders", { exact: true }),
+  ).not.toBeChecked();
+  await page
+    .getByRole("button", { name: "Save connector", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Pause connector", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Sync now", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Disconnect connector", exact: true })
+    .click();
+  await expect(
+    page.getByText("No enterprise sources yet", { exact: true }),
+  ).toBeVisible();
 });

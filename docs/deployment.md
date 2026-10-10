@@ -82,4 +82,4 @@ Run `pnpm db:migrate` for migration 0007, then restart API, web and worker. The 
 
 ## Enterprise source endpoints
 
-Phase 9 requires migration 0011 and a restarted API/worker. Configure `CONNECTOR_ALLOWED_HOSTS` for exact public HTTPS source endpoints, or explicit trusted `CONNECTOR_PRIVATE_HOSTS` host:port exceptions. These grants are independent of model/tool/crawl settings; source credentials are selected encrypted workspace secrets, not application storage credentials. See [connector setup](connectors.md) for S3 permissions and sync behavior.
+Phase 9 requires migrations 0011 and 0012 and a restarted API/worker. Configure `CONNECTOR_ALLOWED_HOSTS` for exact public HTTPS source endpoints, or explicit trusted `CONNECTOR_PRIVATE_HOSTS` host:port exceptions. These grants are independent of model/tool/crawl settings; source credentials are selected encrypted workspace secrets, not application storage credentials. See [connector setup](connectors.md) for S3 permissions, Google Drive service-account sharing/token refresh and sync behavior. Google Drive requires approved `www.googleapis.com` and `oauth2.googleapis.com` destinations on both API and worker.

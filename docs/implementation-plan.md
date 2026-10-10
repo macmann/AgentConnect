@@ -125,7 +125,7 @@ See channels-voice.md for the supported initial slice and integration prerequisi
 
 See quality.md for capabilities, semantics and the explicit initial release limits.
 
-## Phase 9 — Enterprise connectors (initial S3 release)
+## Phase 9 — Enterprise connectors (S3 and Google Drive)
 
 - [x] Tenant-scoped connector registry, encrypted selected credentials, administrative configuration and builder sync permissions.
 - [x] Source adapter abstraction and signed read-only S3 adapter with separate endpoint grants.
@@ -133,8 +133,9 @@ See quality.md for capabilities, semantics and the explicit initial release limi
 - [x] Durable leased manual/scheduled sync, cancellation, permission rechecks, bounded crash recovery and safe status/errors.
 - [x] Remote removal reconciliation restricted to managed sources, provenance and existing parser/embedding integration.
 - [x] Connector setup/status/history UI with prerequisite links, pause/resume and disconnect retaining knowledge.
-- [ ] Google Drive, OneDrive, SharePoint, Salesforce, Zendesk, Zoho, Teams and Slack adapters.
-- [ ] OAuth/role renewal, source ACL mirroring, large-source change feeds, retention and live AWS/IAM acceptance.
+- [x] Google Drive folder adapter with service-account token refresh, recursive bounded inventory, native document exports and metadata/checksum validation.
+- [ ] OneDrive, SharePoint, Salesforce, Zendesk, Zoho, Teams and Slack adapters.
+- [ ] Interactive user OAuth/role renewal, source ACL mirroring, large-source change feeds, retention and live AWS/IAM acceptance.
 
 See connectors.md for setup, permissions and the initial release's sync semantics.
 

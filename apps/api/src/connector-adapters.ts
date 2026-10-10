@@ -9,7 +9,17 @@ import {
   validateEndpoint,
   ProviderError,
 } from "@agentconnect/provider-sdk";
-import { s3Selection, s3Credential } from "@agentconnect/schemas/connectors";
+import {
+  s3Selection,
+  s3Credential,
+  googleDriveSelection,
+  googleDriveCredential,
+} from "@agentconnect/schemas/connectors";
+import {
+  createGoogleDriveAdapter,
+  googleDriveEndpoints,
+} from "./google-drive-adapter.js";
+import { createPrivateKey } from "node:crypto";
 import { sql } from "./db.js";
 import { decrypt } from "./security.js";
 import { config } from "./config.js";
@@ -22,7 +32,7 @@ export class ConnectorError extends Error {
 export interface RemoteDocument {
   key: string;
   fingerprint: string;
-  size: number;
+  size?: number;
   filename: string;
   url: string;
   etag?: string;
@@ -63,29 +73,58 @@ export async function connectorCredentials(
     ConnectorRow,
     "secret_id" | "workspace_id" | "organization_id"
   >,
+  kind = "s3",
 ) {
   const [s] =
     await sql`SELECT name,ciphertext FROM secrets WHERE id=${connector.secret_id} AND workspace_id=${connector.workspace_id} AND organization_id=${connector.organization_id}`;
   if (!s) throw new ConnectorError("CONNECTOR_CREDENTIAL_UNAVAILABLE");
   try {
-    return s3Credential.parse(
-      JSON.parse(
-        decrypt(
-          s.ciphertext,
-          `${connector.organization_id}:${connector.workspace_id}:${s.name}`,
-        ),
+    const value = JSON.parse(
+      decrypt(
+        s.ciphertext,
+        `${connector.organization_id}:${connector.workspace_id}:${s.name}`,
       ),
     );
+    if (kind === "google-drive") {
+      const credential = googleDriveCredential.parse(value);
+      const key = createPrivateKey(credential.private_key);
+      if (
+        key.asymmetricKeyType !== "rsa" ||
+        (key.asymmetricKeyDetails?.modulusLength ?? 0) < 2048
+      )
+        throw new Error("Invalid signing key");
+      return credential;
+    }
+    return s3Credential.parse(value);
   } catch {
     throw new ConnectorError("CONNECTOR_CREDENTIAL_INVALID");
   }
 }
+export function validateConnectorSelection(kind: string, selection: unknown) {
+  if (kind === "google-drive") {
+    googleDriveSelection.parse(selection);
+    for (const endpoint of googleDriveEndpoints)
+      validateConnectorEndpoint(endpoint);
+  } else if (kind === "s3")
+    validateConnectorEndpoint(s3Selection.parse(selection).endpoint);
+  else throw new ConnectorError("CONNECTOR_UNSUPPORTED");
+}
 export const createSourceAdapter: AdapterFactory = async (connector) => {
+  if (connector.kind === "google-drive") {
+    validateConnectorSelection(connector.kind, connector.selection);
+    const credential = googleDriveCredential.parse(
+      await connectorCredentials(connector, connector.kind),
+    );
+    return createGoogleDriveAdapter(
+      googleDriveSelection.parse(connector.selection),
+      credential,
+    );
+  }
   if (connector.kind !== "s3")
     throw new ConnectorError("CONNECTOR_UNSUPPORTED");
   const selection = s3Selection.parse(connector.selection);
   validateConnectorEndpoint(selection.endpoint);
-  const credentials = await connectorCredentials(connector);
+  const credentials = s3Credential.parse(await connectorCredentials(connector));
   const transport = safeHttpTransport(
     hosts(config.CONNECTOR_ALLOWED_HOSTS),
     hosts(config.CONNECTOR_PRIVATE_HOSTS),

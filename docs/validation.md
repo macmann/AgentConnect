@@ -157,3 +157,12 @@ The API previously masked sanitized model-test 502 messages as Internal server e
 - Browser lifecycle: **1 passed** against local S3 with an explicit embedding protocol fixture and temporary private endpoint grants. Covers setup, source readiness/retrieval, incremental sync, schedule/listing-limit edits, pause/resume and disconnect retaining sources. No page errors. An initial run exposed missing dev-runner forwarding for connector grants; `globalPassThroughEnv` now includes both connector variables.
 - Lint, type checks and production builds passed across all eight packages. Readiness reports PostgreSQL/Redis/storage/Temporal healthy, and normal dev settings are restored after fixture execution.
 - Tests use separate connector/quality fixture client IPs and leave rate limits enabled. AWS production IAM/KMS, other provider adapters and broader production acceptance remain documented in connectors.md.
+
+## Phase 9 — Google Drive connector extension
+
+- Built on the unmerged S3 connector branch without pulling from main; Google Drive changes are on `feat/google-drive-connectors`.
+- Migration 0012 applied successfully and repeated migration execution was a no-op.
+- Backend suite: **138 passed, 0 failed**. Covers service-account JWT signature/read-only scope, token reuse, native Docs export without reported byte size, binary integrity checks, pagination cycles, incomplete searches, access denial, download races, bounded recursive inventory, durable native-document ingestion, unchanged files, managed removal and exact form-encoded OAuth transport. Existing S3/tenant/permission tests still pass.
+- Browser connector suite: **2 passed**. S3 worker ingestion/incremental sync/configuration/pause/disconnect remains covered; Google Drive setup verifies sharing instructions, provider-specific fields, saved folder/recursive selection, immutable source settings, pause and disconnect. Google Drive browser setup does not call a live Google API.
+- Lint, typecheck and builds passed across all eight packages. PostgreSQL, Redis, storage and Temporal readiness checks passed and the web returned HTTP 200.
+- Google responses are explicit protocol fixtures; no Google credentials are configured. Live service-account, shared-drive and export acceptance remains pending. Per-user source ACL mirroring and interactive OAuth remain outside this slice.

@@ -1,6 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, generateKeyPairSync } from "node:crypto";
 import {
   S3Client,
   CreateBucketCommand,
@@ -21,11 +21,18 @@ import {
   type AdapterFactory,
   type ConnectorRow,
 } from "../src/connector-adapters.js";
+import { createGoogleDriveAdapter } from "../src/google-drive-adapter.js";
+import {
+  googleDriveCredential,
+  googleDriveSelection,
+} from "@agentconnect/schemas/connectors";
+import { connectorCredentials } from "../src/connector-adapters.js";
 import { processKnowledgeJob } from "../src/ingestion.js";
 import { cleanupKnowledgeFixtures } from "./knowledge-cleanup.mjs";
 if (config.NODE_ENV === "production")
   throw new Error("Tests refuse production");
 const originalPrivate = config.CONNECTOR_PRIVATE_HOSTS;
+const originalAllowed = config.CONNECTOR_ALLOWED_HOSTS;
 config.CONNECTOR_PRIVATE_HOSTS = new URL(config.S3_ENDPOINT).host;
 const org = randomUUID(),
   workspace = randomUUID(),
@@ -186,6 +193,7 @@ after(async () => {
     for (const uid of users) await tx`DELETE FROM users WHERE id=${uid}`;
   });
   config.CONNECTOR_PRIVATE_HOSTS = originalPrivate;
+  config.CONNECTOR_ALLOWED_HOSTS = originalAllowed;
   await app.close();
 });
 test("connector registration enforces roles, credentials and endpoint approval", async () => {
@@ -567,4 +575,117 @@ test("disconnect retains imported knowledge and releases the credential referenc
       await sql`SELECT status FROM knowledge_sources WHERE id=${source.id}`;
     assert.notEqual(s!.status, "deleted");
   }
+});
+
+test("Google Drive registration validates provider credentials and native exports enter durable knowledge sync", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const credential = {
+    client_email: "fixture@project.iam.gserviceaccount.com",
+    private_key: privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
+  };
+  const secret = await call("POST", base + "/secrets", {
+    name: "DRIVE_ACCOUNT",
+    value: JSON.stringify(credential),
+  });
+  assert.equal(secret.statusCode, 201, secret.body);
+  const sid = (await call("GET", base + "/secrets"))
+    .json()
+    .find((s: { name: string }) => s.name === "DRIVE_ACCOUNT").id;
+  const input = {
+    name: "Drive policies",
+    kind: "google-drive",
+    knowledgeBaseId: kbId,
+    secretId: sid,
+    selection: { folderId: "root", recursive: true, maxObjects: 10 },
+  };
+  config.CONNECTOR_ALLOWED_HOSTS = "www.googleapis.com";
+  assert.equal(
+    (await call("POST", base + "/connectors", input)).statusCode,
+    400,
+  );
+  config.CONNECTOR_ALLOWED_HOSTS = "www.googleapis.com,oauth2.googleapis.com";
+  assert.equal(
+    (await call("POST", base + "/connectors", input, "analyst")).statusCode,
+    403,
+  );
+  const created = await call("POST", base + "/connectors", input);
+  assert.equal(created.statusCode, 201, created.body);
+  const cid = created.json().id;
+  let visible = true;
+  const metadata = {
+    id: "policy",
+    name: "Drive policy",
+    mimeType: "application/vnd.google-apps.document",
+    version: "1",
+    modifiedTime: "2026-10-10T00:00:00Z",
+    parents: ["root"],
+    trashed: false,
+  };
+  const factory: AdapterFactory = async (c) =>
+    createGoogleDriveAdapter(
+      googleDriveSelection.parse(c.selection),
+      googleDriveCredential.parse(await connectorCredentials(c, c.kind)),
+      async (raw) => {
+        const u = new URL(raw);
+        const value =
+          u.hostname === "oauth2.googleapis.com"
+            ? {
+                access_token: "fixture",
+                token_type: "Bearer",
+                expires_in: 3600,
+              }
+            : u.pathname.endsWith("/root")
+              ? {
+                  ...metadata,
+                  id: "root",
+                  mimeType: "application/vnd.google-apps.folder",
+                  parents: [],
+                }
+              : u.pathname.endsWith("/files")
+                ? { files: visible ? [metadata] : [] }
+                : u.pathname.endsWith("/export")
+                  ? "Drive refunds within 90 days."
+                  : metadata;
+        return {
+          status: 200,
+          headers: {},
+          body: (async function* () {
+            yield Buffer.from(
+              typeof value === "string" ? value : JSON.stringify(value),
+            );
+          })(),
+          close: async () => {},
+        };
+      },
+    );
+  let job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).status, "completed");
+  assert.equal((await run(job)).counts.imported, 1);
+  const [item] =
+    await sql`SELECT source_id FROM connector_items WHERE connector_id=${cid}`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await processKnowledgeJob(embedding);
+    const [state] =
+      await sql`SELECT status FROM knowledge_sources WHERE id=${item!.source_id}`;
+    if (state!.status === "ready") break;
+  }
+  const [source] =
+    await sql`SELECT status,source_url FROM knowledge_sources WHERE id=${item!.source_id}`;
+  assert.equal(source!.status, "ready");
+  assert.equal(
+    source!.source_url,
+    "https://drive.google.com/file/d/policy/view",
+  );
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.unchanged, 1);
+  visible = false;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.removed, 1);
+  assert.equal(
+    (await call("DELETE", base + "/connectors/" + cid)).statusCode,
+    200,
+  );
 });

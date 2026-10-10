@@ -91,7 +91,7 @@ export async function processConnectorSync(
         !supportedExtensions.includes(
           document.filename.split(".").pop()?.toLowerCase() ?? "",
         ) ||
-        document.size > 10000000 ||
+        (document.size !== undefined && document.size > 10000000) ||
         document.size === 0
       ) {
         counts.skipped++;
@@ -113,7 +113,11 @@ export async function processConnectorSync(
         continue;
       }
       const bytes = await adapter.read(document, signal);
-      if (bytes.length > 10000000 || bytes.length !== document.size)
+      if (
+        bytes.length === 0 ||
+        bytes.length > 10000000 ||
+        (document.size !== undefined && bytes.length !== document.size)
+      )
         throw new ConnectorError("CONNECTOR_OBJECT_CHANGED");
       const sourceId = item?.source_id ?? randomUUID(),
         revision = item ? item.revision + 1 : 1,

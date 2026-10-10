@@ -190,7 +190,13 @@ export function safeHttpTransport(
       const response = await request(url, {
         method,
         headers,
-        body: method === "POST" ? JSON.stringify(body) : undefined,
+        body:
+          method === "POST"
+            ? headers["content-type"] === "application/x-www-form-urlencoded" &&
+              typeof body === "string"
+              ? body
+              : JSON.stringify(body)
+            : undefined,
         signal,
         headersTimeout: 30000,
         bodyTimeout: 60000,

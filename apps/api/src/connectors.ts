@@ -9,7 +9,7 @@ import { sql } from "./db.js";
 import { HttpError } from "./http-error.js";
 import {
   ConnectorError,
-  validateConnectorEndpoint,
+  validateConnectorSelection,
   connectorCredentials,
 } from "./connector-adapters.js";
 async function access(
@@ -29,12 +29,15 @@ export async function registerConnectorRoutes(app: FastifyInstance) {
     const { u, w } = await access(r, "connector:manage"),
       d = connectorInput.parse(r.body),
       cid = randomUUID();
-    validateConnectorEndpoint(d.selection.endpoint);
-    await connectorCredentials({
-      secret_id: d.secretId,
-      workspace_id: w.id,
-      organization_id: w.organization_id,
-    });
+    validateConnectorSelection(d.kind, d.selection);
+    await connectorCredentials(
+      {
+        secret_id: d.secretId,
+        workspace_id: w.id,
+        organization_id: w.organization_id,
+      },
+      d.kind,
+    );
     await sql.begin(async (tx) => {
       const [kb] =
         await tx`SELECT id FROM knowledge_bases WHERE id=${d.knowledgeBaseId} AND workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL FOR SHARE`;
@@ -55,12 +58,18 @@ export async function registerConnectorRoutes(app: FastifyInstance) {
   app.put("/workspaces/:workspaceId/connectors/:connectorId", async (r) => {
     const { u, w } = await access(r, "connector:manage"),
       d = connectorUpdate.parse(r.body);
+    const [existing] =
+      await sql`SELECT kind FROM enterprise_connectors WHERE id=${id(params(r).connectorId)} AND workspace_id=${w.id} AND archived_at IS NULL`;
+    if (!existing) throw new HttpError(404, "Connector unavailable");
     if (d.enabled)
-      await connectorCredentials({
-        secret_id: d.secretId,
-        workspace_id: w.id,
-        organization_id: w.organization_id,
-      });
+      await connectorCredentials(
+        {
+          secret_id: d.secretId,
+          workspace_id: w.id,
+          organization_id: w.organization_id,
+        },
+        existing.kind,
+      );
     else {
       const [credential] =
         await sql`SELECT id FROM secrets WHERE id=${d.secretId} AND workspace_id=${w.id} AND organization_id=${w.organization_id}`;
@@ -173,9 +182,9 @@ export function connectorHttpError(error: unknown) {
     return new HttpError(
       error.code === "CONNECTOR_ENDPOINT_NOT_ALLOWED" ? 400 : 409,
       error.code === "CONNECTOR_ENDPOINT_NOT_ALLOWED"
-        ? "S3 endpoint is not approved. Add its exact host to CONNECTOR_ALLOWED_HOSTS in the API and worker environment, preserving existing hosts, then restart both services. Trusted private endpoints require CONNECTOR_PRIVATE_HOSTS."
+        ? "Connector endpoint is not approved. Google Drive requires www.googleapis.com and oauth2.googleapis.com. Add its exact host to CONNECTOR_ALLOWED_HOSTS in the API and worker environment, preserving existing hosts, then restart both services. Trusted private endpoints require CONNECTOR_PRIVATE_HOSTS."
         : error.code === "CONNECTOR_CREDENTIAL_INVALID"
-          ? "S3 credential must be a JSON secret containing accessKeyId, secretAccessKey and optional sessionToken."
+          ? "Credential JSON must match the provider: S3 needs accessKeyId and secretAccessKey; Google Drive needs service-account client_email and an RSA private_key."
           : error.code,
     );
   return null;

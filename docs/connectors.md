@@ -1,10 +1,10 @@
-# Enterprise connectors — initial S3 release
+# Enterprise connectors — S3 and Google Drive
 
-Phase 9 starts with a reusable source adapter (`list`, conditional `read`, `close`) and a durable sync pipeline. The first adapter reads S3 and S3-compatible buckets into existing knowledge bases. Google Drive, OneDrive, SharePoint, CRM, support and messaging adapters remain subsequent implementations.
+Phase 9 starts with a reusable source adapter (`list`, conditional `read`, `close`) and a durable sync pipeline. Adapters read S3/S3-compatible buckets and Google Drive folders into existing knowledge bases. OneDrive, SharePoint, CRM, support and messaging adapters remain subsequent implementations.
 
-Run `pnpm db:migrate` for migration 0011 and restart API, worker and web. Open **Connectors** in a workspace. Administrators register/change connections; builders can sync approved connections. Operators and analysts can inspect status. Sync requires current knowledge-management permission as well as connector-sync permission.
+Run `pnpm db:migrate` for migrations 0011 and 0012 and restart API, worker and web. Open **Connectors** in a workspace. Administrators register/change connections; builders can sync approved connections. Operators and analysts can inspect status. Sync requires current knowledge-management permission as well as connector-sync permission.
 
-## Configure a source
+## Configure S3
 
 1. Create a knowledge base in **Knowledge** and register its embedding model. Imported content inherits that knowledge base's access settings; remote S3 object ACLs are not mirrored per user.
 2. Save a workspace secret in **Secrets** containing JSON:
@@ -33,6 +33,20 @@ Run `pnpm db:migrate` for migration 0011 and restart API, worker and web. Open *
 
 Use least-privilege source credentials with `s3:ListBucket` on the selected bucket, restricted by `s3:prefix`, and `s3:GetObject` for the chosen prefix. No remote write/delete methods are exposed. Encrypted objects may require read-only KMS permissions. The application's internal storage credentials are separate from each connector's selected secret.
 
+## Configure Google Drive
+
+1. Enable the Google Drive API in your Google Cloud project and create a service account. Download its JSON private key through your organization's approved credential process. Save that JSON as an encrypted workspace secret. The connector reads `client_email` and `private_key`; other standard service-account JSON fields are accepted but not used. The signing key must be RSA with at least 2048 bits. Do not paste credentials into logs or chat.
+2. Share the selected folder with the service account's `client_email` as **Viewer**. The account must be able to list and read all intended descendants. Shared drives may require membership permitted by your administrator. Domain-wide delegation and user impersonation are not used.
+3. Approve `www.googleapis.com,oauth2.googleapis.com` in `CONNECTOR_ALLOWED_HOSTS` on API and worker, preserving existing grants. Cloud outbound policy must also permit those hosts. Endpoints are fixed; credential JSON cannot override token or API URLs.
+4. Open **Connectors → Add connector**, choose **Google Drive**, and select the knowledge base and service-account secret. Copy the folder ID from `https://drive.google.com/drive/folders/FOLDER_ID`. Choose whether to include subfolders; the maximum listed objects counts folders, shortcuts and unsupported files too. Folder, recursive selection and target knowledge base are fixed after registration.
+5. Use **Sync now**. The worker signs a one-hour JWT with the `drive.readonly` scope and exchanges it for an access token. Tokens are cached only in memory for that adapter and refreshed before expiry. Secret rotation takes effect at the next sync. Revoking the account's key or folder access prevents further reads.
+
+Google Docs export as TXT, Sheets as XLSX and Slides as PPTX. Other supported uploaded document formats download as binary files. Shortcuts and unsupported Google-native types are skipped; shortcuts do not expand folder access. Exported files must fit the same 10-MB download limit. Files larger than the limit fail exports safely. Empty exports fail the sync rather than replacing existing content with an empty document.
+
+A complete paginated folder traversal precedes imports. Duplicate entries, repeated page tokens, incomplete searches, malformed metadata and exceeded inventory limits fail without applying removals. The selected folder must still exist and be readable at the end of inventory. Fingerprints include file ID, version, modification time, name, type, size, checksum and parents. Binary downloads validate size and MD5; exports validate metadata before and after download. Changes during download fail the sync. Citations retain `https://drive.google.com/file/d/FILE_ID/view` origins.
+
+Drive traversal is a bounded full scan, not a provider-wide transactional snapshot or change feed. Only files visible to the selected service account are inventoried. Files moved out, trashed or no longer visible may be removed from managed retrieval after a complete successful scan. Per-user Google ACLs are not mirrored: select a folder whose content is appropriate for the destination knowledge base audience. A loss of folder access fails rather than treating the folder as empty.
+
 ## Sync semantics
 
 A complete bounded paginated listing precedes imports. ETag, size and modification time identify unchanged objects. Changed downloads use `If-Match` so an object changing between listing and download fails instead of importing an inconsistent snapshot. Supported formats use the existing document parsers (TXT, Markdown, CSV, JSON, HTML, PDF and supported Office formats). Non-document, empty and over-10-MB objects are skipped; a previously imported object that becomes ineligible is removed from retrieval after a successful scan.
@@ -47,4 +61,4 @@ Pausing cancels active/queued syncs and retains imported knowledge. Disconnectin
 
 ## Current limits
 
-One connector sync executes at a time per worker process. Sync history returns the latest 50 runs. Counts are stored at completion/failure. Large-bucket streaming, change feeds, retention/connection hard deletion, OAuth/assume-role renewal, source ACL mirroring, richer exclusion filters and other provider adapters remain extensions. Compatible endpoints are supported through path-style S3 requests; AWS production IAM/KMS/network behavior still needs live integration acceptance. Local MinIO and protocol-fixture tests establish the implemented pipeline, not enterprise production readiness.
+One connector sync executes at a time per worker process. Sync history returns the latest 50 runs. Counts are stored at completion/failure. Large-bucket streaming, change feeds, retention/connection hard deletion, interactive user OAuth/assume-role renewal, source ACL mirroring, richer exclusion filters and other provider adapters remain extensions. Compatible endpoints are supported through path-style S3 requests; AWS production IAM/KMS/network behavior and live Google Cloud service-account/shared-drive behavior still need live integration acceptance. Local MinIO and protocol-fixture tests establish the implemented pipeline, not enterprise production readiness.
