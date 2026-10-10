@@ -10,7 +10,7 @@ The [implementation specification](human-support-spec.md) is the next product ro
 | B     | Dedicated Human Support console, filters, unified timeline, internal notes, operator actions | Implemented; validation recorded in validation.md |
 | C     | Operator profiles, presence, skills, languages, capacity and routing                         | Implemented; validation recorded in validation.md |
 | D     | Escalation policy, AI triage and handoff brief                                               | Implemented; validation recorded in validation.md |
-| E     | Private operator copilot                                                                     | Planned                                           |
+| E     | Private operator copilot                                                                     | Implemented; validation recorded in validation.md |
 | F     | Structured resolution, AI continuation and flagship AI → human → AI test                     | Planned                                           |
 | G     | SLA, business hours, notifications, supervision and analytics                                | Planned                                           |
 
@@ -24,7 +24,7 @@ Events are durable and cannot be updated. Tenant-consistent composite foreign ke
 
 ## Migration and compatibility
 
-Run `pnpm db:migrate` to apply **0017–0020**, then restart API and worker. No additional credentials are needed. Migration 0017 preserves `handoff_events` and copies their IDs, content, actors and timestamps into the support timeline. Every legacy non-`none` handoff becomes a historical case: pending → queued, active → active, resolved → resolved. Legacy threads lack reliable case boundaries, so a migrated thread is represented by one case; new escalations have separate case IDs.
+Run `pnpm db:migrate` to apply **0017–0021**, then restart API and worker. No additional credentials are needed. Migration 0017 preserves `handoff_events` and copies their IDs, content, actors and timestamps into the support timeline. Every legacy non-`none` handoff becomes a historical case: pending → queued, active → active, resolved → resolved. Legacy threads lack reliable case boundaries, so a migrated thread is represented by one case; new escalations have separate case IDs.
 
 Widget, hosted-chat, playground and Channels inbox endpoints still work. Their legacy status/event fields are maintained by the same case service, rather than a second state machine. Duplicate legacy requests/claims keep returning 409 as existing clients expect. The new case API returns the existing open case for duplicate escalation and supports an optional UUID `idempotencyKey` for exact request retries. Reusing a key for a different conversation returns 409.
 
@@ -98,7 +98,7 @@ Case/queue/event list responses contain `{items,nextCursor}`. Pass both `before`
 
 Run `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. Dedicated API tests cover duplicate escalation, claim and reply/resolve races, exclusive assignment, tenant boundaries, state validation, event immutability, controller exclusion, multiple cases and retention protection. The isolated migration test checks pre-upgrade pending/active/resolved data and conversation-deletion cascades. Existing channel API/browser tests exercise compatibility.
 
-For manual testing, start a customer chat and request human support, then open the workspace’s Human Support section. The existing Channels inbox remains compatible. Open **Human Support** for the dedicated staff console. Administrators can create manual queues, assign queued cases and choose their queue. Operators claim cases or accept cases assigned to them, reply to customers, save private notes, change waiting status and resolve. Phase C adds profiles and deterministic routing through Operators & routing, as described below. Phase D adds policy-controlled offers, AI triage and private handoff briefs. The private copilot, SLA and staffing notifications remain later phases. The full enrichment feature is complete only after the A–G acceptance flow passes.
+For manual testing, start a customer chat and request human support, then open the workspace’s Human Support section. The existing Channels inbox remains compatible. Open **Human Support** for the dedicated staff console. Administrators can create manual queues, assign queued cases and choose their queue. Operators claim cases or accept cases assigned to them, reply to customers, save private notes, change waiting status and resolve. Phase C adds profiles and deterministic routing through Operators & routing, as described below. Phase D adds policy-controlled offers, AI triage and private handoff briefs. Phase E adds the private operator copilot; SLA and staffing notifications remain later phases. The full enrichment feature is complete only after the A–G acceptance flow passes.
 
 ## Phase B console
 
@@ -158,7 +158,7 @@ Additional APIs under `/workspaces/:workspaceId/support`:
 | GET              | `/cases/:caseId/routing`                  | Current deterministic recommendations; no assignment                                        |
 | POST             | `/cases/:caseId/route`                    | Supervisor applies the best currently eligible match                                        |
 
-Phase D now adds validated AI triage and language/skill suggestions. Automatic acceptance timeouts, fallback queues and capacity overrides are not implemented; unmatched requests remain queued. The private copilot, structured AI continuation and SLA/notifications remain later phases. Deployment automation and additional monitoring remain paused.
+Phase D now adds validated AI triage and language/skill suggestions. Automatic acceptance timeouts, fallback queues and capacity overrides are not implemented; unmatched requests remain queued. Phase E adds the private copilot below; structured AI continuation and SLA/notifications remain later phases. Deployment automation and additional monitoring remain paused.
 
 ## Phase D escalation policy and AI handoff
 
@@ -182,7 +182,7 @@ AI output never assigns users. Recognized workspace skill names and inferred lan
 
 Automatic routing waits for pending/running triage; manual claim and customer messaging remain available. Validated completion releases routing immediately. Invalid JSON, unsupported fields, missing credentials, provider failure or context limits preserve the default queue and raw transcript. Lease recovery handles at most 25 expired jobs per iteration. Jobs use a 60-second lease; expired running jobs fail rather than automatically repeating model charges. The worker can process subsequent jobs after a failure. No model call holds conversation/case locks. Concurrent workers and stale lease results cannot overwrite another job's result.
 
-The private case context displays **AI handoff brief**, provenance and a reminder to verify model suggestions against the conversation. Operators can request a bounded manual refresh; pending/running requests are deduplicated and the endpoint permits five requests per minute. Analysts can read the brief and policies but cannot refresh or change configuration. Briefs and triage metadata are never copied to guest handoff events or customer chat prompts. Relevant knowledge suggestions, operator copilot actions and richer post-resolution AI context remain phases E/F.
+The private case context displays **AI handoff brief**, provenance and a reminder to verify model suggestions against the conversation. Operators can request a bounded manual refresh; pending/running requests are deduplicated and the endpoint permits five requests per minute. Analysts can read the brief and policies but cannot refresh or change configuration. Briefs and triage metadata are never copied to guest handoff events or customer chat prompts. Phase E adds relevant knowledge suggestions and operator copilot actions below; richer post-resolution AI context remains Phase F.
 
 ### Phase D API
 
@@ -198,4 +198,18 @@ Resources below use `/workspaces/:workspaceId/support` and existing sessions/RBA
 
 Customer handoff GET responses now include `access: {entryMode,canRequest,offer}`. Existing authenticated/guest-token handoff POST routes accept `request` to confirm an offer or use Always available, and `dismiss` to keep trying with AI. They retain existing deployment, token, origin and conversation-owner checks. Public callers cannot supply queues, policies, priorities, operator IDs or triage content.
 
-Phase E is next: the private operator copilot. Structured resolution and AI continuation remain Phase F, and SLA/notifications/analytics remain Phase G. Deployment automation and additional monitoring remain paused.
+Phase E adds the private operator copilot below. Structured resolution and AI continuation remain Phase F, and SLA/notifications/analytics remain Phase G. Deployment automation and additional monitoring remain paused.
+
+## Phase E private operator copilot
+
+Activate an assigned case in **Human Support** to reveal **Private AI copilot**. Assigned operators and supervisors can request a suggested reply, conversation summary, relevant knowledge, or next action. Use draft copies a suggestion into the customer-reply composer; operators edit and explicitly send it. Replacing an existing reply or private-note draft requires confirmation. Regenerate makes an explicit new request; Ignore dismisses a suggestion locally. Generated drafts never enter customer messages automatically.
+
+**Handoff policy** controls copilot availability, an optional workspace copilot model and a 256–8192 output token budget. The conversation's pinned model is the fallback. Every request uses the existing provider abstraction with a 30-second deadline and a bounded recent transcript. Internal notes, raw tool inputs/results, credentials and unrelated cases are excluded. Sentiment is an AI estimate to verify, not an established fact.
+
+Knowledge retrieval uses only the conversation agent's attached knowledge bases, current ready sources and tenant-scoped embeddings. Citations show source titles and reference passages. Approved attached tools visible to the operator may be recommended by ID/name; copilot does not execute them or pre-fill arbitrary parameters. Next actions are limited to requesting information, permitted resolution and permitted supervisor escalation. Fabricated tool IDs, citation references and unavailable actions fail validation. Tool execution and similar-case history are deliberately absent from this phase.
+
+Private results, citations and usage are stored in `support_copilot`, with a tenant-consistent case foreign key and cascading conversation retention. One generation per case runs at a time. Identical unchanged requests reuse successful results; changed transcript, role, model/policy or attachment/source revision invalidates that cache. Explicit regeneration bypasses successful-result reuse. Failed/expired calls do not retry automatically or block manual support. A 60-second lease lets the next read/request report a crashed generation as failed and permits explicit retry. Both routes enforce current controller and workspace access; generation rechecks permissions and attachments after the provider returns. Archived or revoked attachments and deleted/non-ready sources prevent reading prior affected results.
+
+API: `GET` / `POST /workspaces/:workspaceId/support/cases/:caseId/copilot`. POST accepts `{kind: "reply" | "summary" | "knowledge" | "next_action", regenerate?: boolean}` and permits five requests per minute. Results are staff-only and never added to public handoff events, customer prompts or widget responses. General audit/events record identifiers and safe codes, not generated text. Usage purposes include `copilot_reply`, `copilot_summary`, `copilot_knowledge` and `copilot_next_action`; these private records are separate from main-chat dashboard totals. Summaries are cached/stored; there is no new background worker for copilot.
+
+Apply migration **0021** and restart API/worker after updating. No additional environment variables are required. Structured human-to-AI continuity remains Phase F, with SLA/notifications/analytics in Phase G. Deployment automation and additional monitoring remain paused.

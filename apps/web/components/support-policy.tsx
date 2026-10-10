@@ -307,6 +307,47 @@ export function SupportPolicy({
                 </select>
               </label>
               <label>
+                <input
+                  type="checkbox"
+                  checked={value.copilotEnabled}
+                  onChange={(e) => update("copilotEnabled", e.target.checked)}
+                />{" "}
+                Enable private operator copilot
+              </label>
+              <label>
+                Copilot model
+                <select
+                  aria-label="Copilot model"
+                  value={value.copilotModelId ?? ""}
+                  onChange={(e) =>
+                    update("copilotModelId", e.target.value || null)
+                  }
+                >
+                  <option value="">Use conversation model</option>
+                  {targets.data?.models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  Private suggestions use a bounded transcript and attached
+                  knowledge. Private notes are excluded.
+                </small>
+              </label>
+              <label>
+                Copilot output token budget
+                <input
+                  type="number"
+                  min={256}
+                  max={8192}
+                  value={value.copilotMaxOutputTokens}
+                  onChange={(e) =>
+                    update("copilotMaxOutputTokens", Number(e.target.value))
+                  }
+                />
+              </label>
+              <label>
                 Triage model
                 <select
                   aria-label="Triage model"

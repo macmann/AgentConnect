@@ -326,6 +326,9 @@ export const handoffPolicy = z.strictObject({
   defaultPriority: supportPriority.default("normal"),
   aiTriageEnabled: z.boolean().default(true),
   generateHandoffSummary: z.boolean().default(true),
+  copilotEnabled: z.boolean().default(true),
+  copilotModelId: z.uuid().nullable().default(null),
+  copilotMaxOutputTokens: z.number().int().min(256).max(8192).default(2048),
   triageModelId: z.uuid().nullable().default(null),
   maxOutputTokens: z.number().int().min(256).max(8192).default(2048),
   intentRules: z
@@ -376,3 +379,49 @@ export const handoffDecision = z.strictObject({
   sentiment: z.enum(["neutral", "positive", "frustrated", "unknown"]),
   reason: z.string().trim().max(1000),
 });
+
+export const copilotInput = z.strictObject({
+  kind: z.enum(["reply", "summary", "next_action", "knowledge"]),
+  regenerate: z.boolean().default(false),
+});
+export const copilotResult = z.strictObject({
+  reply: z.string().max(4000),
+  summary: z.string().max(2000),
+  sentiment: z.enum(["neutral", "positive", "frustrated", "unknown"]),
+  nextAction: z.enum([
+    "request_information",
+    "resolve",
+    "escalate_supervisor",
+    "none",
+  ]),
+  rationale: z.string().max(1000),
+  toolRecommendations: z
+    .array(z.strictObject({ toolId: z.uuid(), reason: z.string().max(500) }))
+    .max(5),
+});
+export type CopilotResult = z.infer<typeof copilotResult>;
+export type CopilotView = {
+  id: string;
+  kind: z.infer<typeof copilotInput>["kind"];
+  status: "running" | "completed" | "failed";
+  result: CopilotResult | null;
+  citations: {
+    id: number;
+    title: string;
+    content: string;
+    sourceId: string;
+    knowledgeBaseId: string;
+  }[];
+  tools: { id: string; name: string }[];
+  provenance: {
+    modelId?: string | null;
+    generatedAt?: string;
+    errorCode?: string | null;
+    httpStatus?: number;
+    providerCode?: string;
+    parameter?: string;
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+  };
+  created_at: string;
+};

@@ -53,11 +53,11 @@ export async function validatePolicy(
     if (rows.length !== skills.length)
       throw new HttpError(400, "Choose enabled skills in this workspace");
   }
-  if (p.triageModelId) {
+  for (const modelId of [p.triageModelId, p.copilotModelId].filter(Boolean)) {
     const [model] =
-      await tx`SELECT id FROM model_configurations WHERE id=${p.triageModelId} AND workspace_id=${wid} AND organization_id=${org} AND archived_at IS NULL`;
+      await tx`SELECT id FROM model_configurations WHERE id=${modelId!} AND workspace_id=${wid} AND organization_id=${org} AND archived_at IS NULL`;
     if (!model)
-      throw new HttpError(400, "Choose an enabled workspace triage model");
+      throw new HttpError(400, "Choose an enabled workspace support model");
   }
 }
 export async function customerHandoffState(

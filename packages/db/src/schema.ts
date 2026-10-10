@@ -861,3 +861,21 @@ export const supportDecisions = pgTable("support_decisions", {
   reasonCode: text("reason_code"),
   createdAt: created(),
 });
+
+export const supportCopilot = pgTable("support_copilot", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  supportCaseId: uuid("support_case_id").notNull(),
+  requestedBy: uuid("requested_by").notNull(),
+  kind: text("kind").notNull(),
+  status: text("status").notNull(),
+  contextHash: text("context_hash").notNull(),
+  result: jsonb("result"),
+  citations: jsonb("citations").notNull().default([]),
+  tools: jsonb("tools").notNull().default([]),
+  provenance: jsonb("provenance").notNull().default({}),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }).notNull(),
+  createdAt: created(),
+});
