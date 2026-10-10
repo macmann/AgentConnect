@@ -125,9 +125,22 @@ See channels-voice.md for the supported initial slice and integration prerequisi
 
 See quality.md for capabilities, semantics and the explicit initial release limits.
 
+## Phase 9 — Enterprise connectors (initial S3 release)
+
+- [x] Tenant-scoped connector registry, encrypted selected credentials, administrative configuration and builder sync permissions.
+- [x] Source adapter abstraction and signed read-only S3 adapter with separate endpoint grants.
+- [x] Complete bounded listings, conditional downloads, incremental item fingerprints and source revision updates.
+- [x] Durable leased manual/scheduled sync, cancellation, permission rechecks, bounded crash recovery and safe status/errors.
+- [x] Remote removal reconciliation restricted to managed sources, provenance and existing parser/embedding integration.
+- [x] Connector setup/status/history UI with prerequisite links, pause/resume and disconnect retaining knowledge.
+- [ ] Google Drive, OneDrive, SharePoint, Salesforce, Zendesk, Zoho, Teams and Slack adapters.
+- [ ] OAuth/role renewal, source ACL mirroring, large-source change feeds, retention and live AWS/IAM acceptance.
+
+See connectors.md for setup, permissions and the initial release's sync semantics.
+
 ## Subsequent phases
 
-Follow product-spec.md phases 9–10: enterprise connectors; hardening. Complete a compiling, tested, usable slice before starting the next.
+Complete the remaining connector adapters progressively, then follow product-spec.md phase 10 for hardening. Complete a compiling, tested, usable slice before starting the next.
 
 ## Risks and dependencies
 

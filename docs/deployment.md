@@ -79,3 +79,7 @@ Connection tests now expose sanitized provider diagnostics instead of replacing 
 ## Phase 5 operations upgrade
 
 Run `pnpm db:migrate` for migration 0007, then restart API, web and worker. The worker now delivers signed run webhooks. Configure `WEBHOOK_ALLOWED_HOSTS` with exact approved HTTPS receiver hostnames on both API and worker before registration. Existing hosts must be preserved; no private host override is provided. See [operations](operations.md) for API key use, pricing semantics, signing verification and environment labels.
+
+## Enterprise source endpoints
+
+Phase 9 requires migration 0011 and a restarted API/worker. Configure `CONNECTOR_ALLOWED_HOSTS` for exact public HTTPS source endpoints, or explicit trusted `CONNECTOR_PRIVATE_HOSTS` host:port exceptions. These grants are independent of model/tool/crawl settings; source credentials are selected encrypted workspace secrets, not application storage credentials. See [connector setup](connectors.md) for S3 permissions and sync behavior.

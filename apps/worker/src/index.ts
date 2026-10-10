@@ -1,3 +1,4 @@
+import { processConnectorSync } from "@agentconnect/api/connectors";
 import { processEvaluationRun } from "@agentconnect/api/quality";
 import { processWebhookDelivery } from "@agentconnect/api/webhooks";
 import { workerFailure } from "./failure.js";
@@ -38,6 +39,7 @@ async function loop(
   }
 }
 await Promise.all([
+  loop(processConnectorSync, 3000, "Enterprise connector sync"),
   loop(processEvaluationRun, 1000, "Quality evaluation"),
   loop(processWorkflowRun, 1000, "Workflow execution"),
   loop(deliverMail, 3000, "Mail delivery"),

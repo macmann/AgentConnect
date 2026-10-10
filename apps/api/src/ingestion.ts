@@ -70,7 +70,7 @@ export async function processKnowledgeJob(
     >`SELECT * FROM knowledge_bases WHERE id=${job.knowledge_base_id} AND workspace_id=${job.workspace_id} AND organization_id=${job.organization_id} AND archived_at IS NULL`;
     if (!kb) throw new KnowledgeError("KNOWLEDGE_BASE_UNAVAILABLE");
     const [source] =
-      await sql`SELECT title,kind,metadata FROM knowledge_sources WHERE id=${job.source_id} AND revision=${job.source_revision} AND status<>'deleted'`;
+      await sql`SELECT title,kind,metadata,source_url FROM knowledge_sources WHERE id=${job.source_id} AND revision=${job.source_revision} AND status<>'deleted'`;
     if (!source) throw new KnowledgeError("LEASE_LOST");
     const pages: {
       document: ParsedDocument;
@@ -106,8 +106,18 @@ export async function processKnowledgeJob(
         kind: source.kind,
         tags: source.metadata.tags ?? [],
         filename: job.payload.filename,
+        ...(source.metadata.connectorId
+          ? {
+              connectorId: source.metadata.connectorId,
+              externalKey: source.metadata.externalKey,
+            }
+          : {}),
       };
-      pages.push({ document, url: null, objectKey: job.payload.objectKey });
+      pages.push({
+        document,
+        url: source.source_url,
+        objectKey: job.payload.objectKey,
+      });
     }
     const embedding = factory(
       await embeddingConnection(

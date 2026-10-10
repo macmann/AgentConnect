@@ -2195,3 +2195,39 @@ form small {
   border-top: 1px solid #d5ded9;
   padding: 20px 0;
 }
+
+.connector-layout {
+  display: grid;
+  gap: 24px;
+}
+.connector-layout label {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+.connector-layout input,
+.connector-layout select {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #d5ded9;
+  border-radius: 8px;
+  background: white;
+  color: #182c27;
+}
+.connector-choice {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 16px;
+  margin-bottom: 12px;
+  border: 1px solid #d5ded9;
+  border-radius: 8px;
+  background: #f5f8f6;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.connector-run {
+  border-top: 1px solid #d5ded9;
+  padding: 16px 0;
+}

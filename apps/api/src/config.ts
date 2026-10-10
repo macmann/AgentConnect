@@ -25,6 +25,8 @@ const schema = z.object({
     ),
   MODEL_PRIVATE_HOSTS: z.string().default(""),
   WEBHOOK_ALLOWED_HOSTS: z.string().default(""),
+  CONNECTOR_ALLOWED_HOSTS: z.string().default(""),
+  CONNECTOR_PRIVATE_HOSTS: z.string().default(""),
   TOOL_ALLOWED_HOSTS: z.string().default(""),
   TOOL_PRIVATE_HOSTS: z.string().default(""),
   TOOL_DATABASE_HOSTS: z.string().default(""),

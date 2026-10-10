@@ -92,3 +92,7 @@ Phase 4 adds a React Flow canvas and workspace workflow API. Immutable graphs re
 ## Offline quality flow
 
 The Quality lab stores revisioned datasets and immutable evaluation inputs in PostgreSQL. A leased worker reuses standard agent retrieval/tool/provider execution, checkpoints each case, applies deterministic checks and an optional registered LLM judge, then persists aggregate metrics and baseline deltas. Pricing is frozen at queue time; unreported usage remains unknown. Administrator-controlled publication gates compare completed runs to the current saved draft, dataset revision, evaluator and dependency fingerprint inside the publication transaction. See [quality.md](quality.md) for recovery, permission boundaries and initial scope.
+
+## Enterprise source sync
+
+A tenant-scoped connector registry binds an approved remote endpoint and encrypted workspace credential to a knowledge base. Adapter interfaces return a complete bounded inventory and conditionally read document versions. A leased worker persists per-key fingerprints, queues existing knowledge ingestion jobs, and reconciles remote removals only after a successful full scan. Manual and scheduled refresh use the same queue; role rechecks, connector revisions and lease tokens guard mutations. The first adapter uses signed read-only S3 requests through the existing safe HTTP transport. See [connectors.md](connectors.md) for constraints and follow-up providers.

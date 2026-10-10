@@ -31,6 +31,9 @@ export function Citations({
               View source
             </a>
           )}
+          {s.sourceUrl?.startsWith("s3://") && (
+            <small>Source: {s.sourceUrl}</small>
+          )}
           <small>Similarity {s.score.toFixed(3)}</small>
         </details>
       ))}
