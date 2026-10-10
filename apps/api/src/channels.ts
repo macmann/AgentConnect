@@ -1,3 +1,4 @@
+import { supportStream } from "./support/live.js";
 import {
   customerHandoffState,
   confirmHandoff,
@@ -15,7 +16,7 @@ import { digest } from "./security.js";
 import { HttpError } from "./http-error.js";
 import { widgetBundle } from "./widget-bundle.js";
 export function widgetDeploymentPath(r: FastifyRequest) {
-  return /^\/public\/widgets\/([0-9a-f-]{36})(?:\/(?:chat|conversations\/[0-9a-f-]{36}\/handoff))?$/.exec(
+  return /^\/public\/widgets\/([0-9a-f-]{36})(?:\/(?:chat|conversations\/[0-9a-f-]{36}\/handoff(?:\/stream)?))?$/.exec(
     r.url.split("?")[0]!,
   )?.[1];
 }
@@ -132,6 +133,13 @@ export async function registerChannelRoutes(app: FastifyInstance) {
     "/public/widgets/:deploymentId/conversations/:conversationId/handoff",
   ]) {
     const publicRoute = prefix.startsWith("/public");
+    app.get(prefix + "/stream", async (r, reply) => {
+      await conversationAccess(r, publicRoute);
+      return supportStream(r, reply, async () => {
+        const { c } = await conversationAccess(r, publicRoute);
+        return String(c.support_revision);
+      });
+    });
     app.get(prefix, async (r) => {
       const { c } = await conversationAccess(r, publicRoute);
       return {

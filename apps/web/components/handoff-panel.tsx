@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { watchSupportLive } from "./support-live";
 import { apiBase } from "./agent-client";
 import { Button } from "./button";
 export function HandoffPanel({
@@ -15,6 +16,12 @@ export function HandoffPanel({
 }) {
   const [access, setAccess] = useState<{
     entryMode: string;
+    businessHours?: {
+      open: boolean;
+      timezone: string;
+      message: string;
+      weekly: { weekday: number; startMinute: number; endMinute: number }[];
+    } | null;
     canRequest: boolean;
     offer: { id: string; reason_code: string } | null;
   } | null>(null);
@@ -55,9 +62,15 @@ export function HandoffPanel({
     }
     void refresh();
     const timer = setInterval(refresh, 5000);
+    const stopLive = watchSupportLive(
+      endpoint + "/stream",
+      () => void refresh(),
+      guestToken,
+    );
     return () => {
       active = false;
       clearInterval(timer);
+      stopLive();
     };
   }, [endpoint, guestToken, onStatus, busy]);
   async function post(action: string) {
@@ -102,6 +115,29 @@ export function HandoffPanel({
   return (
     <section className="handoff-panel">
       <h4>Human support</h4>
+      {access?.businessHours && !access.businessHours.open && (
+        <p className="muted">
+          {access.businessHours.message}{" "}
+          <span>
+            Queue timezone: {access.businessHours.timezone}.{" "}
+            {access.businessHours.weekly
+              .map((w) => {
+                const t = (n: number) =>
+                  String(Math.floor(n / 60)).padStart(2, "0") +
+                  ":" +
+                  String(n % 60).padStart(2, "0");
+                return (
+                  ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][w.weekday] +
+                  " " +
+                  t(w.startMinute) +
+                  "–" +
+                  t(w.endMinute)
+                );
+              })
+              .join("; ") || "No open hours configured."}
+          </span>
+        </p>
+      )}
       {events
         .filter((e) => ["user_message", "operator_message"].includes(e.kind))
         .map((e) => (

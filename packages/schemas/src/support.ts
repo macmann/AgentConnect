@@ -124,7 +124,111 @@ export const queueMembersInput = z.strictObject({
       "Duplicate members",
     ),
 });
+const targetSeconds = z
+  .number()
+  .int()
+  .min(1)
+  .max(2592000)
+  .nullable()
+  .default(null);
+export const queueOperations = z.strictObject({
+  sla: z
+    .strictObject({
+      assignmentSeconds: targetSeconds,
+      firstResponseSeconds: targetSeconds,
+      resolutionSeconds: targetSeconds,
+      warningPercent: z.number().int().min(1).max(99).default(80),
+      pauseWaitingCustomer: z.boolean().default(true),
+      pauseWaitingExternal: z.boolean().default(false),
+    })
+    .default({
+      assignmentSeconds: null,
+      firstResponseSeconds: null,
+      resolutionSeconds: null,
+      warningPercent: 80,
+      pauseWaitingCustomer: true,
+      pauseWaitingExternal: false,
+    }),
+  acceptanceTimeoutSeconds: z.number().int().min(15).max(86400).default(120),
+  maxAssignmentAttempts: z.number().int().min(1).max(10).default(3),
+  businessHours: z
+    .strictObject({
+      enabled: z.boolean().default(false),
+      timezone: z
+        .string()
+        .max(100)
+        .refine((v) => {
+          try {
+            new Intl.DateTimeFormat("en", { timeZone: v });
+            return true;
+          } catch {
+            return false;
+          }
+        }, "Use a valid IANA timezone")
+        .default("UTC"),
+      weekly: z
+        .array(
+          z
+            .strictObject({
+              weekday: z.number().int().min(0).max(6),
+              startMinute: z.number().int().min(0).max(1439),
+              endMinute: z.number().int().min(1).max(1440),
+            })
+            .refine(
+              (v) => v.endMinute > v.startMinute,
+              "Closing time must follow opening time",
+            ),
+        )
+        .max(21)
+        .default([])
+        .refine(
+          (v) =>
+            v.every((a, i) =>
+              v.every(
+                (b, j) =>
+                  i === j ||
+                  a.weekday !== b.weekday ||
+                  a.endMinute <= b.startMinute ||
+                  b.endMinute <= a.startMinute,
+              ),
+            ),
+          "Hours must not overlap",
+        ),
+      afterHours: z
+        .enum([
+          "create_offline_case",
+          "continue_with_ai",
+          "collect_message",
+          "show_business_hours",
+          "route_to_fallback_queue",
+        ])
+        .default("create_offline_case"),
+      fallbackQueueId: z.uuid().nullable().default(null),
+    })
+    .default({
+      enabled: false,
+      timezone: "UTC",
+      weekly: [],
+      afterHours: "create_offline_case",
+      fallbackQueueId: null,
+    }),
+});
+export type QueueOperations = z.infer<typeof queueOperations>;
+export const supportTransfer = z.strictObject({
+  queueId: z.uuid(),
+  operatorId: z.uuid().nullable().default(null),
+  reason: z.string().trim().min(1).max(500),
+});
+export const supportPriorityChange = z.strictObject({
+  priority: supportPriority,
+  reason: z.string().trim().min(1).max(500),
+});
+export const supportAnalyticsQuery = z.strictObject({
+  days: z.coerce.number().int().min(1).max(90).default(30),
+  queueId: z.uuid().optional(),
+});
 export const queueInput = z.strictObject({
+  operations: queueOperations.default(queueOperations.parse({})),
   name: z.string().trim().min(1).max(100),
   description: z.string().trim().max(1000).default(""),
   enabled: z.boolean().default(true),
@@ -137,6 +241,7 @@ export const queueInput = z.strictObject({
   routingConfig: routingPolicy.default(routingPolicy.parse({})),
 });
 export const queuePatch = z.strictObject({
+  operations: queueOperations.optional(),
   name: z.string().trim().min(1).max(100).optional(),
   description: z.string().trim().max(1000).optional(),
   enabled: z.boolean().optional(),
@@ -220,6 +325,10 @@ export const supportPage = z
     "Cursor requires before and beforeId",
   );
 export const supportCaseQuery = supportPage.safeExtend({
+  slaState: z.enum(["on_track", "warning", "breached"]).optional(),
+  language: languageCode.optional(),
+  fromDate: z.iso.date().optional(),
+  toDate: z.iso.date().optional(),
   status: supportCaseStatus.optional(),
   scope: z
     .enum(["all", "open", "waiting", "active", "mine", "unassigned"])
@@ -237,8 +346,8 @@ const transitions: Record<SupportCaseStatus, readonly SupportCaseStatus[]> = {
   queued: ["assigned", "active", "cancelled"],
   assigned: ["active", "queued", "cancelled"],
   active: ["waiting_customer", "waiting_external", "queued", "resolved"],
-  waiting_customer: ["active", "resolved"],
-  waiting_external: ["active", "resolved"],
+  waiting_customer: ["active", "queued", "resolved"],
+  waiting_external: ["active", "queued", "resolved"],
   resolved: ["closed", "active"],
   closed: [],
   cancelled: [],
@@ -262,6 +371,7 @@ export const supportMessage = z.strictObject({
 export type SupportCursor = { before: string; beforeId: string };
 export type SupportPage<T> = { items: T[]; nextCursor: SupportCursor | null };
 export type SupportQueue = {
+  operations_config: QueueOperations;
   id: string;
   name: string;
   description: string;
@@ -274,6 +384,16 @@ export type SupportQueue = {
 };
 export type SupportOperator = { id: string; name: string; created_at: string };
 export type SupportCaseView = {
+  workspace_id: string;
+  sla_state: "on_track" | "warning" | "breached";
+  sla_details: Record<
+    string,
+    { state: string; elapsedSeconds: number; targetSeconds: number }
+  >;
+  acceptance_deadline: string | null;
+  assignment_timeout_count: number;
+  reopen_count: number;
+  transfer_count: number;
   ai_resume_case_id: string | null;
   resume_context: Partial<AIResumeContext>;
   triage_status: string;

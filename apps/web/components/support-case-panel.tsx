@@ -1,4 +1,5 @@
 "use client";
+import { SupportCaseOperations } from "./support-case-operations";
 import { SupportCopilot } from "./support-copilot";
 import { SupportBrief } from "./support-brief";
 import { SupportRoutingPanel } from "./support-routing-panel";
@@ -28,6 +29,11 @@ import {
   supportTime,
 } from "./support-utils";
 const eventNames: Record<string, string> = {
+  "case.transferred": "Case transferred",
+  "case.priority_changed": "Priority changed",
+  "assignment.expired": "Assignment acceptance expired",
+  "sla.warning": "SLA warning",
+  "sla.breached": "SLA breached",
   "case.created": "Human support requested",
   "case.claimed": "Support specialist joined",
   "case.assigned": "Case assigned",
@@ -451,6 +457,14 @@ export function SupportCasePanel({
             <dt>Case ID</dt>
             <dd className="support-id">{s.id}</dd>
           </dl>
+          <SupportCaseOperations
+            key={s.id}
+            s={s}
+            base={base}
+            role={role}
+            control={control}
+            onSaved={refresh}
+          />
           {s.resolution_summary && (
             <div className="support-resolution">
               <h4>Resolution</h4>

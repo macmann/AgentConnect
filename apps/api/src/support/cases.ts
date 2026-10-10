@@ -1,3 +1,4 @@
+import { availableQueue, refreshCaseSLA } from "./operations.js";
 import { approveResolution, restoreAI } from "./continuation.js";
 import { randomUUID } from "node:crypto";
 import type { TransactionSql } from "postgres";
@@ -120,15 +121,24 @@ export async function createCase(
       await tx`SELECT id FROM support_queues WHERE id=${input.queueId} AND workspace_id=${c.workspace_id} AND organization_id=${c.organization_id} AND enabled FOR SHARE`;
     if (!queue) throw new HttpError(404, "Enabled support queue unavailable");
   }
+  const effectiveQueue = await availableQueue(
+    tx,
+    c.workspace_id,
+    c.organization_id,
+    input.queueId ?? null,
+    actor.type === "customer",
+  );
+  if (effectiveQueue) input.queueId = effectiveQueue.id;
   const [s] = await tx<
     SupportCase[]
-  >`INSERT INTO support_cases(id,organization_id,workspace_id,conversation_id,status,queue_id,reason_code,reason_text,priority,trigger_type,queued_at,idempotency_key) VALUES (${randomUUID()},${c.organization_id},${c.workspace_id},${c.id},'queued',${input.queueId ?? null},${input.reasonCode ?? "explicit_request"},${input.reasonText ?? ""},${input.priority ?? "normal"},${actor.type === "customer" ? "customer" : "manual"},now(),${input.idempotencyKey ?? null}) RETURNING *`;
+  >`INSERT INTO support_cases(id,organization_id,workspace_id,conversation_id,status,queue_id,reason_code,reason_text,priority,trigger_type,queued_at,idempotency_key) VALUES (${randomUUID()},${c.organization_id},${c.workspace_id},${c.id},'queued',${input.queueId ?? null},${input.reasonCode ?? "explicit_request"},${input.reasonText ?? ""},${input.priority ?? effectiveQueue?.priority ?? "normal"},${actor.type === "customer" ? "customer" : "manual"},now(),${input.idempotencyKey ?? null}) RETURNING *`;
   await tx`UPDATE conversations SET conversation_mode='waiting_human',active_support_case_id=${s!.id},handoff_status='pending' WHERE id=${c.id}`;
   await appendEvent(tx, s!, "case.created", actor);
   await legacyEvent(tx, s!, "requested", actor);
   return { supportCase: s!, created: true };
 }
 export function assertController(s: SupportCase, actor: SupportActor) {
+  if (actor.type === "system" && actor.supervise) return;
   if (!actor.id || (!actor.supervise && s.assigned_operator_id !== actor.id))
     throw new HttpError(
       403,
@@ -226,7 +236,7 @@ export async function assignCase(
     if (!queue) throw new HttpError(404, "Enabled support queue unavailable");
   }
   await reserveOperator(tx, operatorId, s.workspace_id, s.id);
-  await tx`UPDATE support_cases SET queue_id=${queueId === undefined ? s.queue_id : queueId},assigned_operator_id=${operatorId},assigned_at=now() WHERE id=${s.id}`;
+  await tx`UPDATE support_cases SET queue_id=${queueId === undefined ? s.queue_id : queueId},assigned_operator_id=${operatorId},assigned_at=clock_timestamp() WHERE id=${s.id}`;
   s.assigned_operator_id = operatorId;
   if (queueId !== undefined) s.queue_id = queueId;
   await setStatus(tx, s, "assigned", actor, "case.assigned");
@@ -254,6 +264,15 @@ export async function transitionCase(
       "Use the dedicated claim, assign or resolve action",
     );
   if (to === s.status) return;
+  if (to === "active" && s.status === "assigned") {
+    const [expired] =
+      await tx`SELECT id FROM support_cases WHERE id=${s.id} AND acceptance_deadline<=clock_timestamp()`;
+    if (expired)
+      throw new HttpError(
+        409,
+        "Assignment expired. Wait for requeue or ask a supervisor to assign it again.",
+      );
+  }
   if (to === "active" && s.status === "resolved" && s.assigned_operator_id) {
     await eligibleOperator(
       tx,
@@ -271,6 +290,7 @@ export async function transitionCase(
     await tx`UPDATE support_cases SET accepted_at=now() WHERE id=${s.id}`;
     await legacyEvent(tx, s, "claimed", actor);
   }
+  if (["closed", "cancelled"].includes(to)) await refreshCaseSLA(tx, s);
   if (to === "queued")
     await tx`UPDATE support_cases SET assigned_operator_id=NULL,assigned_at=NULL,accepted_at=NULL WHERE id=${s.id}`;
 }
@@ -306,6 +326,7 @@ export async function resolveCase(
     caseId: s.id,
     contextVersion: 1,
   });
+  await refreshCaseSLA(tx, s);
   await legacyEvent(tx, s, "resolved", actor);
 }
 export async function sendSupportMessage(

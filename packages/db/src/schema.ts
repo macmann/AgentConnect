@@ -9,6 +9,7 @@ import {
   boolean,
   customType,
   doublePrecision,
+  bigint,
 } from "drizzle-orm/pg-core";
 const created = () =>
   timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -136,6 +137,9 @@ export const deployments = pgTable("deployments", {
 });
 
 export const conversations = pgTable("conversations", {
+  supportRevision: bigint("support_revision", { mode: "number" })
+    .notNull()
+    .default(0),
   aiResumeCaseId: uuid("ai_resume_case_id"),
   channel: text("channel").notNull().default("hosted"),
   widgetOrigin: text("widget_origin"),
@@ -693,6 +697,7 @@ export const retentionObjectDeletions = pgTable("retention_object_deletions", {
 
 // Constraints and tenant-consistent composite foreign keys are defined in migration 0017.
 export const supportQueues = pgTable("support_queues", {
+  operationsConfig: jsonb("operations_config").notNull().default({}),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
   workspaceId: uuid("workspace_id").notNull(),
@@ -710,6 +715,31 @@ export const supportQueues = pgTable("support_queues", {
     .defaultNow(),
 });
 export const supportCases = pgTable("support_cases", {
+  slaCheckedAt: timestamp("sla_checked_at", { withTimezone: true }),
+  operationsNextAttemptAt: timestamp("operations_next_attempt_at", {
+    withTimezone: true,
+  })
+    .notNull()
+    .defaultNow(),
+  resolutionPausedAt: timestamp("resolution_paused_at", { withTimezone: true }),
+  resolutionPausedSeconds: doublePrecision("resolution_paused_seconds")
+    .notNull()
+    .default(0),
+  firstAssignedAt: timestamp("first_assigned_at", { withTimezone: true }),
+  firstAcceptedAt: timestamp("first_accepted_at", { withTimezone: true }),
+  timedOutOperatorIds: uuid("timed_out_operator_ids")
+    .array()
+    .notNull()
+    .default([]),
+  slaSnapshot: jsonb("sla_snapshot").notNull().default({}),
+  slaState: text("sla_state").notNull().default("on_track"),
+  slaDetails: jsonb("sla_details").notNull().default({}),
+  acceptanceDeadline: timestamp("acceptance_deadline", { withTimezone: true }),
+  assignmentTimeoutCount: integer("assignment_timeout_count")
+    .notNull()
+    .default(0),
+  transferCount: integer("transfer_count").notNull().default(0),
+  reopenCount: integer("reopen_count").notNull().default(0),
   policySnapshot: jsonb("policy_snapshot").notNull().default({}),
   triageStatus: text("triage_status").notNull().default("none"),
   triageResult: jsonb("triage_result").notNull().default({}),
@@ -879,4 +909,22 @@ export const supportCopilot = pgTable("support_copilot", {
   provenance: jsonb("provenance").notNull().default({}),
   leaseUntil: timestamp("lease_until", { withTimezone: true }).notNull(),
   createdAt: created(),
+});
+
+export const supportNotifications = pgTable("support_notifications", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  userId: uuid("user_id").notNull(),
+  supportCaseId: uuid("support_case_id").notNull(),
+  eventId: uuid("event_id").notNull(),
+  kind: text("kind").notNull(),
+  createdAt: created(),
+  readAt: timestamp("read_at", { withTimezone: true }),
+});
+
+export const supportLiveRevisions = pgTable("support_live_revisions", {
+  workspaceId: uuid("workspace_id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  revision: bigint("revision", { mode: "number" }).notNull().default(1),
 });

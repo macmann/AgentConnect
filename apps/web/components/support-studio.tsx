@@ -1,4 +1,9 @@
 "use client";
+import { useWorkspaceSupportLive } from "./support-live";
+import {
+  SupportOperations,
+  type SupportOperationsView,
+} from "./support-operations";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   useInfiniteQuery,
@@ -39,6 +44,10 @@ export function SupportStudio({
 }) {
   const base = `/workspaces/${workspaceId}/support`,
     cache = useQueryClient();
+  const [operationsView, setOperationsView] = useState<
+    SupportOperationsView | ""
+  >("");
+  useWorkspaceSupportLive(workspaceId, permitted(role, "support:view"));
   const [settings, setSettings] = useState(false);
   const [policySettings, setPolicySettings] = useState(false);
   const [selected, setSelected] = useState(""),
@@ -48,6 +57,10 @@ export function SupportStudio({
     [priority, setPriority] = useState(""),
     [channel, setChannel] = useState(""),
     [operator, setOperator] = useState(""),
+    [sla, setSla] = useState(""),
+    [language, setLanguage] = useState(""),
+    [fromDate, setFromDate] = useState(""),
+    [toDate, setToDate] = useState(""),
     [searchDraft, setSearchDraft] = useState(""),
     [search, setSearch] = useState("");
   const draft = useRef(false);
@@ -62,6 +75,7 @@ export function SupportStudio({
       const caseId = /^[a-f0-9]{8}-[a-f0-9-]{27}$/i.test(value) ? value : "";
       setSelected(caseId);
       if (caseId) {
+        setOperationsView("");
         setSettings(false);
         setPolicySettings(false);
       }
@@ -92,6 +106,11 @@ export function SupportStudio({
   if (priority) filters.set("priority", priority);
   if (channel) filters.set("channel", channel);
   if (operator) filters.set("assignedOperatorId", operator);
+  if (sla) filters.set("slaState", sla);
+  if (/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/.test(language))
+    filters.set("language", language);
+  if (fromDate) filters.set("fromDate", fromDate);
+  if (toDate) filters.set("toDate", toDate);
   if (search) filters.set("search", search);
   const queues = useInfiniteQuery({
     queryKey: ["support", workspaceId, "queues"],
@@ -158,10 +177,16 @@ export function SupportStudio({
         aria-label="Support sections"
       >
         <Button
-          className={!settings && !policySettings ? "" : "secondary"}
-          aria-pressed={!settings && !policySettings}
+          className={
+            !settings && !policySettings && !operationsView ? "" : "secondary"
+          }
+          aria-pressed={!settings && !policySettings && !operationsView}
           onClick={() => {
-            if ((!settings && !policySettings) || select("")) {
+            if (
+              (!settings && !policySettings && !operationsView) ||
+              select("")
+            ) {
+              setOperationsView("");
               setSettings(false);
               setPolicySettings(false);
             }
@@ -174,6 +199,7 @@ export function SupportStudio({
           aria-pressed={settings}
           onClick={() => {
             if (select("")) {
+              setOperationsView("");
               setSettings(true);
               setPolicySettings(false);
             }
@@ -186,13 +212,39 @@ export function SupportStudio({
           aria-pressed={policySettings}
           onClick={() => {
             if (select("")) {
+              setOperationsView("");
               setPolicySettings(true);
+              setOperationsView("");
               setSettings(false);
             }
           }}
         >
           Handoff policy
         </Button>
+        {(
+          [
+            ["notifications", "Notifications", "support:view"],
+            ["analytics", "Analytics", "support:analytics:view"],
+            ["supervision", "Supervision", "support:supervise"],
+          ] as const
+        )
+          .filter(([, , cap]) => permitted(role, cap))
+          .map(([view, label]) => (
+            <Button
+              key={view}
+              className={operationsView === view ? "" : "secondary"}
+              aria-pressed={operationsView === view}
+              onClick={() => {
+                if (select("")) {
+                  setSettings(false);
+                  setPolicySettings(false);
+                  setOperationsView(view);
+                }
+              }}
+            >
+              {label}
+            </Button>
+          ))}
       </div>
       <SupportPresence
         key={workspaceId + userId}
@@ -200,7 +252,19 @@ export function SupportStudio({
         userId={userId}
         role={role}
       />
-      {policySettings ? (
+      {operationsView ? (
+        <SupportOperations
+          workspaceId={workspaceId}
+          view={operationsView}
+          onSelect={(id) => {
+            if (select(id)) {
+              setOperationsView("");
+              setSettings(false);
+              setPolicySettings(false);
+            }
+          }}
+        />
+      ) : policySettings ? (
         <SupportPolicy
           workspaceId={workspaceId}
           role={role}
@@ -246,6 +310,48 @@ export function SupportStudio({
             </p>
           )}
           <section className="panel support-filters" aria-label="Case filters">
+            <label>
+              SLA state
+              <select
+                aria-label="SLA state"
+                value={sla}
+                onChange={(e) => filter(() => setSla(e.target.value))}
+              >
+                <option value="">Any SLA state</option>
+                {["on_track", "warning", "breached"].map((v) => (
+                  <option key={v} value={v}>
+                    {statusLabel(v)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Detected language
+              <input
+                value={language}
+                onChange={(e) =>
+                  filter(() => setLanguage(e.target.value.trim().toLowerCase()))
+                }
+                maxLength={12}
+                placeholder="e.g. en"
+              />
+            </label>
+            <label>
+              Created from (UTC)
+              <input
+                type="date"
+                value={fromDate}
+                onChange={(e) => filter(() => setFromDate(e.target.value))}
+              />
+            </label>
+            <label>
+              Created through (UTC)
+              <input
+                type="date"
+                value={toDate}
+                onChange={(e) => filter(() => setToDate(e.target.value))}
+              />
+            </label>
             <label>
               Cases
               <select
@@ -387,6 +493,10 @@ export function SupportStudio({
                   setQueue("");
                   setPriority("");
                   setChannel("");
+                  setSla("");
+                  setLanguage("");
+                  setFromDate("");
+                  setToDate("");
                   setSearch("");
                   setSearchDraft("");
                 }}
@@ -501,6 +611,9 @@ export function SupportStudio({
                 >
                   <span className="support-card-heading">
                     <strong>{s.customer_name}</strong>
+                    <span className={"support-badge sla-" + s.sla_state}>
+                      SLA: {statusLabel(s.sla_state)}
+                    </span>
                     <span className={"support-badge priority-" + s.priority}>
                       {statusLabel(s.priority)}
                     </span>

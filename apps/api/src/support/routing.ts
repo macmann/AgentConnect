@@ -1,3 +1,5 @@
+import { queueIsOpen, availableQueue } from "./operations.js";
+import { queueOperations } from "@agentconnect/schemas/support";
 import type { TransactionSql } from "postgres";
 import {
   routingPolicy,
@@ -58,7 +60,7 @@ export async function routingCandidates(tx: TransactionSql, s: SupportCase) {
     throw new HttpError(409, "Support queue is disabled or unavailable");
   const policy = routingPolicy.parse(queue.routing_config);
   const [caseSignals] =
-    await tx`SELECT routing_requirements,triage_status FROM support_cases WHERE id=${s.id}`;
+    await tx`SELECT routing_requirements,triage_status,timed_out_operator_ids,assignment_timeout_count FROM support_cases WHERE id=${s.id}`;
   const signals = caseSignals?.routing_requirements ?? {};
   policy.requiredSkills = [
     ...new Set([...policy.requiredSkills, ...(signals.requiredSkills ?? [])]),
@@ -81,6 +83,11 @@ export async function routingCandidates(tx: TransactionSql, s: SupportCase) {
   const candidates = rows
     .filter(
       (p) =>
+        queueIsOpen(queueOperations.parse(queue.operations_config)) &&
+        caseSignals!.assignment_timeout_count <
+          queueOperations.parse(queue.operations_config)
+            .maxAssignmentAttempts &&
+        !caseSignals!.timed_out_operator_ids.includes(p.user_id) &&
         p.load < p.capacity_limit &&
         policy.requiredSkills.every((id) => Number(p.skills[id]) >= 1) &&
         (!policy.requiredLanguage ||
@@ -173,6 +180,24 @@ export async function routeCase(
     await tx`SELECT triage_status FROM support_cases WHERE id=${s.id}`;
   if (["pending", "running"].includes(triage?.triage_status))
     return { assigned: false, reason: "Waiting for bounded handoff triage" };
+  const target = await availableQueue(
+    tx,
+    s.workspace_id,
+    s.organization_id,
+    s.queue_id,
+  );
+  if (target && target.id !== s.queue_id) {
+    const previous = s.queue_id;
+    s.queue_id = target.id;
+    await tx`UPDATE support_cases SET queue_id=${target.id},updated_at=clock_timestamp() WHERE id=${s.id}`;
+    await appendEvent(
+      tx,
+      s,
+      "routing.fallback",
+      { id: null, type: "system" },
+      { fromQueueId: previous, queueId: target.id },
+    );
+  }
   const result = await routingCandidates(tx, s);
   if (result.strategy === "manual" || result.assignmentMode === "manual")
     return { assigned: false, reason: "Queue uses manual assignment" };
@@ -225,3 +250,5 @@ export async function processSupportRouting() {
   }
   return backlog.length;
 }
+
+export { processSupportOperations } from "./operations.js";

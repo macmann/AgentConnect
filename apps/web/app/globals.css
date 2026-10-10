@@ -3728,3 +3728,110 @@ footer {
 .support-resolution-editor small {
   overflow-wrap: anywhere;
 }
+
+.support-operations .table-scroll {
+  max-width: 100%;
+  overflow: auto;
+  margin: 1rem 0;
+}
+.support-operations table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 520px;
+}
+.support-operations th,
+.support-operations td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.support-operations .support-summary {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  margin: 1rem 0;
+}
+.support-notifications {
+  list-style: none;
+  margin: 1rem 0;
+  padding: 0;
+}
+.support-notifications li {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.support-notifications li.unread {
+  border-left: 3px solid var(--green);
+}
+.support-notifications small {
+  display: block;
+  margin-top: 0.35rem;
+}
+.support-hours > div {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.75rem 0;
+}
+.support-hours > div > .checkbox-label {
+  min-width: 130px;
+}
+.support-hours input[type="time"] {
+  max-width: 145px;
+}
+.support-queue-operations {
+  margin: 1.5rem 0;
+}
+.support-brief .button-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+.support-operations {
+  min-width: 0;
+  padding: 20px;
+}
+.support-operations .panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.support-operations h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.support-operations h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 24px 0 10px;
+}
+.support-operations .panel-heading p {
+  color: var(--muted);
+}
+.support-operations label {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.support-operations select {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+}
+.support-operations .support-count:hover {
+  background: white;
+  border-color: var(--line);
+}

@@ -1,4 +1,6 @@
 "use client";
+import { SupportQueueOperations } from "./support-queue-operations";
+import { queueOperations } from "@agentconnect/schemas/support";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -40,6 +42,9 @@ export function SupportQueueEditor({
     queryFn: () =>
       requestJson<{ items: Member[] }>(`${base}/queues/${q.id}/members`),
   });
+  const [operations, setOperations] = useState(() =>
+    queueOperations.parse(q.operations_config),
+  );
   const [members, setMembers] = useState<Member[] | null>(null),
     [strategy, setStrategy] = useState(q.routing_strategy),
     [mode, setMode] = useState(q.assignment_mode),
@@ -69,6 +74,7 @@ export function SupportQueueEditor({
           setError("");
           try {
             await requestJson(`${base}/queues/${q.id}`, "PATCH", {
+              operations,
               routingStrategy: strategy,
               assignmentMode: mode,
               isDefault,
@@ -176,6 +182,12 @@ export function SupportQueueEditor({
               automatic assignment.
             </p>
           )}
+          <SupportQueueOperations
+            value={operations}
+            onChange={setOperations}
+            base={base}
+            queueId={q.id}
+          />
           <h3>Queue members</h3>
           {current.isPending && <p role="status">Loading queue members…</p>}
           {!allProfiles.length && (

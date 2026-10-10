@@ -23,6 +23,10 @@ export async function listCases(
   UNION ALL SELECT e.payload->>'content',e.created_at,e.id FROM support_events e WHERE e.conversation_id=c.id AND (e.type='message.created')
  ) messages ORDER BY created_at DESC,id DESC LIMIT 1) latest ON true
  WHERE s.workspace_id=${workspaceId} AND s.organization_id=${organizationId}
+ AND (${q.slaState ?? null}::text IS NULL OR s.sla_state=${q.slaState ?? null})
+ AND (${q.language ?? null}::text IS NULL OR s.triage_result->>'language'=${q.language ?? null})
+ AND (${q.fromDate ?? null}::text IS NULL OR s.created_at>=${q.fromDate ? q.fromDate + "T00:00:00Z" : null}::timestamptz)
+ AND (${q.toDate ?? null}::text IS NULL OR s.created_at<${q.toDate ? q.toDate + "T00:00:00Z" : null}::timestamptz+interval '24 hours')
  AND (${q.status ?? null}::text IS NULL OR s.status=${q.status ?? null})
  AND (${q.queueId ?? null}::uuid IS NULL OR s.queue_id=${q.queueId ?? null})
  AND (${q.assignedOperatorId ?? null}::uuid IS NULL OR s.assigned_operator_id=${q.assignedOperatorId ?? null})

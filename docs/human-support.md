@@ -12,7 +12,7 @@ The [implementation specification](human-support-spec.md) is the next product ro
 | D     | Escalation policy, AI triage and handoff brief                                               | Implemented; validation recorded in validation.md |
 | E     | Private operator copilot                                                                     | Implemented; validation recorded in validation.md |
 | F     | Structured resolution, AI continuation and flagship AI → human → AI test                     | Implemented; validation recorded in validation.md |
-| G     | SLA, business hours, notifications, supervision and analytics                                | Planned                                           |
+| G     | SLA, business hours, notifications, supervision and analytics                                | Implemented; validation recorded in validation.md |
 
 ## Phase A architecture
 
@@ -129,7 +129,7 @@ Browser validation and representative screenshots are recorded in `docs/validati
 
 Apply migration **0019** with `pnpm db:migrate`, then restart API and worker. In Human Support → **Operators & routing**, create reusable skills, add support profiles for existing eligible workspace members, and configure queue members and routing. Profiles include enablement, manual availability, capacity, priority weight, IANA timezone, language codes and skill proficiency (1–5). Administrators manage configuration; operators set only their own presence; analysts can inspect configuration and recommendations without changing them.
 
-A profile starts offline. Operators choose Available, Busy, Away, Do Not Disturb or Offline in **My availability**. While Human Support is open and visible, non-offline presence is renewed every 20 seconds; the server expires it after 90 seconds without renewal. Availability is scoped to the workspace and never inferred from a login. Disabled profiles and disabled manual availability prevent new assignments, without interrupting existing cases. A timezone is profile metadata; business-hours enforcement belongs to Phase G.
+A profile starts offline. Operators choose Available, Busy, Away, Do Not Disturb or Offline in **My availability**. While Human Support is open and visible, non-offline presence is renewed every 20 seconds; the server expires it after 90 seconds without renewal. Availability is scoped to the workspace and never inferred from a login. Disabled profiles and disabled manual availability prevent new assignments, without interrupting existing cases. Operator timezone remains profile metadata; Phase G enforces the queue timezone and schedule.
 
 Automatic candidates must have a currently eligible workspace role, an enabled profile, enabled membership in that queue, fresh Available presence and spare capacity. Assigned, active, waiting-customer and waiting-external cases all reserve capacity. Required skills and required languages are hard constraints. Disabling a skill immediately removes it from routing eligibility. Existing manual operators without an optional profile remain compatible; once a profile is configured, manual claims, supervisor assignments and reopening a resolved case enforce its availability and capacity too. Manual selection does not require an automatic skill/language match or Available presence. Capacity cannot be overridden in this release.
 
@@ -158,7 +158,7 @@ Additional APIs under `/workspaces/:workspaceId/support`:
 | GET              | `/cases/:caseId/routing`                  | Current deterministic recommendations; no assignment                                        |
 | POST             | `/cases/:caseId/route`                    | Supervisor applies the best currently eligible match                                        |
 
-Phase D now adds validated AI triage and language/skill suggestions. Automatic acceptance timeouts, fallback queues and capacity overrides are not implemented; unmatched requests remain queued. Phase E adds the private copilot below; Phase F adds structured AI continuation below; SLA/notifications remain Phase G. Deployment automation and additional monitoring remain paused.
+Phase D now adds validated AI triage and language/skill suggestions. Phase G adds bounded acceptance timeouts and fallback queues. Capacity constraints remain enforced; unmatched requests stay queued. Phase E adds the private copilot below; Phase F adds structured AI continuation below; SLA/notifications are implemented in Phase G below. Deployment automation and additional monitoring remain paused.
 
 ## Phase D escalation policy and AI handoff
 
@@ -198,7 +198,7 @@ Resources below use `/workspaces/:workspaceId/support` and existing sessions/RBA
 
 Customer handoff GET responses now include `access: {entryMode,canRequest,offer}`. Existing authenticated/guest-token handoff POST routes accept `request` to confirm an offer or use Always available, and `dismiss` to keep trying with AI. They retain existing deployment, token, origin and conversation-owner checks. Public callers cannot supply queues, policies, priorities, operator IDs or triage content.
 
-Phase E adds the private operator copilot below. Structured resolution and AI continuation are available in Phase F; SLA/notifications/analytics remain Phase G. Deployment automation and additional monitoring remain paused.
+Phase E adds the private operator copilot below. Structured resolution and AI continuation are available in Phase F; SLA/notifications/analytics are implemented in Phase G below. Deployment automation and additional monitoring remain paused.
 
 ## Phase E private operator copilot
 
@@ -212,7 +212,7 @@ Private results, citations and usage are stored in `support_copilot`, with a ten
 
 API: `GET` / `POST /workspaces/:workspaceId/support/cases/:caseId/copilot`. POST accepts `{kind: "reply" | "summary" | "knowledge" | "next_action", regenerate?: boolean}` and permits five requests per minute. Results are staff-only and never added to public handoff events, customer prompts or widget responses. General audit/events record identifiers and safe codes, not generated text. Usage purposes include `copilot_reply`, `copilot_summary`, `copilot_knowledge` and `copilot_next_action`; these private records are separate from main-chat dashboard totals. Summaries are cached/stored; there is no new background worker for copilot.
 
-Apply migration **0021** and restart API/worker after updating. No additional environment variables are required. Phase F adds structured human-to-AI continuity below; SLA/notifications/analytics remain Phase G. Deployment automation and additional monitoring remain paused.
+Apply migration **0021** and restart API/worker after updating. No additional environment variables are required. Phase F adds structured human-to-AI continuity below; SLA/notifications/analytics are implemented in Phase G below. Deployment automation and additional monitoring remain paused.
 
 ## Phase F: approved human-to-AI continuation
 
@@ -228,4 +228,36 @@ Subsequent AI turns retain existing AI history and add up to three approved reso
 
 Explicitly blocked tool IDs are excluded before planning and execution across approved resolved cases. Natural-language instructions such as “do not verify identity again” guide the model; wording compliance depends on the provider. Approved context is presented as untrusted factual data, not authority to override runtime instructions.
 
-Apply migration **0022** with `pnpm db:migrate` and restart API/worker. No new environment variables or services are required. Next: Phase G operational maturity. Deployment automation and additional monitoring remain paused.
+Apply migration **0022** with `pnpm db:migrate` and restart API/worker. No new environment variables or services are required. Phase G operational maturity is implemented below. Deployment automation and additional monitoring remain paused.
+
+## Phase G: support operations
+
+**Operators & routing → Configure routing** now includes queue SLA targets, warning thresholds, assignment acceptance timeout/attempt limits, business hours, timezone, outside-hours behavior and a fallback queue. Targets are optional, measured in elapsed wall-clock seconds and snapshotted per case. Resolution time pauses in `waiting_customer` by default; pausing in `waiting_external` is optional. Assignment and first-response clocks do not pause. Timely completed targets remain on track. Queue changes before the first assignment use the selected queue's targets; transfers retain the existing case's targets. Reopening excludes the resolved interval from resolution time and records a reopen count.
+
+The existing worker scans bounded batches for SLA warning/breach changes and assignment expiry. Alerts are deduplicated per target/state transition. Acceptance after its deadline is rejected; expiry requeues the same case, releases capacity and excludes the expired operator from subsequent automatic choices. Once the configured number of automatic attempts is exhausted, the case stays queued for explicit supervisor action. Manual reassignment remains available. AI never gains control during timeout or transfer.
+
+Schedules use IANA timezones and same-day minute ranges, including DST. Closed queues never automatically assign. `continue_with_ai` prevents a customer handoff and explains the closure; offline-case, collect-message and show-hours modes keep a durable case with customer-visible schedule information. Fallback routing follows enabled tenant-scoped queues with cycle/depth validation, including when a queued request's original queue closes. Manual operator actions can service offline cases. Holiday exceptions remain future work.
+
+Assigned operators and supervisors can **Transfer case** to an enabled queue, optionally reserving another eligible operator; the receiving operator must accept. Supervisors can change priority with a required reason. Transfers, priority changes, expiry, resolution and reopening retain their events/audit trail. The inbox includes SLA, detected-language and UTC creation-date filters.
+
+**Notifications** contains recipient-scoped, durable in-app updates for new/assigned/transferred cases, customer replies, acceptance expiry and SLA warnings/breaches. Opening a notification acknowledges it idempotently and opens the case. Notifications contain identifiers and event kinds, never message bodies, notes or private summaries. Email, Slack, Teams and push notification delivery are future adapters; no external notification service is required.
+
+**Supervision** shows live backlog, unassigned/urgent cases, warning/breached targets, queue health and operator presence/capacity. Supervisors act through the case inbox. **Analytics** is available to support readers/analysts: 7/30/90-day windows and queue filters show case counts, handoff rate, AI return counts, service-time averages, P50/P95 wait, SLA breaches, queue/operator summaries, transfer/reopen counts, handoff reasons and copilot request outcomes. The no-handoff percentage is explicitly a containment proxy, not proof of resolution. Deflection and business savings are not fabricated without a baseline. Reports describe retained records with current/final queue/operator ownership, not a historical attribution ledger; summary tables list up to 100 queues/operators.
+
+Authenticated operator and authorized customer/widget SSE streams emit content-free invalidations, revalidate access on every check, close after 25 seconds and reconnect. Public streams retain conversation token, deployment and widget-origin checks. Clients refresh durable projections; five-second polling remains a fallback. Maintenance-only case clock updates do not generate workspace refresh storms.
+
+Apply migration **0023** with `pnpm db:migrate` and restart API/worker/web. No new environment variables or dependencies are required. Phases A–G complete the initial Human Support enrichment scope. Deployment automation and additional infrastructure monitoring remain paused; the next workstream is the requested UI enhancements.
+
+Phase G API routes are under `/workspaces/:workspaceId/support`:
+
+| Route | Access / behavior |
+| --- | --- |
+| `GET /analytics?days=30&queueId=…` | Support analytics readers; 1–90 days, optional queue filter. |
+| `GET /supervision` | Supervisors; backlog, queue health and operator capacity. |
+| `GET /notifications` | Current recipient only; stable cursor pagination and unread count. |
+| `POST /notifications/:notificationId/read` | Current recipient only; idempotent acknowledgement. |
+| `POST /cases/:caseId/transfer` | Current controller; `{queueId, operatorId?: UUID \| null, reason}`. |
+| `POST /cases/:caseId/priority` | Supervisors; `{priority, reason}`. |
+| `GET /stream` | Workspace support readers; authorized content-free SSE invalidations. |
+
+Customer handoff routes also expose `/stream` with their existing conversation authorization and widget-origin checks. Queue create/update accepts the validated `operations` configuration; existing queues retain disabled SLA targets and unrestricted hours until configured.
