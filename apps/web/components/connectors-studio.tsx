@@ -699,35 +699,42 @@ export function ConnectorsStudio({
                   </p>
                 </>
               )}
-              <label>
-                Maximum listed objects
-                <input
-                  aria-label="Maximum listed objects"
-                  type="number"
-                  min={1}
-                  max={1000}
-                  value={limit}
-                  onChange={(e) => setLimit(Number(e.target.value))}
-                />
-              </label>
-              <p>
-                A listing above this limit fails without removing sources. Files
-                must be supported document formats and at most 10 MB.
-              </p>
-              <label>
-                Refresh schedule
-                <select
-                  aria-label="Refresh schedule"
-                  value={schedule}
-                  onChange={(e) => setSchedule(e.target.value)}
-                >
-                  <option value="">Manual only</option>
-                  <option value="15">Every 15 minutes</option>
-                  <option value="60">Hourly</option>
-                  <option value="1440">Daily</option>
-                  <option value="10080">Weekly</option>
-                </select>
-              </label>
+              <details className="workspace-advanced-settings">
+                <summary>Sync limits & schedule</summary>
+                <p className="muted">
+                  Tune scan size and optional automatic sync. Manual sync
+                  remains available.
+                </p>
+                <label>
+                  Maximum listed objects
+                  <input
+                    aria-label="Maximum listed objects"
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={limit}
+                    onChange={(e) => setLimit(Number(e.target.value))}
+                  />
+                </label>
+                <p>
+                  A listing above this limit fails without removing sources.
+                  Files must be supported document formats and at most 10 MB.
+                </p>
+                <label>
+                  Refresh schedule
+                  <select
+                    aria-label="Refresh schedule"
+                    value={schedule}
+                    onChange={(e) => setSchedule(e.target.value)}
+                  >
+                    <option value="">Manual only</option>
+                    <option value="15">Every 15 minutes</option>
+                    <option value="60">Hourly</option>
+                    <option value="1440">Daily</option>
+                    <option value="10080">Weekly</option>
+                  </select>
+                </label>
+              </details>
               <Button
                 disabled={
                   busy ||

@@ -9,6 +9,7 @@ import {
   Search,
   RefreshCw,
 } from "lucide-react";
+import { WorkspaceSections, useWorkspaceSection } from "./workspace-sections";
 import { Button } from "./button";
 import { requestJson, apiBase } from "./agent-client";
 import { Citations, type Citation } from "./citations";
@@ -62,6 +63,11 @@ export function KnowledgeStudio({
   workspaceId: string;
   role: string;
 }) {
+  const [librarySection, setLibrarySection] = useWorkspaceSection(
+    "knowledgeSection",
+    "bases",
+    ["bases", "embeddings"],
+  );
   const cache = useQueryClient();
   const canManage = [
     "owner",
@@ -621,71 +627,143 @@ export function KnowledgeStudio({
         </form>
       )}
       {!selected && !form && (
+        <WorkspaceSections
+          label="Knowledge sections"
+          value={librarySection}
+          onChange={setLibrarySection}
+          sections={[
+            {
+              id: "bases",
+              label: "Knowledge bases",
+              description:
+                "Organize approved content for grounded agent answers.",
+              count: bases.data?.length,
+            },
+            {
+              id: "embeddings",
+              label: "Embedding models",
+              description:
+                "Configure the models that turn source content into searchable vectors.",
+              count: embeddings.data?.length,
+            },
+          ]}
+        />
+      )}
+      {!selected && !form && (
         <>
-          {bases.isPending ? (
-            <p className="empty">Loading knowledge bases…</p>
-          ) : bases.data?.length ? (
-            <div className="workspace-grid">
-              {bases.data.map((k) => (
-                <button
-                  key={k.id}
-                  className="workspace-card"
-                  onClick={() => {
-                    setSelected(k.id);
-                    setTab("sources");
-                    setResult(null);
-                    setPreview(null);
-                  }}
-                >
-                  <div>
-                    <h4>{k.name}</h4>
-                    <p>{k.description || "Searchable workspace knowledge"}</p>
-                  </div>
-                  <span className="workspace-footer">
-                    {k.ready_count}/{k.source_count} sources ready ·{" "}
-                    {k.public_access ? "Public chat enabled" : "Internal"}
-                  </span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="empty">
-              <BookOpen size={30} />
-              <h3>Your knowledge starts here</h3>
-              <p>
-                Register an embedding model, create a knowledge base, and add
-                your first source.
-              </p>
-            </div>
-          )}
-          <h3 className="section-gap">Embedding models</h3>
-          {embeddings.data?.map((m) => (
-            <div className="version-row" key={m.id}>
-              <div>
-                <strong>{m.name}</strong>
-                <small>
-                  {m.provider} · {m.model_id} · {m.dimensions} dimensions
-                </small>
+          <div
+            className="workspace-section-body"
+            hidden={librarySection !== "bases"}
+          >
+            {bases.isPending ? (
+              <p className="empty">Loading knowledge bases…</p>
+            ) : bases.data?.length ? (
+              <div className="workspace-grid">
+                {bases.data.map((k) => (
+                  <button
+                    key={k.id}
+                    className="workspace-card"
+                    onClick={() => {
+                      setSelected(k.id);
+                      setTab("sources");
+                      setResult(null);
+                      setPreview(null);
+                    }}
+                  >
+                    <div>
+                      <h4>{k.name}</h4>
+                      <p>{k.description || "Searchable workspace knowledge"}</p>
+                    </div>
+                    <span className="workspace-footer">
+                      {k.ready_count}/{k.source_count} sources ready ·{" "}
+                      {k.public_access ? "Public chat enabled" : "Internal"}
+                    </span>
+                  </button>
+                ))}
               </div>
-              {canModel && (
-                <button
-                  className="text-button"
-                  disabled={busy}
-                  onClick={() =>
-                    action(async () => {
-                      await requestJson(
-                        `/workspaces/${workspaceId}/embedding-models/${m.id}/test`,
-                        "POST",
-                      );
-                      setNotice("Embedding connection succeeded");
-                    })
-                  }
-                >
-                  Test embedding connection
-                </button>
-              )}
-            </div>
-          ))}
+            ) : (
+              <div className="empty">
+                <BookOpen size={30} />
+                <h3>Your knowledge starts here</h3>
+                <p>
+                  Register an embedding model, create a knowledge base, and add
+                  your first source.
+                </p>
+                {canModel && !embeddings.data?.length && (
+                  <Button
+                    onClick={() => {
+                      setForm("embedding");
+                      setProvider("openai");
+                    }}
+                  >
+                    Add your first embedding model
+                  </Button>
+                )}
+                {canManage && !!embeddings.data?.length && (
+                  <Button onClick={() => setForm("base")}>
+                    Create your first knowledge base
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+          <div
+            className="workspace-section-body"
+            hidden={librarySection !== "embeddings"}
+          >
+            <h3>Embedding models</h3>
+            {embeddings.data?.length === 0 && (
+              <div className="empty">
+                <h4>No embedding models yet</h4>
+                <p>
+                  Register an embedding model before creating your first
+                  knowledge base.
+                </p>
+                {canModel ? (
+                  <Button
+                    onClick={() => {
+                      setForm("embedding");
+                      setProvider("openai");
+                    }}
+                  >
+                    Add embedding model
+                  </Button>
+                ) : (
+                  <p>
+                    Ask a workspace administrator to register an embedding
+                    model.
+                  </p>
+                )}
+              </div>
+            )}
+            {embeddings.data?.map((m) => (
+              <div className="version-row" key={m.id}>
+                <div>
+                  <strong>{m.name}</strong>
+                  <small>
+                    {m.provider} · {m.model_id} · {m.dimensions} dimensions
+                  </small>
+                </div>
+                {canModel && (
+                  <button
+                    className="text-button"
+                    disabled={busy}
+                    onClick={() =>
+                      action(async () => {
+                        await requestJson(
+                          `/workspaces/${workspaceId}/embedding-models/${m.id}/test`,
+                          "POST",
+                        );
+                        setNotice("Embedding connection succeeded");
+                      })
+                    }
+                  >
+                    Test embedding connection
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
         </>
       )}
       {selected && base && (

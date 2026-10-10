@@ -1,3 +1,4 @@
+import { paceApiBudget } from "../helpers/api-budget.mjs";
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -45,6 +46,9 @@ const embedding = createServer(async (req, res) => {
       })),
     }),
   );
+});
+test.beforeEach(async ({}, testInfo) => {
+  await paceApiBudget(testInfo);
 });
 test.beforeAll(async () => {
   await new Promise((r) => embedding.listen(4553, "127.0.0.1", r));
@@ -210,6 +214,7 @@ test("S3 setup, worker ingestion, incremental sync, schedule, pause and disconne
   await page
     .getByRole("button", { name: "Edit connector", exact: true })
     .click();
+  await page.getByText("Sync limits & schedule", { exact: true }).click();
   await page.getByLabel("Maximum listed objects", { exact: true }).fill("200");
   await page
     .getByLabel("Refresh schedule", { exact: true })
@@ -415,6 +420,7 @@ test("OneDrive setup requires drive and folder IDs, saves application credential
   await page
     .getByLabel("OneDrive drive ID", { exact: true })
     .fill("b!fixture-drive");
+  await page.getByText("Sync limits & schedule", { exact: true }).click();
   await page.getByLabel("Refresh schedule", { exact: true }).selectOption("60");
   await page
     .getByRole("button", { name: "Save connector", exact: true })
@@ -736,16 +742,22 @@ for (const kind of ["teams", "slack"]) {
     await page
       .getByRole("button", { name: "Save connector", exact: true })
       .click();
-    await page.getByRole("button", { name: "Pause connector", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Pause connector", exact: true })
+      .click();
     await expect(
       page.getByRole("button", { name: "Sync now", exact: true }),
     ).toBeDisabled();
-    await page.getByRole("button", { name: "Resume connector", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Resume connector", exact: true })
+      .click();
     await expect(
       page.getByRole("button", { name: "Sync now", exact: true }),
     ).toBeEnabled();
     page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: "Disconnect connector", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Disconnect connector", exact: true })
+      .click();
     await expect(
       page.getByRole("heading", { name: kind + " renamed", exact: true }),
     ).toHaveCount(0);

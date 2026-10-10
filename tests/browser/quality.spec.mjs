@@ -119,6 +119,7 @@ test("Quality lab creates datasets, imports conversations, evaluates, gates publ
   );
   await page.getByRole("button", { name: "Save dataset", exact: true }).click();
   await expect(page.getByText("Dataset saved.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Evaluation", exact: true }).click();
   await page.getByLabel("Agent", { exact: true }).selectOption(agent.id);
   const chat = await context.request.post(
     `http://localhost:4000/agents/${agent.id}/chat`,
@@ -127,6 +128,7 @@ test("Quality lab creates datasets, imports conversations, evaluates, gates publ
   expect(await chat.text()).toContain("Hello quality");
   const [message] =
     await sql`SELECT id FROM messages WHERE workspace_id=${workspace} AND role='assistant' ORDER BY created_at DESC LIMIT 1`;
+  await page.getByRole("button", { name: "Datasets", exact: true }).click();
   await page
     .getByText("Import conversation responses", { exact: true })
     .click();
@@ -139,6 +141,9 @@ test("Quality lab creates datasets, imports conversations, evaluates, gates publ
   await expect(
     page.getByText("Conversation examples imported.", { exact: true }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Publication gates", exact: true })
+    .click();
   await page.getByRole("button", { name: "Enable gate", exact: true }).click();
   await expect(
     page.getByText(
@@ -154,6 +159,7 @@ test("Quality lab creates datasets, imports conversations, evaluates, gates publ
       )
     ).status(),
   ).toBe(409);
+  await page.getByRole("button", { name: "Evaluation", exact: true }).click();
   await page
     .getByRole("button", { name: "Run evaluation", exact: true })
     .click();
@@ -165,15 +171,18 @@ test("Quality lab creates datasets, imports conversations, evaluates, gates publ
     revision: 1,
   });
   const runs = await (await context.request.get(base + "/evaluations")).json();
+  await page.getByRole("button", { name: "Evaluation", exact: true }).click();
   await page
     .getByLabel("Regression baseline (optional)", { exact: true })
     .selectOption(runs[0].id);
+  await page.getByRole("button", { name: "Evaluation", exact: true }).click();
   await page
     .getByRole("button", { name: "Run evaluation", exact: true })
     .click();
   await expect(
     page.getByText(/Pass rate change: 0.0 percentage points/),
   ).toBeVisible({ timeout: 30000 });
+  await page.getByRole("button", { name: "Datasets", exact: true }).click();
   await page
     .getByRole("button", { name: "Edit examples", exact: true })
     .click();
@@ -193,6 +202,7 @@ test("Quality lab creates datasets, imports conversations, evaluates, gates publ
   );
   await page.getByRole("button", { name: "Save dataset", exact: true }).click();
   await expect(page.getByText("Dataset saved.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Evaluation", exact: true }).click();
   await page
     .getByLabel("Regression baseline (optional)", { exact: true })
     .selectOption("");
@@ -204,6 +214,7 @@ test("Quality lab creates datasets, imports conversations, evaluates, gates publ
       )
     ).status(),
   ).toBe(409);
+  await page.getByRole("button", { name: "Evaluation", exact: true }).click();
   await page
     .getByRole("button", { name: "Run evaluation", exact: true })
     .click();

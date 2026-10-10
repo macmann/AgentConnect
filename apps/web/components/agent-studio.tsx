@@ -1,4 +1,5 @@
 "use client";
+import { WorkspaceSaveBar } from "./workspace-sections";
 import { useState, useRef, useEffect, type FormEvent } from "react";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import { Plus, ArrowUpRight, Upload, ChevronLeft } from "lucide-react";
@@ -325,6 +326,11 @@ export function Models({
           onSubmit={create}
         >
           {editing && <h4>Edit model: {editing.name}</h4>}
+          <h4>Model connection</h4>
+          <p className="muted">
+            Choose the exact provider model and the credential saved in this
+            workspace.
+          </p>
           <div className="form-grid">
             <label>
               Display name
@@ -404,61 +410,80 @@ export function Models({
                 </small>
               </label>
             )}
-            <label>
-              Context window
-              <input
-                name="contextWindow"
-                type="number"
-                defaultValue={editing?.context_window ?? 32768}
-                min={256}
-                max={2000000}
-                required
-              />
-            </label>
-            <label>
-              Maximum output tokens
-              <input
-                name="maxOutputTokens"
-                type="number"
-                defaultValue={editing?.max_output_tokens ?? 4096}
-                min={1}
-                max={2000000}
-                required
-              />
-            </label>
           </div>
-          <div className="checkbox-row">
-            <label>
-              <input
-                name="temperature"
-                type="checkbox"
-                defaultChecked={editing?.capabilities.temperature ?? true}
-              />
-              Supports temperature
-            </label>
-            <label>
-              <input
-                name="topP"
-                type="checkbox"
-                defaultChecked={editing?.capabilities.topP ?? true}
-              />
-              Supports top-p
-            </label>
-          </div>
-          <Button disabled={busy} type="submit">
-            {busy ? "Saving…" : editing ? "Save changes" : "Save model"}
-          </Button>
-          <Button
-            type="button"
-            className="secondary"
-            disabled={busy}
-            onClick={() => {
-              setEditing(null);
-              setFormOpen(false);
-            }}
-          >
-            Cancel
-          </Button>
+          <details className="workspace-advanced-settings">
+            <summary>Model limits & supported parameters</summary>
+            <p className="muted">
+              Use the limits and sampling capabilities supported by this
+              provider model. These settings are available to every agent using
+              it.
+            </p>
+            <div className="form-grid">
+              <label>
+                Context window
+                <input
+                  name="contextWindow"
+                  type="number"
+                  defaultValue={editing?.context_window ?? 32768}
+                  min={256}
+                  max={2000000}
+                  required
+                />
+              </label>
+              <label>
+                Maximum output tokens
+                <input
+                  name="maxOutputTokens"
+                  type="number"
+                  defaultValue={editing?.max_output_tokens ?? 4096}
+                  min={1}
+                  max={2000000}
+                  required
+                />
+              </label>
+            </div>
+            <div className="checkbox-row">
+              <label>
+                <input
+                  name="temperature"
+                  type="checkbox"
+                  defaultChecked={editing?.capabilities.temperature ?? true}
+                />
+                Supports temperature
+              </label>
+              <label>
+                <input
+                  name="topP"
+                  type="checkbox"
+                  defaultChecked={editing?.capabilities.topP ?? true}
+                />
+                Supports top-p
+              </label>
+            </div>
+          </details>
+          <WorkspaceSaveBar>
+            <span>
+              {editing
+                ? "Editing model configuration"
+                : "New model configuration"}
+            </span>
+            <div className="studio-actions">
+              <Button disabled={busy} type="submit">
+                {busy ? "Saving…" : editing ? "Save changes" : "Save model"}
+              </Button>
+              <Button
+                type="button"
+                className="secondary"
+                disabled={busy}
+                onClick={() => {
+                  setEditing(null);
+                  setFormOpen(false);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </WorkspaceSaveBar>
         </form>
       )}
       {models.isPending ? (

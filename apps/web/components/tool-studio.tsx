@@ -1,6 +1,11 @@
 "use client";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  WorkspaceSections,
+  useWorkspaceSection,
+  WorkspaceSaveBar,
+} from "./workspace-sections";
 import { Button } from "./button";
 import { requestJson } from "./agent-client";
 type Tool = {
@@ -80,6 +85,13 @@ export function ToolStudio({
   const cache = useQueryClient();
   const manage = ["owner", "org_admin", "workspace_admin"].includes(role);
   const read = manage || ["builder", "operator"].includes(role);
+  const [section, setSection] = useWorkspaceSection(
+    "toolsSection",
+    "registry",
+    manage
+      ? ["registry", "configure", "connectors", "traces"]
+      : ["registry", "traces"],
+  );
   const execute = manage || role === "builder";
   const tools = useQuery({
     queryKey: ["tools", workspaceId],
@@ -195,6 +207,7 @@ export function ToolStudio({
           : "Tool registered. Attach it in an agent's configuration.",
       );
       setEdit(null);
+      setSection("registry");
       setName("");
       setDescription("");
       setAck(false);
@@ -221,6 +234,7 @@ export function ToolStudio({
         `/tools/${t.id}`,
       );
       const c = row.config;
+      setSection("configure");
       setEdit({ id: t.id, revision: t.revision });
       setName(t.name);
       setDescription(t.description);
@@ -242,7 +256,16 @@ export function ToolStudio({
     });
   }
   if (!read)
-    return <p className="empty">Your role cannot access workspace tools.</p>;
+    return (
+      <section className="panel">
+        <div className="empty">
+          <h3>Tool access required</h3>
+          <p>
+            Ask a workspace administrator for permission to view approved tools.
+          </p>
+        </div>
+      </section>
+    );
   return (
     <section className="panel tool-studio">
       <div className="panel-header">
@@ -268,457 +291,546 @@ export function ToolStudio({
       )}
       {notice && <p role="status">{notice}</p>}
       {tools.error && <p className="error-banner">{tools.error.message}</p>}
-      {manage && (
-        <form onSubmit={save} className="tool-form">
-          <h3>{edit ? "Edit tool" : "Register tool"}</h3>
-          <div className="form-grid">
-            <label>
-              Name
-              <input
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                maxLength={100}
-              />
-            </label>
-            <label>
-              Type
-              <select value={kind} onChange={(e) => setKind(e.target.value)}>
-                <option value="http">HTTP GET</option>
-                <option value="database">PostgreSQL read</option>
-                <option value="search">Brave web search</option>
-                <option value="mcp">MCP read-only tool</option>
-              </select>
-            </label>
-            <label>
-              Description for the agent
-              <textarea
-                required
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                maxLength={1500}
-              />
-            </label>
-            <label>
-              Timeout (ms)
-              <input
-                type="number"
-                min={500}
-                max={15000}
-                value={timeout}
-                onChange={(e) => setTimeout(Number(e.target.value))}
-              />
-            </label>
-            {kind !== "mcp" && (
-              <label>
-                Encrypted credential
-                <select
-                  value={secretId}
-                  onChange={(e) => setSecret(e.target.value)}
-                >
-                  <option value="">No credential</option>
-                  {secrets.data?.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {kind === "http" && (
-              <>
-                <label>
-                  Fixed endpoint URL
-                  <input
-                    required
-                    type="url"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Authentication
-                  <select
-                    value={auth}
-                    onChange={(e) => setAuth(e.target.value)}
-                  >
-                    <option value="none">None</option>
-                    <option value="bearer">Bearer token</option>
-                    <option value="api-key">X-API-Key</option>
-                  </select>
-                </label>
-                <label>
-                  Allowed query parameters (comma separated)
-                  <input
-                    value={parameters}
-                    onChange={(e) => setParameters(e.target.value)}
-                    placeholder="query,category"
-                  />
-                </label>
-              </>
-            )}
-            {kind === "database" && (
-              <>
-                <label>
-                  Schema
-                  <input
-                    required
-                    value={schema}
-                    onChange={(e) => setSchema(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Allowed table or view
-                  <input
-                    required
-                    value={table}
-                    onChange={(e) => setTable(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Returned columns (comma separated)
-                  <input
-                    required
-                    value={columns}
-                    onChange={(e) => setColumns(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Allowed equality filters (comma separated)
-                  <input
-                    value={parameters}
-                    onChange={(e) => setParameters(e.target.value)}
-                  />
-                </label>
-                <p className="muted">
-                  Credential must contain a PostgreSQL connection URL for a
-                  restricted read-only role. Results are limited to 20 rows.
-                  Queries are constructed from this configuration.
-                </p>
-              </>
-            )}
-            {kind === "search" && (
-              <p className="muted">
-                Requires a Brave Search API key. Returns up to five results with
-                strict safe search. The agent supplies a query.
-              </p>
-            )}
-            {kind === "mcp" && (
-              <>
-                <label>
-                  Connector
-                  <select
-                    required
-                    value={connectorId}
-                    onChange={(e) => {
-                      setConnector(e.target.value);
-                      setRemote("");
-                    }}
-                  >
-                    <option value="">Choose discovered connector</option>
-                    {connectors.data
-                      ?.filter((c) => c.enabled)
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label>
-                  Read-only capability
-                  <select
-                    required
-                    value={remoteName}
-                    onChange={(e) => setRemote(e.target.value)}
-                  >
-                    <option value="">Choose remote tool</option>
-                    {selectedConnector?.capabilities.tools
-                      ?.filter((t) => t.annotations?.readOnlyHint === true)
-                      .map((t) => (
-                        <option key={t.name} value={t.name}>
-                          {t.name}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-              </>
-            )}
-          </div>
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={publicAccess}
-              onChange={(e) => setPublic(e.target.checked)}
-            />
-            Allow anonymous hosted agents to use this tool and receive its
-            output
-          </label>
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              required
-              checked={ack}
-              onChange={(e) => setAck(e.target.checked)}
-            />
-            I verified this integration is read-only and its returned data is
-            appropriate for this workspace.
-          </label>
-          <Button disabled={busy || !ack} type="submit">
-            {edit ? "Save tool" : "Register tool"}
-          </Button>
-          {edit && (
-            <Button
-              className="secondary"
-              type="button"
-              onClick={() => setEdit(null)}
-            >
-              Cancel edit
-            </Button>
-          )}
-          <p className="muted">
-            HTTP/MCP destinations require server-approved TOOL_ALLOWED_HOSTS.
-            Private endpoints require TOOL_PRIVATE_HOSTS; PostgreSQL uses
-            TOOL_DATABASE_HOSTS. Changing these settings requires restarting the
-            API.
-          </p>
-        </form>
-      )}
-      {tools.data?.length ? (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Tool</th>
-                <th>Policy</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tools.data.map((t) => (
-                <tr key={t.id}>
-                  <td>
-                    {t.name}
-                    <small className="block muted">
-                      {t.kind} · {t.description}
-                    </small>
-                  </td>
-                  <td>
-                    {t.enabled ? "Enabled" : "Disabled"} ·{" "}
-                    {t.public_access ? "Public access" : "Workspace only"}
-                  </td>
-                  <td>
-                    {execute && (
-                      <Button
-                        className="secondary"
-                        disabled={busy || !t.enabled}
-                        onClick={() => {
-                          setTestId(t.id);
-                          setResult(null);
-                        }}
-                      >
-                        Test
-                      </Button>
-                    )}
-                    {manage && (
-                      <>
-                        <Button
-                          className="secondary"
-                          disabled={busy}
-                          onClick={() => editTool(t)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          className="secondary"
-                          disabled={busy}
-                          onClick={() => change(t, !t.enabled)}
-                        >
-                          {t.enabled ? "Disable" : "Enable"}
-                        </Button>
-                        <Button
-                          className="danger"
-                          disabled={busy}
-                          onClick={() =>
-                            action(async () => {
-                              await requestJson(`/tools/${t.id}`, "DELETE");
-                            })
-                          }
-                        >
-                          Archive
-                        </Button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="empty">No tools registered yet.</p>
-      )}
-      {testId && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void action(async () => {
-              setResult(null);
-              const data = await requestJson<ToolTrace>(
-                `/tools/${testId}/test`,
-                "POST",
-                { arguments: JSON.parse(args) },
-              );
-              setResult(data);
-            });
-          }}
-        >
-          <h3>Test {tools.data?.find((t) => t.id === testId)?.name}</h3>
-          <details>
-            <summary>Argument schema</summary>
-            <pre>
-              {JSON.stringify(
-                tools.data?.find((t) => t.id === testId)?.input_schema,
-                null,
-                2,
-              )}
-            </pre>
-          </details>
-          <label>
-            Arguments (JSON)
-            <textarea
-              aria-label="Tool test arguments"
-              value={args}
-              onChange={(e) => setArgs(e.target.value)}
-              maxLength={8000}
-            />
-          </label>
-          <Button type="submit" disabled={busy}>
-            Execute read-only test
-          </Button>
-          {result && <ToolTraces traces={[result]} />}
-        </form>
-      )}
-      {manage && (
-        <>
-          <h3>MCP connectors</h3>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void action(async () => {
-                await requestJson(
-                  `/workspaces/${workspaceId}/mcp-connectors`,
-                  "POST",
-                  {
-                    name: connectorName,
-                    url: connectorUrl,
-                    secretId: connectorSecret || null,
-                  },
-                );
-                setConnectorName("");
-                setConnectorUrl("");
-                setNotice(
-                  "Connector registered. Discover capabilities, then register selected read-only tools.",
-                );
-              });
-            }}
-          >
+      <WorkspaceSections
+        label="Tools sections"
+        value={section}
+        onChange={setSection}
+        sections={[
+          {
+            id: "registry",
+            label: "Registered tools",
+            description:
+              "Choose approved read-only tools to attach to your agents.",
+            count: tools.data?.length,
+          },
+          ...(manage
+            ? [
+                {
+                  id: "configure",
+                  label: "Tool setup",
+                  description:
+                    "Define what this tool can read and how agents should use it.",
+                },
+                {
+                  id: "connectors",
+                  label: "MCP connectors",
+                  description:
+                    "Connect a server, discover its capabilities, then approve individual read-only tools.",
+                  count: connectors.data?.length,
+                },
+              ]
+            : []),
+          {
+            id: "traces",
+            label: "Execution history",
+            description: "Inspect recent tool results and failures.",
+            count: traces.data?.length,
+          },
+        ]}
+      />
+      <div
+        className="workspace-section-body"
+        hidden={section !== "configure" || !manage}
+      >
+        {manage && (
+          <form onSubmit={save} className="tool-form">
+            <h3>{edit ? "Edit tool" : "Register tool"}</h3>
             <div className="form-grid">
               <label>
-                Server name
+                Name
                 <input
                   required
-                  value={connectorName}
-                  onChange={(e) => setConnectorName(e.target.value)}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                   maxLength={100}
                 />
               </label>
               <label>
-                Streamable HTTP URL
-                <input
+                Type
+                <select value={kind} onChange={(e) => setKind(e.target.value)}>
+                  <option value="http">HTTP GET</option>
+                  <option value="database">PostgreSQL read</option>
+                  <option value="search">Brave web search</option>
+                  <option value="mcp">MCP read-only tool</option>
+                </select>
+              </label>
+              <label>
+                Description for the agent
+                <textarea
                   required
-                  type="url"
-                  value={connectorUrl}
-                  onChange={(e) => setConnectorUrl(e.target.value)}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  maxLength={1500}
                 />
               </label>
               <label>
-                Bearer credential
-                <select
-                  value={connectorSecret}
-                  onChange={(e) => setConnectorSecret(e.target.value)}
-                >
-                  <option value="">No credential</option>
-                  {secrets.data?.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
+                Timeout (ms)
+                <input
+                  type="number"
+                  min={500}
+                  max={15000}
+                  value={timeout}
+                  onChange={(e) => setTimeout(Number(e.target.value))}
+                />
               </label>
+              {kind !== "mcp" && (
+                <label>
+                  Encrypted credential
+                  <select
+                    value={secretId}
+                    onChange={(e) => setSecret(e.target.value)}
+                  >
+                    <option value="">No credential</option>
+                    {secrets.data?.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {kind === "http" && (
+                <>
+                  <label>
+                    Fixed endpoint URL
+                    <input
+                      required
+                      type="url"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Authentication
+                    <select
+                      value={auth}
+                      onChange={(e) => setAuth(e.target.value)}
+                    >
+                      <option value="none">None</option>
+                      <option value="bearer">Bearer token</option>
+                      <option value="api-key">X-API-Key</option>
+                    </select>
+                  </label>
+                  <label>
+                    Allowed query parameters (comma separated)
+                    <input
+                      value={parameters}
+                      onChange={(e) => setParameters(e.target.value)}
+                      placeholder="query,category"
+                    />
+                  </label>
+                </>
+              )}
+              {kind === "database" && (
+                <>
+                  <label>
+                    Schema
+                    <input
+                      required
+                      value={schema}
+                      onChange={(e) => setSchema(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Allowed table or view
+                    <input
+                      required
+                      value={table}
+                      onChange={(e) => setTable(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Returned columns (comma separated)
+                    <input
+                      required
+                      value={columns}
+                      onChange={(e) => setColumns(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Allowed equality filters (comma separated)
+                    <input
+                      value={parameters}
+                      onChange={(e) => setParameters(e.target.value)}
+                    />
+                  </label>
+                  <p className="muted">
+                    Credential must contain a PostgreSQL connection URL for a
+                    restricted read-only role. Results are limited to 20 rows.
+                    Queries are constructed from this configuration.
+                  </p>
+                </>
+              )}
+              {kind === "search" && (
+                <p className="muted">
+                  Requires a Brave Search API key. Returns up to five results
+                  with strict safe search. The agent supplies a query.
+                </p>
+              )}
+              {kind === "mcp" && (
+                <>
+                  <label>
+                    Connector
+                    <select
+                      required
+                      value={connectorId}
+                      onChange={(e) => {
+                        setConnector(e.target.value);
+                        setRemote("");
+                      }}
+                    >
+                      <option value="">Choose discovered connector</option>
+                      {connectors.data
+                        ?.filter((c) => c.enabled)
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <label>
+                    Read-only capability
+                    <select
+                      required
+                      value={remoteName}
+                      onChange={(e) => setRemote(e.target.value)}
+                    >
+                      <option value="">Choose remote tool</option>
+                      {selectedConnector?.capabilities.tools
+                        ?.filter((t) => t.annotations?.readOnlyHint === true)
+                        .map((t) => (
+                          <option key={t.name} value={t.name}>
+                            {t.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </>
+              )}
             </div>
-            <Button type="submit" disabled={busy}>
-              Register connector
-            </Button>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={publicAccess}
+                onChange={(e) => setPublic(e.target.checked)}
+              />
+              Allow anonymous hosted agents to use this tool and receive its
+              output
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                required
+                checked={ack}
+                onChange={(e) => setAck(e.target.checked)}
+              />
+              I verified this integration is read-only and its returned data is
+              appropriate for this workspace.
+            </label>
+            <WorkspaceSaveBar>
+              <span>Read-only tool configuration</span>
+              <div className="studio-actions">
+                <Button disabled={busy || !ack} type="submit">
+                  {edit ? "Save tool" : "Register tool"}
+                </Button>
+                {edit && (
+                  <Button
+                    className="secondary"
+                    type="button"
+                    onClick={() => setEdit(null)}
+                  >
+                    Cancel edit
+                  </Button>
+                )}
+              </div>
+            </WorkspaceSaveBar>
+            <p className="muted">
+              HTTP/MCP destinations require server-approved TOOL_ALLOWED_HOSTS.
+              Private endpoints require TOOL_PRIVATE_HOSTS; PostgreSQL uses
+              TOOL_DATABASE_HOSTS. Changing these settings requires restarting
+              the API.
+            </p>
           </form>
-          {connectors.error && (
-            <p className="error">{connectors.error.message}</p>
-          )}
-          {connectors.data?.map((c) => (
-            <article key={c.id} className="tool-connector">
-              <h4>
-                {c.name} · {c.enabled ? "Enabled" : "Disabled"}
-              </h4>
-              <p>{c.url}</p>
-              <Button
-                disabled={busy || !c.enabled}
-                className="secondary"
-                onClick={() =>
-                  action(async () => {
-                    await requestJson(
-                      `/mcp-connectors/${c.id}/discover`,
-                      "POST",
-                    );
-                    setNotice(
-                      "Capabilities refreshed. Only explicitly registered tools can execute.",
-                    );
-                  })
-                }
-              >
-                Discover / test connection
+        )}
+      </div>
+      <div className="workspace-section-body" hidden={section !== "registry"}>
+        {tools.isPending && read ? (
+          <p role="status">Loading registered tools…</p>
+        ) : tools.error ? (
+          <p className="muted">
+            Registered tools could not be loaded. Use Refresh to try again.
+          </p>
+        ) : tools.data?.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tool</th>
+                  <th>Policy</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tools.data.map((t) => (
+                  <tr key={t.id}>
+                    <td>
+                      {t.name}
+                      <small className="block muted">
+                        {t.kind} · {t.description}
+                      </small>
+                    </td>
+                    <td>
+                      {t.enabled ? "Enabled" : "Disabled"} ·{" "}
+                      {t.public_access ? "Public access" : "Workspace only"}
+                    </td>
+                    <td>
+                      {execute && (
+                        <Button
+                          className="secondary"
+                          disabled={busy || !t.enabled}
+                          onClick={() => {
+                            setTestId(t.id);
+                            setResult(null);
+                          }}
+                        >
+                          Test
+                        </Button>
+                      )}
+                      {manage && (
+                        <>
+                          <Button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() => editTool(t)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() => change(t, !t.enabled)}
+                          >
+                            {t.enabled ? "Disable" : "Enable"}
+                          </Button>
+                          <Button
+                            className="danger"
+                            disabled={busy}
+                            onClick={() =>
+                              action(async () => {
+                                await requestJson(`/tools/${t.id}`, "DELETE");
+                              })
+                            }
+                          >
+                            Archive
+                          </Button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty">
+            <h3>No tools registered yet</h3>
+            <p>
+              Attach a read-only tool when an agent needs external information.
+            </p>
+            {manage ? (
+              <Button onClick={() => setSection("configure")}>
+                Register your first tool
               </Button>
-              <Button
-                disabled={busy}
-                className="secondary"
-                onClick={() =>
-                  action(async () => {
-                    await requestJson(`/mcp-connectors/${c.id}`, "PUT", {
-                      name: c.name,
-                      url: c.url,
-                      secretId: c.secret_id,
-                      enabled: !c.enabled,
-                      revision: c.revision,
-                    });
-                  })
-                }
-              >
-                {c.enabled ? "Disable connector" : "Enable connector"}
+            ) : (
+              <p>Ask a workspace administrator to register a tool.</p>
+            )}
+          </div>
+        )}
+        {testId && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void action(async () => {
+                setResult(null);
+                const data = await requestJson<ToolTrace>(
+                  `/tools/${testId}/test`,
+                  "POST",
+                  { arguments: JSON.parse(args) },
+                );
+                setResult(data);
+              });
+            }}
+          >
+            <h3>Test {tools.data?.find((t) => t.id === testId)?.name}</h3>
+            <details>
+              <summary>Argument schema</summary>
+              <pre>
+                {JSON.stringify(
+                  tools.data?.find((t) => t.id === testId)?.input_schema,
+                  null,
+                  2,
+                )}
+              </pre>
+            </details>
+            <label>
+              Arguments (JSON)
+              <textarea
+                aria-label="Tool test arguments"
+                value={args}
+                onChange={(e) => setArgs(e.target.value)}
+                maxLength={8000}
+              />
+            </label>
+            <Button type="submit" disabled={busy}>
+              Execute read-only test
+            </Button>
+            {result && <ToolTraces traces={[result]} />}
+          </form>
+        )}
+      </div>
+      <div
+        className="workspace-section-body"
+        hidden={section !== "connectors" || !manage}
+      >
+        {manage && (
+          <>
+            <h3>MCP connectors</h3>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void action(async () => {
+                  await requestJson(
+                    `/workspaces/${workspaceId}/mcp-connectors`,
+                    "POST",
+                    {
+                      name: connectorName,
+                      url: connectorUrl,
+                      secretId: connectorSecret || null,
+                    },
+                  );
+                  setConnectorName("");
+                  setConnectorUrl("");
+                  setNotice(
+                    "Connector registered. Discover capabilities, then register selected read-only tools.",
+                  );
+                });
+              }}
+            >
+              <div className="form-grid">
+                <label>
+                  Server name
+                  <input
+                    required
+                    value={connectorName}
+                    onChange={(e) => setConnectorName(e.target.value)}
+                    maxLength={100}
+                  />
+                </label>
+                <label>
+                  Streamable HTTP URL
+                  <input
+                    required
+                    type="url"
+                    value={connectorUrl}
+                    onChange={(e) => setConnectorUrl(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Bearer credential
+                  <select
+                    value={connectorSecret}
+                    onChange={(e) => setConnectorSecret(e.target.value)}
+                  >
+                    <option value="">No credential</option>
+                    {secrets.data?.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <Button type="submit" disabled={busy}>
+                Register connector
               </Button>
-              <details>
-                <summary>
-                  Capabilities · {c.capabilities.tools?.length ?? 0} tools ·{" "}
-                  {c.capabilities.resources?.length ?? 0} resources ·{" "}
-                  {c.capabilities.prompts?.length ?? 0} prompts
-                </summary>
-                <pre>{JSON.stringify(c.capabilities, null, 2)}</pre>
-              </details>
-            </article>
-          ))}
-        </>
-      )}
-      <h3>Recent workspace traces</h3>
-      {traces.error && <p className="error">{traces.error.message}</p>}
-      <ToolTraces traces={traces.data ?? []} />
+            </form>
+            {connectors.error && (
+              <p className="error">{connectors.error.message}</p>
+            )}
+            {connectors.data?.map((c) => (
+              <article key={c.id} className="tool-connector">
+                <h4>
+                  {c.name} · {c.enabled ? "Enabled" : "Disabled"}
+                </h4>
+                <p>{c.url}</p>
+                <Button
+                  disabled={busy || !c.enabled}
+                  className="secondary"
+                  onClick={() =>
+                    action(async () => {
+                      await requestJson(
+                        `/mcp-connectors/${c.id}/discover`,
+                        "POST",
+                      );
+                      setNotice(
+                        "Capabilities refreshed. Only explicitly registered tools can execute.",
+                      );
+                    })
+                  }
+                >
+                  Discover / test connection
+                </Button>
+                <Button
+                  disabled={busy}
+                  className="secondary"
+                  onClick={() =>
+                    action(async () => {
+                      await requestJson(`/mcp-connectors/${c.id}`, "PUT", {
+                        name: c.name,
+                        url: c.url,
+                        secretId: c.secret_id,
+                        enabled: !c.enabled,
+                        revision: c.revision,
+                      });
+                    })
+                  }
+                >
+                  {c.enabled ? "Disable connector" : "Enable connector"}
+                </Button>
+                <details>
+                  <summary>
+                    Capabilities · {c.capabilities.tools?.length ?? 0} tools ·{" "}
+                    {c.capabilities.resources?.length ?? 0} resources ·{" "}
+                    {c.capabilities.prompts?.length ?? 0} prompts
+                  </summary>
+                  <pre>{JSON.stringify(c.capabilities, null, 2)}</pre>
+                </details>
+              </article>
+            ))}
+          </>
+        )}
+      </div>
+      <div className="workspace-section-body" hidden={section !== "traces"}>
+        <h3>Recent workspace traces</h3>
+        {traces.data?.length === 0 && (
+          <div className="empty">
+            <h4>No tool executions yet</h4>
+            <p>
+              Test a registered tool or attach it to an agent to see execution
+              results here.
+            </p>
+            <Button
+              className="secondary"
+              onClick={() => setSection("registry")}
+            >
+              View registered tools
+            </Button>
+          </div>
+        )}
+        {traces.error && <p className="error">{traces.error.message}</p>}
+        <ToolTraces traces={traces.data ?? []} />
+      </div>
     </section>
   );
 }

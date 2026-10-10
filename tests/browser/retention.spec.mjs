@@ -37,18 +37,16 @@ test.afterAll(async () => {
   await sql.end();
 });
 async function open(page, raw) {
-  await page
-    .context()
-    .addCookies([
-      {
-        name: "session",
-        value: raw,
-        domain: "localhost",
-        path: "/",
-        httpOnly: true,
-        sameSite: "Lax",
-      },
-    ]);
+  await page.context().addCookies([
+    {
+      name: "session",
+      value: raw,
+      domain: "localhost",
+      path: "/",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
   await page.goto("/");
   await page.getByRole("button", { name: "Retention", exact: true }).click();
   await expect(
@@ -64,14 +62,23 @@ test("administrator saves, previews, confirms and watches real worker cleanup", 
   await expect(
     page.getByLabel("Enable automatic daily cleanup"),
   ).not.toBeChecked();
+  await page
+    .getByRole("button", { name: "Preview & cleanup", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: "Preview next batch" }),
   ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Retention policy", exact: true })
+    .click();
   await page.getByLabel("Conversations retention days").fill("30");
   await page.getByRole("button", { name: "Save retention settings" }).click();
   await expect(page.getByRole("status")).toHaveText(
     "Retention settings saved.",
   );
+  await page
+    .getByRole("button", { name: "Preview & cleanup", exact: true })
+    .click();
   await page.getByRole("button", { name: "Preview next batch" }).click();
   await expect(
     page.getByText(
@@ -81,16 +88,25 @@ test("administrator saves, previews, confirms and watches real worker cleanup", 
   await expect(
     page.getByRole("button", { name: "Run cleanup batch" }),
   ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Retention policy", exact: true })
+    .click();
   await page.getByLabel("Enable automatic daily cleanup").check();
   await page.getByRole("button", { name: "Save retention settings" }).click();
   await expect(page.getByRole("status")).toHaveText(
     "Retention settings saved.",
   );
+  await page
+    .getByRole("button", { name: "Preview & cleanup", exact: true })
+    .click();
   await page.getByRole("button", { name: "Preview next batch" }).click();
   await page
     .getByLabel("I understand that cleanup permanently removes eligible data.")
     .check();
   await page.getByRole("button", { name: "Run cleanup batch" }).click();
+  await page
+    .getByRole("button", { name: "Cleanup history", exact: true })
+    .click();
   await expect(
     page.getByRole("cell", { name: "completed", exact: true }),
   ).toBeVisible({ timeout: 20000 });
@@ -99,6 +115,9 @@ test("administrator saves, previews, confirms and watches real worker cleanup", 
   expect(audit.count).toBe(1);
   await page.reload();
   await page.getByRole("button", { name: "Retention", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Retention policy", exact: true })
+    .click();
   await expect(page.getByLabel("Conversations retention days")).toHaveValue(
     "30",
   );

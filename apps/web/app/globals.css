@@ -4288,3 +4288,207 @@ footer {
   margin-top: 0;
   color: var(--ink);
 }
+
+/* Focused workspace sections share Agent Configure's progressive disclosure. */
+.workspace-section-navigation {
+  padding: 18px 24px;
+  border-bottom: 1px solid #e3e9e5;
+  background: #fbfcfb;
+}
+.workspace-section-desktop {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.workspace-section-desktop button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #52665b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+.workspace-section-desktop button:hover {
+  background: #edf3ef;
+}
+.workspace-section-desktop button[aria-current="page"] {
+  background: #e7f2ec;
+  border-color: #c6dfd1;
+  color: #1d6048;
+  font-weight: 650;
+}
+.workspace-section-count {
+  background: #fff;
+  padding: 2px 7px;
+  border-radius: 12px;
+  font-size: 11px;
+}
+.workspace-section-description {
+  margin: 12px 0 0;
+  color: #65766d;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.workspace-section-mobile {
+  display: none;
+}
+.workspace-section-body {
+  padding: 20px 24px;
+  min-width: 0;
+}
+.workspace-section-body > h3:first-child,
+.workspace-section-body > h4:first-child {
+  margin-top: 0;
+}
+.workspace-section-body .empty {
+  padding: 28px 16px;
+}
+.workspace-section-body .tool-form,
+.workspace-section-body .retention-settings {
+  padding: 0;
+}
+.workspace-section-body .form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.workspace-next-action {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid #e3e9e5;
+}
+.workspace-save-bar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: #fff;
+  border: 1px solid #d7e3db;
+  border-radius: 10px;
+  box-shadow: 0 4px 20px #14382414;
+  padding: 12px 16px;
+  margin-top: 24px;
+  font-size: 13px;
+}
+.panel:has(.workspace-save-bar) {
+  overflow: visible;
+}
+[hidden] {
+  display: none !important;
+}
+.workspace-section-navigation button:focus-visible,
+.workspace-section-mobile select:focus-visible {
+  outline: 3px solid #81b6a0;
+  outline-offset: 3px;
+}
+.tool-studio .workspace-section-body form {
+  border-bottom: 0;
+}
+.quality-layout .studio-form:has(.workspace-section-navigation) {
+  padding: 0;
+}
+.quality-layout .studio-form:has(.workspace-section-navigation) > .error,
+.quality-layout
+  .studio-form:has(.workspace-section-navigation)
+  > [role="status"] {
+  margin: 16px 24px;
+}
+.quality-layout,
+.channels-layout,
+.retention-studio,
+.connector-layout {
+  min-width: 0;
+}
+.quality-layout .panel,
+.channels-layout .panel,
+.connector-layout .panel {
+  min-width: 0;
+}
+@media (max-width: 700px) {
+  .workspace-section-desktop {
+    display: none;
+  }
+  .workspace-section-navigation {
+    padding: 14px 16px;
+  }
+  .panel .workspace-section-mobile {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+  }
+  .workspace-section-mobile select {
+    width: 100%;
+  }
+  .workspace-section-body {
+    padding: 18px 16px;
+  }
+  .workspace-section-body .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .workspace-save-bar {
+    bottom: 8px;
+    padding: 12px;
+  }
+  .workspace-save-bar > .studio-actions {
+    width: 100%;
+  }
+  .workspace-save-bar .button {
+    flex: 1;
+  }
+  .quality-layout,
+  .channels-layout,
+  .connector-layout,
+  .retention-studio {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.workspace-advanced-settings {
+  margin: 20px 0;
+  padding: 14px 18px;
+  border: 1px solid #dce5df;
+  border-radius: 10px;
+  background: #fbfcfb;
+}
+.workspace-advanced-settings > summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: #315c46;
+}
+.workspace-advanced-settings > p {
+  line-height: 1.6;
+}
+.workspace-advanced-settings summary:focus-visible {
+  outline: 3px solid #81b6a0;
+  outline-offset: 4px;
+}
+.channels-layout > .panel,
+.quality-layout > .panel,
+.retention-studio > .panel,
+.connector-layout > .panel {
+  margin-bottom: 0;
+}
+.workspace-section-desktop {
+  flex-direction: row;
+  align-items: center;
+}
+.workspace-section-desktop button {
+  width: auto;
+  flex: 0 0 auto;
+}
+.workspace-section-body .retention-fields {
+  gap: 18px 24px;
+  align-items: start;
+}
+.workspace-section-body .retention-fields label {
+  margin: 0;
+}
