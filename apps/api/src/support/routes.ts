@@ -6,6 +6,7 @@ import {
   queueInput,
   queuePatch,
   supportResolution,
+  supportAssignment,
   supportTransition,
   supportPage,
   supportCaseQuery,
@@ -17,6 +18,8 @@ type Helpers = Pick<
   "actor" | "audit" | "id" | "params" | "workspaceAccess"
 >;
 import { sql } from "../db.js";
+import { listCases } from "./queries.js";
+import { registerSupportConsoleRoutes } from "./console-routes.js";
 import { HttpError } from "../http-error.js";
 import {
   createCase,
@@ -63,6 +66,7 @@ export async function registerSupportRoutes(
     return { u, w, a };
   }
 
+  await registerSupportConsoleRoutes(app, helpers);
   const base = "/workspaces/:workspaceId/support";
   app.get(
     base + "/queues",
@@ -143,10 +147,9 @@ export async function registerSupportRoutes(
       "List support cases with filters and stable cursor pagination",
     ),
     async (r) => {
-      const { w } = await context(r, "support:view"),
+      const { u, w } = await context(r, "support:view"),
         q = supportCaseQuery.parse(r.query);
-      const rows =
-        await sql`SELECT * FROM support_cases WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND (${q.status ?? null}::text IS NULL OR status=${q.status ?? null}) AND (${q.queueId ?? null}::uuid IS NULL OR queue_id=${q.queueId ?? null}) AND (${q.assignedOperatorId ?? null}::uuid IS NULL OR assigned_operator_id=${q.assignedOperatorId ?? null}) AND (created_at,id)<(${q.before ?? new Date().toISOString()},${q.beforeId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"}) ORDER BY created_at DESC,id DESC LIMIT ${q.limit + 1}`;
+      const rows = await listCases(w.id, w.organization_id, u.id, q);
       return pageRows(rows, q.limit);
     },
   );
@@ -227,7 +230,7 @@ export async function registerSupportRoutes(
           caseId = id(params(r).caseId);
         const input =
           action === "assign"
-            ? z.strictObject({ operatorId: z.uuid() }).parse(r.body)
+            ? supportAssignment.parse(r.body)
             : action === "status"
               ? supportTransition.parse(r.body)
               : action === "resolve"
@@ -248,6 +251,7 @@ export async function registerSupportRoutes(
               s,
               (input as { operatorId: string }).operatorId,
               a,
+              (input as { queueId?: string | null }).queueId,
             );
           else if (action === "status")
             await transitionCase(
@@ -257,7 +261,13 @@ export async function registerSupportRoutes(
               a,
             );
           else if (action === "resolve") {
-            const resolution = input as { summary: string; code: string };
+            const resolution = input as {
+              summary: string;
+              code: string;
+              finalResponse?: string;
+            };
+            if (resolution.finalResponse && s.status !== "resolved")
+              await sendSupportMessage(tx, s, a, resolution.finalResponse);
             await resolveCase(tx, s, a, resolution.summary, resolution.code);
           } else
             await sendSupportMessage(

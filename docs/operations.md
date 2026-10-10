@@ -61,3 +61,8 @@ Backend/browser tests use explicit fixtures. Live external receiver acceptance r
 ## Support enrichment roadmap
 
 The [support roadmap](human-support.md) prioritizes product enrichment over deployment automation and additional monitoring. Phase A supports manual queues, exclusive claims and case histories through tenant-scoped APIs; the dedicated console and intelligent routing follow in B/C. No guaranteed staffing or notification is implied.
+
+
+## Human Support staff workflow
+
+Use Human Support for live backlog counts, paginated case filters, assignment/acceptance, replies, private notes and resolution. Updates poll every five seconds. SLA, presence and copilot are subsequent phases; the current console does not claim guaranteed staffing. See [support operations](human-support.md).

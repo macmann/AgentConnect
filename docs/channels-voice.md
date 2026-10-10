@@ -61,3 +61,8 @@ Live WhatsApp/Messenger configuration needs vendor application approval, account
 ## Support foundation upgrade
 
 Migration 0017 evolves legacy handoffs through a shared support-case service. Assigned operators now have exclusive control, with administrator supervision. Existing widget and hosted endpoints remain supported. See [the support roadmap and compatibility details](human-support.md).
+
+
+## Dedicated staff console
+
+The first-class **Human Support** section replaces the Channels inbox as the primary staff workflow. The older inbox remains compatible. Customer-visible replies remain available after resolution; internal notes and private summaries are never returned to customer channels. See [human support](human-support.md).

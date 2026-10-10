@@ -7,7 +7,7 @@ import {
   type SupportCaseStatus,
 } from "@agentconnect/schemas/support";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
-import { sql } from "../db.js";
+import { caseDetail } from "./queries.js";
 import { HttpError } from "../http-error.js";
 export type SupportCase = {
   id: string;
@@ -196,13 +196,24 @@ export async function assignCase(
   s: SupportCase,
   operatorId: string,
   actor: SupportActor,
+  queueId?: string | null,
 ) {
   if (!actor.supervise) throw new HttpError(403, "Supervisor access required");
   await eligibleOperator(tx, operatorId, s.workspace_id, s.organization_id);
-  if (s.status === "assigned" && s.assigned_operator_id === operatorId) return;
+  if (
+    s.status === "assigned" &&
+    s.assigned_operator_id === operatorId &&
+    (queueId === undefined || queueId === s.queue_id)
+  )
+    return;
   if (s.status !== "queued")
     throw new HttpError(409, "Only queued cases can be assigned");
-  await tx`UPDATE support_cases SET assigned_operator_id=${operatorId},assigned_at=now() WHERE id=${s.id}`;
+  if (queueId && queueId !== s.queue_id) {
+    const [queue] =
+      await tx`SELECT id FROM support_queues WHERE id=${queueId} AND workspace_id=${s.workspace_id} AND organization_id=${s.organization_id} AND enabled FOR SHARE`;
+    if (!queue) throw new HttpError(404, "Enabled support queue unavailable");
+  }
+  await tx`UPDATE support_cases SET queue_id=${queueId === undefined ? s.queue_id : queueId},assigned_operator_id=${operatorId},assigned_at=now() WHERE id=${s.id}`;
   await setStatus(tx, s, "assigned", actor, "case.assigned");
 }
 export async function transitionCase(
@@ -313,8 +324,7 @@ export async function legacyHandoff(
   } else await sendSupportMessage(tx, s, actor, content);
 }
 export async function readCase(caseId: string, workspaceId: string) {
-  const [s] =
-    await sql`SELECT * FROM support_cases WHERE id=${caseId} AND workspace_id=${workspaceId}`;
+  const s = await caseDetail(caseId, workspaceId);
   if (!s) throw new HttpError(404, "Support case unavailable");
   return s;
 }

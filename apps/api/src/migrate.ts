@@ -45,7 +45,9 @@ try {
                                         ? "0015_messaging_connectors.sql"
                                         : version === "0016"
                                           ? "0016_retention.sql"
-                                          : "0017_support.sql";
+                                          : version === "0017"
+                                            ? "0017_support.sql"
+                                            : "0018_support_console.sql";
         await tx.unsafe(
           await readFile(
             new URL(`../../../packages/db/migrations/${file}`, import.meta.url),

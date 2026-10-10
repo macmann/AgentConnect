@@ -113,3 +113,8 @@ Workspace retention uses daily/manual policy-revision jobs and PostgreSQL transa
 ## Support conversation control
 
 The [support foundation](human-support.md) introduces tenant-scoped cases, queues and append-only events. Conversation mode is authoritative; AI and support actions serialize on the same conversation lock. Legacy channel routes project this domain for existing clients.
+
+
+## Support console projection
+
+Migration 0018 adds private support notes. A bounded server projection merges agent messages and support events into one chronological staff timeline, retaining case boundaries. Notes are referenced by note-created events; public channel adapters continue to expose only customer-visible support events.

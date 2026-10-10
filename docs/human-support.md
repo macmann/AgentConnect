@@ -7,7 +7,7 @@ The [implementation specification](human-support-spec.md) is the next product ro
 | Phase | Scope                                                                                        | Status                                            |
 | ----- | -------------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | A     | Cases, events, queues, conversation control, migration, permissions, basic APIs              | Implemented; validation recorded in validation.md |
-| B     | Dedicated Human Support console, filters, unified timeline, internal notes, operator actions | Next                                              |
+| B     | Dedicated Human Support console, filters, unified timeline, internal notes, operator actions | Implemented; validation recorded in validation.md |
 | C     | Operator profiles, presence, skills, languages, capacity and routing                         | Planned                                           |
 | D     | Escalation policy, AI triage and handoff brief                                               | Planned                                           |
 | E     | Private operator copilot                                                                     | Planned                                           |
@@ -24,7 +24,7 @@ Events are durable and cannot be updated. Tenant-consistent composite foreign ke
 
 ## Migration and compatibility
 
-Run `pnpm db:migrate` to apply **0017**, then restart API and worker. No additional credentials are needed. Migration 0017 preserves `handoff_events` and copies their IDs, content, actors and timestamps into the support timeline. Every legacy non-`none` handoff becomes a historical case: pending → queued, active → active, resolved → resolved. Legacy threads lack reliable case boundaries, so a migrated thread is represented by one case; new escalations have separate case IDs.
+Run `pnpm db:migrate` to apply **0017 and 0018**, then restart API and worker. No additional credentials are needed. Migration 0017 preserves `handoff_events` and copies their IDs, content, actors and timestamps into the support timeline. Every legacy non-`none` handoff becomes a historical case: pending → queued, active → active, resolved → resolved. Legacy threads lack reliable case boundaries, so a migrated thread is represented by one case; new escalations have separate case IDs.
 
 Widget, hosted-chat, playground and Channels inbox endpoints still work. Their legacy status/event fields are maintained by the same case service, rather than a second state machine. Duplicate legacy requests/claims keep returning 409 as existing clients expect. The new case API returns the existing open case for duplicate escalation and supports an optional UUID `idempotencyKey` for exact request retries. Reusing a key for a different conversation returns 409.
 
@@ -98,4 +98,29 @@ Case/queue/event list responses contain `{items,nextCursor}`. Pass both `before`
 
 Run `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. Dedicated API tests cover duplicate escalation, claim and reply/resolve races, exclusive assignment, tenant boundaries, state validation, event immutability, controller exclusion, multiple cases and retention protection. The isolated migration test checks pre-upgrade pending/active/resolved data and conversation-deletion cascades. Existing channel API/browser tests exercise compatibility.
 
-For manual testing, start with the existing Channels inbox and a widget or agent playground chat. Use the support APIs to configure manual queues and inspect cases until Phase B exposes their console. There is no operator profile, automatic routing, policy-controlled offer, internal-note editor, copilot, SLA or staffing notification yet. Queue configuration rejects automated strategies until Phase C rather than pretending to route. Phase A retains the legacy explicit request button; Phase D will introduce AI-controlled escalation defaults. The full enrichment feature is complete only after the A–G acceptance flow passes.
+For manual testing, start a customer chat and request human support, then open the workspace’s Human Support section. The existing Channels inbox remains compatible. Open **Human Support** for the dedicated staff console. Administrators can create manual queues, assign queued cases and choose their queue. Operators claim cases or accept cases assigned to them, reply to customers, save private notes, change waiting status and resolve. There is no operator profile, automatic routing, policy-controlled offer, copilot, SLA or staffing notification yet. Queue configuration rejects automated strategies until Phase C rather than pretending to route. Phase A retains the legacy explicit request button; Phase D will introduce AI-controlled escalation defaults. The full enrichment feature is complete only after the A–G acceptance flow passes.
+
+## Phase B console
+
+Apply migration **0018** and restart API/worker. Human Support is a first-class navigation item. Its overview displays real waiting, active, unassigned and own-case counts, optionally scoped to a queue. It deliberately omits SLA and available-operator counts until those systems exist.
+
+Use the inbox filters for open/waiting/active/all/own/unassigned cases, queue, operator, status, priority and channel. Search matches case/conversation IDs, customer display name and issue text. Lists have explicit load-more controls. Selecting a case adds `supportCase` to the workspace URL so refresh restores it. Switching workspaces clears that selection.
+
+The unified, paginated timeline includes persisted AI/customer messages, operator replies, system events and private notes across all interventions on the same conversation. Load earlier entries without losing the reading position. New entries scroll into view when the reader is at the bottom. AI responses retain their actual completed/failed/cancelled status. Case context shows existing identities, channel, queue, assignee, timestamps, controller and resolution; unavailable customer attributes and generated summaries are not invented.
+
+Assignment requires supervisor access. The teammate selector lists eligible existing workspace users by display name, without exposing their email addresses or claiming they are online. Staff with `support:operator:view` can use the same bounded roster to filter cases. An operator accepts an assigned case before replying. Claim directly accepts an unassigned queued case. Reply, note and resolution controls require the assigned operator or a supervisor; analysts can inspect context but cannot write.
+
+The composer separates **Customer reply** from **Internal note**. Notes are persisted in `support_notes`, referenced by append-only events and audited without copying their content. They never enter public handoff responses, normal message history or AI prompts. Changing case/filter or returning to the inbox prompts before discarding a composer draft. Resolution uses a confirmation dialog with required private summary, resolution code and optional final customer reply. The final reply and resolution commit in one transaction, and historical human replies remain visible to customers after resolution. The customer can continue AI chat on the same conversation; specialist-aware AI continuation remains Phase F.
+
+Additional API resources under `/workspaces/:workspaceId/support`:
+
+| Method | Resource                  | Purpose                                                    |
+| ------ | ------------------------- | ---------------------------------------------------------- |
+| GET    | `/summary?queueId=...`    | Live case counts                                           |
+| GET    | `/operators`              | Paginated eligible teammate names for assignment/filtering |
+| GET    | `/cases/:caseId/timeline` | Paginated internal unified conversation timeline           |
+| POST   | `/cases/:caseId/notes`    | Assigned operator/supervisor private note `{content}`      |
+
+Case list filters additionally support `scope=all|open|waiting|active|mine|unassigned`, `priority`, `channel` and `search`. Assignment accepts optional `queueId` (UUID or null); a new queue must be enabled and in the same tenant. Resolve accepts optional `finalResponse`; private summary and note content never appear in public responses.
+
+Browser validation and representative screenshots are recorded in `docs/validation.md` and `docs/support-console/`. Full operator profiles/routing, policy, copilot, structured continuation and SLA/analytics remain Phases C–G. Deployment automation and additional monitoring remain paused.

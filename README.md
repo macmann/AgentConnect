@@ -31,3 +31,8 @@ Workspace administrators can configure retention, preview eligible data and trac
 ## Human support enrichment
 
 The next product roadmap is [Human Support, Intelligent Handoff and AI Copilot](docs/human-support.md), delivered in phases A–G. Phase A adds durable cases, manual queues and exclusive assignments while keeping existing channel clients compatible. Apply migration 0017. Deployment automation and additional monitoring are paused.
+
+
+## Human Support console
+
+Apply migration 0018, then open **Human Support** to filter cases, assign/claim, inspect a unified timeline, add private notes and resolve back to AI. See [the support guide](docs/human-support.md).

@@ -747,3 +747,14 @@ export const supportEvents = pgTable("support_events", {
   payload: jsonb("payload").notNull().default({}),
   createdAt: created(),
 });
+
+export const supportNotes = pgTable("support_notes", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  supportCaseId: uuid("support_case_id").notNull(),
+  authorId: uuid("author_id").notNull(),
+  content: text("content").notNull(),
+  createdAt: created(),
+});

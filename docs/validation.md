@@ -247,3 +247,11 @@ Deployment automation and additional monitoring are paused; the new A–G roadma
 - Final lint passed; type checks and builds passed in all **8 packages** (`/tmp/agentconnect-support-{lint,types,build}.log`).
 - Existing channel browser scenario passed (**1 scenario**, `/tmp/agentconnect-support-browser.log`): configure a widget, stream AI, request human support, join/reply, resolve, resume AI and browser voice fixtures. This uses a local protocol fixture, not a live AI provider or microphone service.
 - Current widget, hosted and playground routes remain compatibility adapters over the new case service. Phase B–G acceptance is not claimed: no new support console, automatic routing, escalation policy, private copilot or specialist-context-aware AI continuation has been implemented yet.
+
+## Human support enrichment — Phase B (2026-10-10)
+
+- Migration **0018** applied and repeat invocation passed. Private notes have scoped case/conversation/workspace references and cascade with the case; note events and general audits carry identifiers rather than private note text.
+- Final API/domain regression suite: **234 passed, 0 failed, 0 skipped** (`/tmp/agentconnect-support-b-tests.log`). New coverage verifies filters and counts, eligible operator visibility, tenant boundaries, manual assignment/acceptance, private notes, bounded unified timelines, guest isolation and atomic final-reply/resolution rollback.
+- **Three browser scenarios passed** (`/tmp/agentconnect-support-b-browser.log`): existing widget/voice compatibility; customer escalation → assignment → acceptance → private note → human/customer replies → resolution → AI resumption; and empty inbox/error/retry. The support scenario also verifies analyst read-only access, selected-case reload, queue/status filters, 360-pixel layout, claim and unsaved-composer confirmation. Provider responses use a local protocol fixture rather than a live provider.
+- Lint passed; all **eight** package typechecks and production build targets passed. Desktop/mobile screenshots use synthetic fixture data in `docs/support-console/`.
+- Phase B provides a manual support console. Operator profiles/presence and routing, escalation policy, private copilot, structured AI continuity and SLA/notification analytics remain phases C–G. Deployment automation and additional monitoring remain paused.

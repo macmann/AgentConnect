@@ -1,4 +1,5 @@
 "use client";
+import { SupportStudio } from "./support-studio";
 import { RetentionStudio } from "./retention-studio";
 import { ConnectorsStudio } from "./connectors-studio";
 import { QualityStudio } from "./quality-studio";
@@ -14,6 +15,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
+  UserRoundCheck,
   ArrowUpRight,
   Boxes,
   ChevronDown,
@@ -69,6 +71,7 @@ type Audit = { id: string; action: string; created_at: string };
 const navigationGroups: Record<string, string> = {
   Overview: "Workspace",
   Agents: "Build",
+  "Human Support": "Support",
   Conversations: "Monitor",
   Members: "Manage",
 };
@@ -86,6 +89,8 @@ const pageDescriptions: Record<string, string> = {
   Operations: "Monitor activity, usage and workspace health.",
   "Collected data": "Review information collected through your agents.",
   Channels: "Publish your agents to the channels your users visit.",
+  "Human Support":
+    "Handle customer requests, collaborate privately and return conversations to AI.",
   Quality: "Evaluate answers and compare performance over time.",
   Members: "Manage workspace membership and access permissions.",
   Secrets: "Store and rotate encrypted credentials for models and connectors.",
@@ -345,6 +350,7 @@ function Studio() {
     params.set("view", view);
     params.set("organization", currentOrgId);
     params.set("workspace", id);
+    params.delete("supportCase");
     window.history.pushState({}, "", `#${params}`);
   }
   function selectOrganization(id: string) {
@@ -548,6 +554,7 @@ function Studio() {
           { label: "Connectors", icon: Cable },
           { label: "Tools", icon: Wrench },
           { label: "Workflows", icon: Workflow },
+          { label: "Human Support", icon: UserRoundCheck },
           { label: "Conversations", icon: MessagesSquare },
           { label: "Operations", icon: ChartNoAxesColumn },
           { label: "Collected data", icon: Layers },
@@ -742,6 +749,7 @@ function Studio() {
             </div>
           )}
           {[
+            "Human Support",
             "Retention",
             "Agents",
             "Models",
@@ -757,6 +765,13 @@ function Studio() {
           ].includes(view) &&
             (!wid ? (
               <p className="empty">Choose or create a workspace first.</p>
+            ) : view === "Human Support" ? (
+              <SupportStudio
+                key={wid}
+                workspaceId={wid}
+                userId={user.data.id}
+                role={currentWorkspace?.role ?? "viewer"}
+              />
             ) : view === "Retention" ? (
               <RetentionStudio
                 key={wid}

@@ -50,3 +50,8 @@ Retention management is restricted to administrators and a saved current policy 
 ## Support permissions
 
 Support administration uses existing workspace memberships and sessions. Builders/operators claim and act on their assigned cases; administrators supervise and assign. Analysts are read-only. Public guest endpoints retain token/deployment/origin checks and expose only legacy customer-visible status/messages. New internal case/event APIs require support capabilities. See [human support](human-support.md).
+
+
+## Support note isolation
+
+`support:note` permits assigned operators or supervisors to add notes. `support:operator:view` permits support readers to inspect eligible teammate IDs/names for filtering; it does not grant assignment. Notes and resolution summaries remain private and are excluded from customer handoff APIs and autonomous AI prompts. Tests cover guest denial, cross-workspace IDs, analyst write denial and assignee ownership.

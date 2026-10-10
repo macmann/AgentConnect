@@ -36,7 +36,9 @@ export const resetInput = tokenInput.extend({
 export const emailInput = z.object({ email: credentials.shape.email });
 export const capabilities = [
   "support:view",
+  "support:operator:view",
   "support:reply",
+  "support:note",
   "support:claim",
   "support:resolve",
   "support:assign",
@@ -94,7 +96,9 @@ const grants: Record<Role, readonly Capability[]> = {
     "conversation:review",
     "handoff:manage",
     "support:view",
+    "support:operator:view",
     "support:reply",
+    "support:note",
     "support:claim",
     "support:resolve",
     "support:queue:view",
@@ -121,7 +125,9 @@ const grants: Record<Role, readonly Capability[]> = {
     "conversation:review",
     "handoff:manage",
     "support:view",
+    "support:operator:view",
     "support:reply",
+    "support:note",
     "support:claim",
     "support:resolve",
     "support:queue:view",
@@ -133,6 +139,7 @@ const grants: Record<Role, readonly Capability[]> = {
   ],
   analyst: [
     "support:view",
+    "support:operator:view",
     "support:queue:view",
     "retention:read",
     "connector:read",
