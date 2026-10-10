@@ -174,6 +174,7 @@ test("operations analytics, pricing, key revocation, review and deployment envir
     page.getByRole("button", { name: /Operations browser agent/ }),
   ).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("button", { name: "Operations", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Workspace operations" }),

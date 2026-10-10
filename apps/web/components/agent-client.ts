@@ -2,21 +2,49 @@ import type { RenderedBlock } from "@agentconnect/schemas/generative";
 import type { Citation } from "./citations";
 export const apiBase =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
 export async function requestJson<T>(
   path: string,
   method = "GET",
   body?: unknown,
 ): Promise<T> {
-  const response = await fetch(apiBase + path, {
-    method,
-    credentials: "include",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error ?? "Request failed");
+  let response: Response;
+  try {
+    response = await fetch(apiBase + path, {
+      method,
+      credentials: "include",
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error(
+      "Cannot reach the API. Check that the API service is running, then try again.",
+    );
+  }
+  if (response.status === 204) return undefined as T;
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new ApiError(
+      typeof data?.error === "string"
+        ? data.error
+        : `Request failed (HTTP ${response.status}). Please try again.`,
+      response.status,
+    );
+  }
+  if (data === null)
+    throw new Error(
+      "The API returned an unexpected response. Please try again.",
+    );
   return data as T;
 }
+
 export interface StreamData {
   actionsEnabled?: boolean;
   messageId?: string;
