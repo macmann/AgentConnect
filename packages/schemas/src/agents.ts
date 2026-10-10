@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { generativeConfig } from "./generative.js";
-import { environments } from "./operations.js";
-import { agentTools } from "./tools.js";
-import { ragConfig } from "./knowledge.js";
+import { generativeConfig } from "@agentconnect/schemas/generative";
+import { environments } from "@agentconnect/schemas/operations";
+import { agentTools } from "@agentconnect/schemas/tools";
+import { ragConfig } from "@agentconnect/schemas/knowledge";
 export const providerNames = [
   "openai",
   "openai-compatible",

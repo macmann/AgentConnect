@@ -1,14 +1,7 @@
 "use client";
 import { useState, useRef, useEffect, type FormEvent } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Plus,
-  ArrowUpRight,
-  Save,
-  Upload,
-  Trash2,
-  ChevronLeft,
-} from "lucide-react";
+import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
+import { Plus, ArrowUpRight, Upload, ChevronLeft } from "lucide-react";
 import { Button } from "./button";
 import { Citations, type Citation } from "./citations";
 import { ToolTraces, type ToolTrace } from "./tool-studio";
@@ -20,9 +13,18 @@ import {
 } from "@agentconnect/schemas/generative";
 import { MessageReview } from "./message-review";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
-import { AgentAttachments } from "./agent-attachments";
-import { requestJson } from "./agent-client";
-type Model = {
+import { AgentConfigure, AgentReadiness } from "./agent-configure";
+import {
+  agentReadiness,
+  configureIssues,
+  configureSections,
+  studioURL,
+  type ConfigureSection,
+  type StudioStage,
+  type KnowledgeOption,
+} from "./agent-configure-state";
+import { requestJson, ApiError } from "./agent-client";
+export type Model = {
   id: string;
   name: string;
   provider: string;
@@ -40,7 +42,7 @@ type AgentSummary = {
   description: string;
   revision: number;
 };
-type Prompt = {
+export type Prompt = {
   role: string;
   objective: string;
   instructions: string;
@@ -50,7 +52,7 @@ type Prompt = {
   escalationPolicy: string;
   advanced: string | null;
 };
-type Config = {
+export type Config = {
   generative?: {
     enabled: boolean;
     allowedBlocks: (typeof blockNames)[number][];
@@ -78,7 +80,7 @@ type Config = {
   conversationStarters: string[];
   fallbackResponse: string;
 };
-type Draft = {
+export type Draft = {
   id?: string;
   name: string;
   description: string;
@@ -576,15 +578,52 @@ export function AgentStudio({
   const knowledge = useQuery({
     queryKey: ["knowledge", workspaceId],
     queryFn: () =>
-      requestJson<{ id: string; name: string; public_access: boolean }[]>(
+      requestJson<KnowledgeOption[]>(
         `/workspaces/${workspaceId}/knowledge-bases`,
       ),
     enabled: canBuild,
   });
   const [draft, setDraft] = useState<Draft | null>(null);
   const [savedDraft, setSavedDraft] = useState("");
-  const dirty = !!draft?.id && JSON.stringify(draft) !== savedDraft;
-  function navigateAttachments(destination: "Knowledge" | "Tools") {
+  const dirty = !!draft && JSON.stringify(draft) !== savedDraft;
+  const [section, setSection] = useState<ConfigureSection>("overview");
+  const [conflict, setConflict] = useState(false);
+  const savedRef = useRef(savedDraft);
+  savedRef.current = savedDraft;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const [initialNavigation, setInitialNavigation] = useState(false);
+  const sourceQueries = useQueries({
+    queries: (draft?.config.rag.knowledgeBaseIds ?? [])
+      .filter((id) => knowledge.data?.some((k) => k.id === id))
+      .map((id) => ({
+        queryKey: ["agent-knowledge-health", id],
+        queryFn: () =>
+          requestJson<{ status: string }[]>(`/knowledge-bases/${id}/sources`),
+        refetchInterval: 10000,
+      })),
+  });
+  const knowledgeOptions = knowledge.data?.map((k) => {
+    const index = (draft?.config.rag.knowledgeBaseIds ?? [])
+      .filter((id) => knowledge.data?.some((row) => row.id === id))
+      .indexOf(k.id);
+    const data = sourceQueries[index]?.data;
+    return {
+      ...k,
+      ...(data
+        ? {
+            failed_count: data.filter((s) => s.status === "failed").length,
+            indexing_count: data.filter((s) =>
+              ["queued", "processing"].includes(s.status),
+            ).length,
+            ready_count: data.filter((s) => s.status === "ready").length,
+            source_count: data.length,
+          }
+        : {}),
+    };
+  });
+  const approvedLeave = useRef(false);
+  function navigateAttachments(destination: "Knowledge" | "Tools" | "Models") {
     if (
       (dirty || (draft && !draft.id)) &&
       !window.confirm(
@@ -592,7 +631,9 @@ export function AgentStudio({
       )
     )
       return;
+    approvedLeave.current = true;
     onNavigate(destination);
+    approvedLeave.current = false;
   }
   const [tab, setTab] = useState<"configure" | "playground" | "publish">(
     "configure",
@@ -619,15 +660,36 @@ export function AgentStudio({
     try {
       await task();
       await cache.invalidateQueries();
+      return true;
     } catch (e) {
-      setError((e as Error).message);
+      if (
+        e instanceof ApiError &&
+        e.status === 409 &&
+        /Draft changed|reload before|revision/i.test(e.message)
+      ) {
+        setConflict(true);
+        setError(
+          "This agent was updated elsewhere. Reload the latest draft before saving. Your local edits are retained until you reload.",
+        );
+      } else setError((e as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
   }
-  async function open(id: string) {
+  async function open(
+    id: string,
+    stage: StudioStage = "configure",
+    nextSection: ConfigureSection = "overview",
+    updateURL = true,
+  ) {
     await action(async () => {
       const a = await requestJson<AgentRow>(`/agents/${id}`);
+      if (
+        !agents.data?.some((row) => row.id === a.id) &&
+        (a as AgentRow & { workspace_id?: string }).workspace_id !== workspaceId
+      )
+        throw new Error("Agent unavailable in the selected workspace.");
       const loaded: Draft = {
         id: a.id,
         name: a.name,
@@ -649,13 +711,16 @@ export function AgentStudio({
       setDraft(loaded);
       setSavedDraft(JSON.stringify(loaded));
       setChatKey((k) => k + 1);
-      setTab("configure");
+      setTab(stage);
+      setSection(nextSection);
+      setConflict(false);
+      if (updateURL) studioURL(id, stage, nextSection);
     });
   }
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    if (!draft) return;
-    await action(async () => {
+  async function save(test = false) {
+    if (!draft || conflict || configureIssues(draft, models.data).length)
+      return false;
+    return action(async () => {
       const result = await requestJson<{ id: string; revision: number }>(
         draft.id ? `/agents/${draft.id}` : `/workspaces/${workspaceId}/agents`,
         draft.id ? "PUT" : "POST",
@@ -666,22 +731,92 @@ export function AgentStudio({
       setSavedDraft(JSON.stringify(saved));
       setChatKey((k) => k + 1);
       setNotice("Draft saved. Start a new chat to use these changes.");
+      if (test) {
+        setTab("playground");
+        studioURL(result.id, "playground", section);
+      } else studioURL(result.id, "configure", section, true);
     });
   }
-  function configField<K extends keyof Config>(field: K, value: Config[K]) {
-    if (draft)
-      setDraft({ ...draft, config: { ...draft.config, [field]: value } });
+  function navigateSection(next: ConfigureSection) {
+    setSection(next);
+    studioURL(draft?.id, "configure", next);
   }
-  function promptField(field: keyof Prompt, value: string | null) {
-    if (draft)
-      configField("prompt", { ...draft.config.prompt, [field]: value });
-  }
+  useEffect(() => {
+    if (!dirty) return;
+    const leave = (event: Event) => {
+      if (approvedLeave.current) return;
+      if (!window.confirm("Leave this agent? Unsaved changes will be lost."))
+        event.preventDefault();
+    };
+    const unload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("agent-studio:before-leave", leave);
+    window.addEventListener("beforeunload", unload);
+    return () => {
+      window.removeEventListener("agent-studio:before-leave", leave);
+      window.removeEventListener("beforeunload", unload);
+    };
+  }, [dirty]);
+  useEffect(() => {
+    const restore = () => {
+      const p = new URLSearchParams(window.location.hash.slice(1));
+      const id = p.get("agent");
+      const nextSection = configureSections.includes(
+        p.get("section") as ConfigureSection,
+      )
+        ? (p.get("section") as ConfigureSection)
+        : "overview";
+      const stage = ["configure", "playground", "publish"].includes(
+        p.get("stage") ?? "",
+      )
+        ? (p.get("stage") as StudioStage)
+        : "configure";
+      if (id && draftRef.current?.id !== id) {
+        void open(id, stage, nextSection, false);
+      } else if (draftRef.current && !id && draftRef.current.id) {
+        setDraft(null);
+      } else if (draftRef.current) {
+        setSection(nextSection);
+        const unsaved = JSON.stringify(draftRef.current) !== savedRef.current;
+        setTab(unsaved || !draftRef.current.id ? "configure" : stage);
+      }
+      setInitialNavigation(true);
+    };
+    restore();
+    window.addEventListener("popstate", restore);
+    window.addEventListener("hashchange", restore);
+    return () => {
+      window.removeEventListener("popstate", restore);
+      window.removeEventListener("hashchange", restore);
+    };
+  }, [workspaceId]);
+  const readiness = draft
+    ? agentReadiness(
+        draft,
+        models.error ? undefined : models.data,
+        knowledge.error ? undefined : knowledgeOptions,
+        tools.error ? undefined : tools.data,
+      )
+    : [];
+  const ready = readiness.every(
+    (i) => i.state === "ready" || i.state === "optional",
+  );
   return (
     <>
-      <section className="panel">
+      <section className={`panel${draft ? " agent-studio-panel" : ""}`}>
         <div className="panel-header">
           <div>
-            <h3>{draft ? "Agent studio" : "Your agents"}</h3>
+            <h3>{draft ? draft.name || "New agent" : "Your agents"}</h3>
+            {draft && (
+              <p>
+                Agent Studio ·{" "}
+                {draft.config.rag.knowledgeBaseIds.length
+                  ? "RAG agent"
+                  : "AI agent"}
+              </p>
+            )}
             <p>
               {draft
                 ? `Draft revision ${draft.revision}${dirty ? " · Unsaved changes" : ""} · save before chat or publication`
@@ -698,6 +833,7 @@ export function AgentStudio({
                 )
                   return;
                 setDraft(null);
+                studioURL(undefined, "configure", "overview");
                 setError("");
                 setNotice("");
               }}
@@ -715,7 +851,12 @@ export function AgentStudio({
                     : undefined
                 }
                 onClick={() => {
-                  setDraft(emptyDraft(models.data![0]!.id));
+                  const next = emptyDraft(models.data![0]!.id);
+                  setDraft(next);
+                  setSavedDraft(JSON.stringify(next));
+                  setSection("overview");
+                  setConflict(false);
+                  studioURL(undefined, "configure", "overview");
                   setTab("configure");
                   setError("");
                   setNotice("");
@@ -728,9 +869,24 @@ export function AgentStudio({
           )}
         </div>
         {error && (
-          <p className="error-banner" role="alert">
+          <div className="error-banner" role="alert">
             {error}
-          </p>
+            {conflict && draft?.id && (
+              <Button
+                className="secondary"
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "Reload the latest draft? Your unsaved edits will be lost.",
+                    )
+                  )
+                    void open(draft.id!);
+                }}
+              >
+                Reload latest draft
+              </Button>
+            )}
+          </div>
         )}
         {notice && (
           <p className="notice" role="status">
@@ -759,7 +915,7 @@ export function AgentStudio({
             </p>
           ) : null)}
         {!draft &&
-          (agents.isPending ? (
+          (agents.isPending || !initialNavigation ? (
             <p className="empty">Loading agents…</p>
           ) : agents.error ? (
             <p className="error-banner">{agents.error.message}</p>
@@ -794,12 +950,20 @@ export function AgentStudio({
           ))}
         {draft && (
           <>
-            <div className="studio-tabs">
+            <div
+              className="studio-tabs"
+              role="navigation"
+              aria-label="Agent lifecycle"
+            >
               {(["configure", "playground", "publish"] as const).map((t) => (
                 <button
                   className={tab === t ? "active" : ""}
                   key={t}
-                  onClick={() => setTab(t)}
+                  aria-current={tab === t ? "page" : undefined}
+                  onClick={() => {
+                    setTab(t);
+                    studioURL(draft.id, t, section);
+                  }}
                   disabled={(!draft.id || dirty) && t !== "configure"}
                 >
                   {t}
@@ -807,501 +971,59 @@ export function AgentStudio({
               ))}
             </div>
             {tab === "configure" && (
-              <form className="studio-form" onSubmit={save}>
-                <fieldset disabled={!canBuild || busy}>
-                  <div className="form-grid">
-                    <label>
-                      Agent name
-                      <input
-                        required
-                        value={draft.name}
-                        onChange={(e) =>
-                          setDraft({ ...draft, name: e.target.value })
-                        }
-                        maxLength={100}
-                      />
-                    </label>
-                    <label>
-                      Model
-                      <select
-                        value={draft.config.modelId}
-                        onChange={(e) => configField("modelId", e.target.value)}
-                        required
-                      >
-                        {models.data?.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Internal description
-                      <input
-                        value={draft.description}
-                        onChange={(e) =>
-                          setDraft({ ...draft, description: e.target.value })
-                        }
-                        maxLength={2000}
-                      />
-                    </label>
-                    <label>
-                      Public description
-                      <input
-                        value={draft.publicDescription}
-                        onChange={(e) =>
-                          setDraft({
-                            ...draft,
-                            publicDescription: e.target.value,
-                          })
-                        }
-                        maxLength={2000}
-                      />
-                    </label>
-                  </div>
-                  <section className="agent-attachments generative-settings">
-                    <h4>Generative responses</h4>
-                    <p className="muted">
-                      Let this agent choose charts, tables, forms and
-                      downloadable files. Responses use validated components;
-                      submissions require confirmation.
-                    </p>
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={draft.config.generative?.enabled ?? false}
-                        onChange={(e) =>
-                          configField("generative", {
-                            enabled: e.target.checked,
-                            allowedBlocks: draft.config.generative
-                              ?.allowedBlocks ?? [...blockNames],
-                            allowPublicForms:
-                              draft.config.generative?.allowPublicForms ??
-                              false,
-                          })
-                        }
-                      />
-                      Enable generative responses
-                    </label>
-                    {draft.config.generative?.enabled && (
-                      <>
-                        <fieldset>
-                          <legend>Allowed response components</legend>
-                          <div className="capabilities">
-                            {blockNames.map((name) => (
-                              <label className="checkbox-label" key={name}>
-                                <input
-                                  type="checkbox"
-                                  checked={draft.config.generative!.allowedBlocks.includes(
-                                    name,
-                                  )}
-                                  disabled={
-                                    draft.config.generative!.allowedBlocks
-                                      .length === 1 &&
-                                    draft.config.generative!.allowedBlocks.includes(
-                                      name,
-                                    )
-                                  }
-                                  onChange={(e) =>
-                                    configField("generative", {
-                                      ...draft.config.generative!,
-                                      allowedBlocks: e.target.checked
-                                        ? [
-                                            ...draft.config.generative!
-                                              .allowedBlocks,
-                                            name,
-                                          ]
-                                        : draft.config.generative!.allowedBlocks.filter(
-                                            (b) => b !== name,
-                                          ),
-                                    })
-                                  }
-                                />
-                                {name}
-                              </label>
-                            ))}
-                          </div>
-                        </fieldset>
-                        <label className="checkbox-label">
-                          <input
-                            type="checkbox"
-                            checked={draft.config.generative.allowPublicForms}
-                            onChange={(e) =>
-                              configField("generative", {
-                                ...draft.config.generative!,
-                                allowPublicForms: e.target.checked,
-                              })
-                            }
-                          />
-                          Allow confirmed form/action submissions in public chat
-                        </label>
-                        <p className="muted">
-                          Public collection is off by default. Publish a new
-                          version after changing this setting.
-                        </p>
-                      </>
-                    )}
-                  </section>
-                  <AgentAttachments
-                    kind="tools"
-                    items={tools.data?.filter((t) => t.enabled) ?? []}
-                    selected={draft.config.tools.toolIds}
-                    loading={tools.isPending}
-                    error={tools.error}
-                    onRetry={() => {
-                      void tools.refetch();
-                    }}
-                    onNavigate={() => navigateAttachments("Tools")}
-                    canManage={[
-                      "owner",
-                      "org_admin",
-                      "workspace_admin",
-                    ].includes(role)}
-                    onToggle={(id, checked) =>
-                      configField("tools", {
-                        ...draft.config.tools,
-                        toolIds: checked
-                          ? [...draft.config.tools.toolIds, id]
-                          : draft.config.tools.toolIds.filter(
-                              (value) => value !== id,
-                            ),
-                      })
-                    }
-                  />
-                  {!!draft.config.tools.toolIds.length && (
-                    <label>
-                      Maximum tool calls per response
-                      <input
-                        type="number"
-                        min={1}
-                        max={5}
-                        value={draft.config.tools.maxCalls}
-                        onChange={(e) =>
-                          configField("tools", {
-                            ...draft.config.tools,
-                            maxCalls: Number(e.target.value),
-                          })
-                        }
-                      />
-                    </label>
-                  )}
-                  <AgentAttachments
-                    kind="knowledge"
-                    items={knowledge.data ?? []}
-                    selected={draft.config.rag.knowledgeBaseIds}
-                    loading={knowledge.isPending}
-                    error={knowledge.error}
-                    onRetry={() => {
-                      void knowledge.refetch();
-                    }}
-                    onNavigate={() => navigateAttachments("Knowledge")}
-                    canManage={canBuild}
-                    onToggle={(id, checked) =>
-                      configField("rag", {
-                        ...draft.config.rag,
-                        knowledgeBaseIds: checked
-                          ? [...draft.config.rag.knowledgeBaseIds, id]
-                          : draft.config.rag.knowledgeBaseIds.filter(
-                              (value) => value !== id,
-                            ),
-                      })
-                    }
-                  />
-                  {!!draft.config.rag.knowledgeBaseIds.length && (
-                    <div className="form-grid">
-                      <label>
-                        Knowledge passages
-                        <input
-                          type="number"
-                          min={1}
-                          max={10}
-                          value={draft.config.rag.topK}
-                          onChange={(e) =>
-                            configField("rag", {
-                              ...draft.config.rag,
-                              topK: Number(e.target.value),
-                            })
-                          }
-                        />
-                      </label>
-                      <label>
-                        Knowledge minimum similarity
-                        <input
-                          type="number"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={draft.config.rag.minScore}
-                          onChange={(e) =>
-                            configField("rag", {
-                              ...draft.config.rag,
-                              minScore: Number(e.target.value),
-                            })
-                          }
-                        />
-                      </label>
-                      <label>
-                        Knowledge retrieval mode
-                        <select
-                          aria-label="Knowledge retrieval mode"
-                          value={draft.config.rag.mode}
-                          onChange={(e) =>
-                            configField("rag", {
-                              ...draft.config.rag,
-                              mode: e.target.value as "vector" | "hybrid",
-                            })
-                          }
-                        >
-                          <option value="hybrid">Hybrid vector + text</option>
-                          <option value="vector">Vector similarity</option>
-                        </select>
-                      </label>
-                      <label className="checkbox-label">
-                        <input
-                          type="checkbox"
-                          checked={draft.config.rag.requireCitations}
-                          onChange={(e) =>
-                            configField("rag", {
-                              ...draft.config.rag,
-                              requireCitations: e.target.checked,
-                            })
-                          }
-                        />{" "}
-                        Require citation references
-                      </label>
-                    </div>
-                  )}
-                  <h4>Prompt configuration</h4>
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={draft.config.prompt.advanced !== null}
-                      onChange={(e) =>
-                        promptField("advanced", e.target.checked ? "" : null)
-                      }
-                    />
-                    Advanced prompt mode
-                  </label>
-                  {draft.config.prompt.advanced !== null ? (
-                    <label>
-                      System prompt
-                      <textarea
-                        value={draft.config.prompt.advanced}
-                        onChange={(e) =>
-                          promptField("advanced", e.target.value)
-                        }
-                        maxLength={24000}
-                      />
-                    </label>
-                  ) : (
-                    <div className="form-grid">
-                      {(
-                        [
-                          "role",
-                          "objective",
-                          "instructions",
-                          "constraints",
-                          "tone",
-                          "outputFormat",
-                          "escalationPolicy",
-                        ] as const
-                      ).map((key) => (
-                        <label key={key}>
-                          {
-                            {
-                              role: "Role",
-                              objective: "Objective",
-                              instructions: "Instructions",
-                              constraints: "Constraints",
-                              tone: "Tone",
-                              outputFormat: "Output format",
-                              escalationPolicy: "Escalation policy",
-                            }[key]
-                          }
-                          <textarea
-                            value={draft.config.prompt[key]}
-                            onChange={(e) => promptField(key, e.target.value)}
-                            maxLength={
-                              key === "instructions"
-                                ? 12000
-                                : key === "tone"
-                                  ? 1000
-                                  : key === "outputFormat" ||
-                                      key === "escalationPolicy"
-                                    ? 2000
-                                    : 4000
-                            }
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                  <div className="form-grid">
-                    <label>
-                      Temperature
-                      <input
-                        type="number"
-                        min={0}
-                        max={1}
-                        step={0.1}
-                        value={draft.config.temperature}
-                        onChange={(e) =>
-                          configField("temperature", Number(e.target.value))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Top-p (optional)
-                      <input
-                        type="number"
-                        min={0.01}
-                        max={1}
-                        step={0.01}
-                        value={draft.config.topP ?? ""}
-                        onChange={(e) =>
-                          configField(
-                            "topP",
-                            e.target.value === ""
-                              ? null
-                              : Number(e.target.value),
-                          )
-                        }
-                      />
-                    </label>
-                    <label>
-                      Maximum output tokens
-                      <input
-                        type="number"
-                        min={1}
-                        max={
-                          models.data?.find(
-                            (m) => m.id === draft.config.modelId,
-                          )?.max_output_tokens ?? 2000000
-                        }
-                        value={draft.config.maxOutputTokens}
-                        onChange={(e) =>
-                          configField("maxOutputTokens", Number(e.target.value))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Conversation history (turns)
-                      <input
-                        type="number"
-                        min={1}
-                        max={50}
-                        value={draft.config.historyWindow}
-                        onChange={(e) =>
-                          configField("historyWindow", Number(e.target.value))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Language
-                      <input
-                        value={draft.config.language}
-                        onChange={(e) =>
-                          configField("language", e.target.value)
-                        }
-                      />
-                    </label>
-                    <label>
-                      Timezone
-                      <input
-                        value={draft.config.timezone}
-                        onChange={(e) =>
-                          configField("timezone", e.target.value)
-                        }
-                      />
-                    </label>
-                    <label>
-                      Welcome message
-                      <input
-                        value={draft.config.welcomeMessage}
-                        onChange={(e) =>
-                          configField("welcomeMessage", e.target.value)
-                        }
-                        maxLength={2000}
-                      />
-                    </label>
-                    <label>
-                      Fallback response
-                      <input
-                        value={draft.config.fallbackResponse}
-                        onChange={(e) =>
-                          configField("fallbackResponse", e.target.value)
-                        }
-                        maxLength={2000}
-                      />
-                    </label>
-                    <label>
-                      Conversation starters (one per line)
-                      <textarea
-                        value={draft.config.conversationStarters.join("\n")}
-                        onChange={(e) =>
-                          configField(
-                            "conversationStarters",
-                            e.target.value
-                              .split("\n")
-                              .filter(Boolean)
-                              .slice(0, 6),
-                          )
-                        }
-                      />
-                    </label>
-                    <label>
-                      Category
-                      <select
-                        value={draft.config.category}
-                        onChange={(e) =>
-                          configField(
-                            "category",
-                            e.target.value as Config["category"],
-                          )
-                        }
-                      >
-                        <option value="hybrid">Hybrid</option>
-                        <option value="unstructured">Unstructured</option>
-                        <option value="structured">Structured</option>
-                      </select>
-                      <small>
-                        Choose how this agent organizes and answers questions.
-                      </small>
-                    </label>
-                  </div>
-                  {canBuild && (
-                    <div className="studio-actions">
-                      <Button type="submit" disabled={busy}>
-                        <Save size={15} />
-                        {busy ? "Saving…" : "Save draft"}
-                      </Button>
-                      {draft.id && (
-                        <button
-                          type="button"
-                          className="text-button"
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                "Archive this agent and disable its deployments?",
-                              )
-                            )
-                              void action(async () => {
-                                await requestJson(
-                                  `/agents/${draft.id}`,
-                                  "DELETE",
-                                );
-                                setDraft(null);
-                              });
-                          }}
-                        >
-                          <Trash2 size={14} />
-                          Archive agent
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </fieldset>
-              </form>
+              <AgentConfigure
+                key={draft.id ?? "new"}
+                draft={draft}
+                update={setDraft}
+                section={section}
+                navigate={navigateSection}
+                busy={busy}
+                conflict={conflict}
+                canBuild={canBuild}
+                dirty={dirty}
+                savedDraft={savedDraft}
+                onSave={save}
+                onDiscard={() => {
+                  if (savedDraft) setDraft(JSON.parse(savedDraft));
+                  else {
+                    setDraft(null);
+                    studioURL(undefined, "configure", "overview");
+                  }
+                }}
+                onArchive={() => {
+                  if (
+                    window.confirm(
+                      "Archive this agent and disable its deployments?",
+                    )
+                  )
+                    void action(async () => {
+                      await requestJson(`/agents/${draft.id}`, "DELETE");
+                      setDraft(null);
+                      studioURL(undefined, "configure", "overview");
+                    });
+                }}
+                models={models.data ?? []}
+                modelsLoading={models.isPending}
+                modelsError={models.error}
+                retryModels={() => void models.refetch()}
+                knowledge={knowledgeOptions ?? []}
+                tools={tools.data ?? []}
+                knowledgeLoading={knowledge.isPending}
+                toolsLoading={tools.isPending}
+                knowledgeError={knowledge.error}
+                toolsError={tools.error}
+                retryKnowledge={() => {
+                  void knowledge.refetch();
+                  for (const q of sourceQueries) void q.refetch();
+                }}
+                retryTools={() => {
+                  void tools.refetch();
+                }}
+                manage={navigateAttachments}
+                canManage={["owner", "org_admin", "workspace_admin"].includes(
+                  role,
+                )}
+              />
             )}
             {tab === "playground" && draft.id && canBuild && (
               <ChatPanel
@@ -1320,6 +1042,18 @@ export function AgentStudio({
             )}
             {tab === "publish" && draft.id && (
               <div className="studio-form">
+                <AgentReadiness
+                  items={readiness}
+                  navigate={(next) => {
+                    setTab("configure");
+                    navigateSection(next);
+                  }}
+                />
+                <p className="muted">
+                  Readiness checks saved configuration and workspace
+                  attachments. Provider connectivity and quality gates are
+                  checked when publishing.
+                </p>
                 <div className="publish-heading">
                   <div>
                     <h3>Immutable versions</h3>
@@ -1330,7 +1064,7 @@ export function AgentStudio({
                   </div>
                   {canBuild && (
                     <Button
-                      disabled={busy}
+                      disabled={busy || dirty || !ready || conflict}
                       onClick={() =>
                         action(async () => {
                           const v = await requestJson<Version>(

@@ -76,6 +76,28 @@ const provider = createServer(async (req, res) => {
   res.end("data: [DONE]\n\n");
 });
 test.beforeAll(async () => {
+  const budget = await fetch("http://localhost:4000/auth/me");
+  if (Number(budget.headers.get("x-ratelimit-remaining") ?? 300) < 200) {
+    console.log(
+      "Pacing agent configuration browser regression for the API rate-limit window",
+    );
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.min(
+          59000,
+          Number(
+            budget.headers.get("retry-after") ??
+              budget.headers.get("x-ratelimit-reset") ??
+              60,
+          ) *
+            1000 +
+            500,
+        ),
+      ),
+    );
+  }
+
   await new Promise((resolve) => provider.listen(4550, "127.0.0.1", resolve));
   await sql.begin(async (tx) => {
     await tx`INSERT INTO users(id,email,name,password_hash,verified_at) VALUES (${user},${user + "@example.com"},'Generative Builder','unused-browser-fixture',now())`;
@@ -167,8 +189,14 @@ test("generated response, confirmation, download, collection and public defaults
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await page.getByRole("button", { name: "Create agent", exact: true }).click();
   await page.getByLabel("Agent name").fill("Report assistant");
-  await page.getByLabel("Enable generative responses", { exact: true }).check();
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Configure sections" })
+    .getByRole("button", { name: "Experience", exact: true })
+    .click();
+  await page
+    .getByLabel("Enable rich response components", { exact: true })
+    .check();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(
     page.getByText("Draft saved. Start a new chat to use these changes."),
   ).toBeVisible();

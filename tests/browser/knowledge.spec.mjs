@@ -97,6 +97,28 @@ function pdfFixture(text) {
   return Buffer.from(parts.join(""));
 }
 test.beforeAll(async () => {
+  const budget = await fetch("http://localhost:4000/auth/me");
+  if (Number(budget.headers.get("x-ratelimit-remaining") ?? 300) < 200) {
+    console.log(
+      "Pacing agent configuration browser regression for the API rate-limit window",
+    );
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.min(
+          59000,
+          Number(
+            budget.headers.get("retry-after") ??
+              budget.headers.get("x-ratelimit-reset") ??
+              60,
+          ) *
+            1000 +
+            500,
+        ),
+      ),
+    );
+  }
+
   await new Promise((resolve) => provider.listen(4546, "127.0.0.1", resolve));
   await sql.begin(async (tx) => {
     await tx`INSERT INTO users(id,email,name,password_hash,verified_at) VALUES (${user},${user + "@example.com"},'Knowledge Builder','unused-browser-fixture',now())`;
@@ -235,12 +257,16 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   await page.getByRole("button", { name: "Create agent", exact: true }).click();
   await page.getByLabel("Agent name").fill("Refund assistant");
   await page
+    .getByRole("navigation", { name: "Configure sections" })
+    .getByRole("button", { name: "Knowledge", exact: true })
+    .click();
+  await page
     .getByRole("checkbox", {
       name: "Refund knowledge · Public chat enabled",
       exact: true,
     })
     .check();
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(
     page.getByText("Draft saved. Start a new chat to use these changes."),
   ).toBeVisible();
@@ -303,13 +329,11 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   await page
     .getByRole("button", { name: "Upload document", exact: true })
     .click();
-  await page
-    .getByLabel("Document file")
-    .setInputFiles({
-      name: "refund-policy.pdf",
-      mimeType: "application/pdf",
-      buffer: pdfFixture("Refunds within 30 days"),
-    });
+  await page.getByLabel("Document file").setInputFiles({
+    name: "refund-policy.pdf",
+    mimeType: "application/pdf",
+    buffer: pdfFixture("Refunds within 30 days"),
+  });
   await page
     .getByRole("button", { name: "Upload and ingest", exact: true })
     .click();

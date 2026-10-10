@@ -171,6 +171,8 @@ Proceed to product-spec.md Phase 10 hardening after Teams and Slack validation. 
 - Outbox delivery is at least once; an SMTP crash after send can deliver a duplicate message. Tokens remain one-time.
 - No automatic owner transfer or member-role editing is exposed in Phase 0. This avoids premature privilege mutation paths.
 
-## Current priority: human support enrichment
+## Current priority: UI enhancements
 
-Deployment automation and additional monitoring are on hold. Follow the seven-phase [human support roadmap](human-support.md). Phases A–G now provide the support foundation, console, operator/routing configuration and policy-controlled escalation with AI triage/handoff briefs a private operator copilot and approved human-to-AI continuation with tool no-repeat controls. Phase G adds SLA/schedules, acceptance expiry, transfers, in-app notifications, supervision/analytics and live refresh streams. Initial Human Support enrichment is complete; next are the requested UI enhancements.
+Deployment automation and additional monitoring are on hold. The seven-phase [human support roadmap](human-support.md) is implemented through Phase G: support foundation, console, operator/routing configuration, policy-controlled escalation, private copilot, approved human-to-AI continuation and support operations.
+
+The [Agent Configure redesign](agent-configure.md) introduces section-based progressive disclosure, real configuration readiness, attachment health, shared-draft validation, sticky saving and direct section navigation while preserving Configure / Playground / Publish. Further UI enhancements can build on this without changing the Agent data model.

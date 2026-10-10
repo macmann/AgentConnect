@@ -50,6 +50,7 @@ import { OperationsStudio } from "./operations-studio";
 import { WorkflowStudio } from "./workflow-studio";
 import { ToolStudio } from "./tool-studio";
 import { KnowledgeStudio } from "./knowledge-studio";
+import { requestAgentLeave } from "./agent-configure-state";
 import { AgentStudio, Models, Conversations } from "./agent-studio";
 import { ApiError, requestJson as api } from "./agent-client";
 type User = {
@@ -273,7 +274,9 @@ function Studio() {
   const [view, setViewState] = useState("Overview");
   const [menuOpen, setMenuOpen] = useState(false);
   const dialogOpener = useRef<HTMLElement | null>(null);
+  const agentRoute = useRef("");
   function setView(destination: string) {
+    if (destination !== view && !requestAgentLeave()) return;
     setViewState(destination);
     setMenuOpen(false);
     setError("");
@@ -283,11 +286,28 @@ function Studio() {
     params.delete("action");
     params.delete("token");
     window.history.pushState({}, "", `#${params}`);
+    agentRoute.current = window.location.hash;
     window.scrollTo({ top: 0, behavior: "instant" });
   }
   useEffect(() => {
+    const rememberAgentRoute = () => {
+      agentRoute.current = window.location.hash;
+    };
+    window.addEventListener("agent-studio:navigated", rememberAgentRoute);
     const restore = () => {
       const params = new URLSearchParams(window.location.hash.slice(1));
+      const previous = new URLSearchParams(agentRoute.current.slice(1));
+      if (
+        previous.get("view") === "Agents" &&
+        ["view", "organization", "workspace", "agent"].some(
+          (key) => params.get(key) !== previous.get(key),
+        ) &&
+        !requestAgentLeave()
+      ) {
+        window.history.pushState({}, "", agentRoute.current);
+        return;
+      }
+      agentRoute.current = window.location.hash;
       const destination = params.get("view") ?? "Overview";
       setViewState(destination in pageDescriptions ? destination : "Overview");
       setOrgId(params.get("organization") ?? "");
@@ -300,6 +320,7 @@ function Studio() {
     window.addEventListener("popstate", restore);
     window.addEventListener("hashchange", restore);
     return () => {
+      window.removeEventListener("agent-studio:navigated", rememberAgentRoute);
       window.removeEventListener("popstate", restore);
       window.removeEventListener("hashchange", restore);
     };
@@ -343,6 +364,7 @@ function Studio() {
     workspaces.data?.find((w) => w.id === workspaceId) || workspaces.data?.[0];
   const wid = currentWorkspace?.id;
   function selectWorkspace(id: string) {
+    if (id !== workspaceId && !requestAgentLeave()) return;
     setWorkspaceId(id);
     setError("");
     setNotice("");
@@ -351,15 +373,21 @@ function Studio() {
     params.set("organization", currentOrgId);
     params.set("workspace", id);
     params.delete("supportCase");
+    params.delete("agent");
+    params.delete("stage");
+    params.delete("section");
     window.history.pushState({}, "", `#${params}`);
+    agentRoute.current = window.location.hash;
   }
   function selectOrganization(id: string) {
+    if (id !== orgId && !requestAgentLeave()) return;
     setOrgId(id);
     setWorkspaceId("");
     setError("");
     setNotice("");
     const params = new URLSearchParams({ view, organization: id });
     window.history.pushState({}, "", `#${params}`);
+    agentRoute.current = window.location.hash;
   }
   const members = useQuery({
     queryKey: ["members", wid],
@@ -591,6 +619,7 @@ function Studio() {
           disabled={busy}
           onClick={() =>
             mutate(async () => {
+              if (!requestAgentLeave()) return;
               await api("/auth/logout", "POST");
               cache.clear();
               setViewState("Overview");
