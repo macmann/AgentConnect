@@ -1,4 +1,5 @@
 "use client";
+import { QualityStudio } from "./quality-studio";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   QueryClient,
@@ -33,6 +34,7 @@ import {
 } from "lucide-react";
 import { Button } from "./button";
 import { CollectedData } from "./collected-data";
+import { ChannelsStudio } from "./channels-studio";
 import { OperationsStudio } from "./operations-studio";
 import { WorkflowStudio } from "./workflow-studio";
 import { ToolStudio } from "./tool-studio";
@@ -62,7 +64,11 @@ type User = {
   verificationRequired?: boolean;
 };
 type Organization = { id: string; name: string };
-type Workspace = { id: string; name: string; role: string };
+type Workspace = {
+  id: string;
+  name: string;
+  role: import("@agentconnect/schemas/foundation").Role;
+};
 type Member = { id: string; name: string; email: string; role: string };
 type Secret = { id: string; name: string; created_at: string };
 type Audit = { id: string; action: string; created_at: string };
@@ -444,6 +450,8 @@ function Studio() {
             { label: "Conversations", icon: Activity },
             { label: "Operations", icon: Activity },
             { label: "Collected data", icon: Layers },
+            { label: "Channels", icon: Activity },
+            { label: "Quality", icon: Activity },
             { label: "Members", icon: Users },
             { label: "Secrets", icon: KeyRound },
             { label: "Audit log", icon: Activity },
@@ -565,6 +573,8 @@ function Studio() {
             "Conversations",
             "Operations",
             "Collected data",
+            "Channels",
+            "Quality",
             "Knowledge",
             "Tools",
             "Workflows",
@@ -577,6 +587,20 @@ function Studio() {
                 key={wid}
                 workspaceId={wid}
                 role={currentWorkspace?.role ?? "viewer"}
+              />
+            ) : view === "Quality" ? (
+              <QualityStudio
+                key={wid}
+                workspaceId={wid}
+                role={currentWorkspace?.role ?? "viewer"}
+                onNavigate={setView}
+              />
+            ) : view === "Channels" ? (
+              <ChannelsStudio
+                key={wid}
+                workspaceId={wid}
+                role={currentWorkspace?.role ?? "viewer"}
+                onNavigate={setView}
               />
             ) : view === "Collected data" ? (
               <CollectedData key={wid} workspaceId={wid} />

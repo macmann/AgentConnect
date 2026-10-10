@@ -1584,6 +1584,7 @@ export function Conversations({
             <option value="">All channels</option>
             <option value="playground">Playground</option>
             <option value="hosted">Hosted chat</option>
+            <option value="widget">Website widget</option>
           </select>
         </label>
         <label>

@@ -1,3 +1,10 @@
+import { registerQualityRoutes } from "./quality.js";
+import {
+  registerChannelRoutes,
+  widgetDeploymentPath,
+  widgetOriginAllowed,
+  requireWidgetOrigin,
+} from "./channels.js";
 import { registerGenerativeRoutes } from "./generative.js";
 import { registerOperationsRoutes } from "./operations.js";
 import { apiKeyChatRequest, apiKeyActor } from "./api-key-auth.js";
@@ -156,9 +163,19 @@ export async function buildApp(
   await redis.ping();
   await app.register(cookie);
   await app.register(cors, {
-    origin: config.WEB_ORIGIN,
-    credentials: true,
-    methods: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"],
+    delegator: async (r: FastifyRequest) => {
+      const widget = widgetDeploymentPath(r);
+      return {
+        origin: widget
+          ? (await widgetOriginAllowed(widget, r.headers.origin))
+            ? r.headers.origin!
+            : false
+          : config.WEB_ORIGIN,
+        credentials: !widget,
+        methods: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"],
+        allowedHeaders: ["content-type", "authorization"],
+      };
+    },
   });
   await app.register(helmet);
   await app.register(rateLimit, { max: 300, timeWindow: "1 minute", redis });
@@ -230,9 +247,14 @@ export async function buildApp(
     if (
       !["GET", "HEAD", "OPTIONS"].includes(r.method) &&
       r.headers.origin !== config.WEB_ORIGIN &&
-      !apiKeyChatRequest(r)
+      !apiKeyChatRequest(r) &&
+      !widgetDeploymentPath(r)
     )
       throw new HttpError(403, "Invalid request origin");
+  });
+  app.addHook("onRequest", async (r) => {
+    if (widgetDeploymentPath(r) && r.method !== "OPTIONS")
+      await requireWidgetOrigin(r);
   });
   app.setErrorHandler((error, _r, reply) => {
     if (error instanceof WorkflowError)
@@ -675,6 +697,8 @@ export async function buildApp(
   await registerWorkflowRoutes(app);
   await registerOperationsRoutes(app);
   await registerGenerativeRoutes(app);
+  await registerChannelRoutes(app);
+  await registerQualityRoutes(app);
   await registerAgentRoutes(
     app,
     options.providerFactory,

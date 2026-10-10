@@ -1,3 +1,5 @@
+import { assertQualityGate } from "./quality-gate.js";
+import { requireWidgetOrigin } from "./channels.js";
 import {
   responseEnvelope,
   generativePrompt,
@@ -133,7 +135,7 @@ async function validateModelRegistration(
     );
   return baseUrl;
 }
-async function modelSnapshot(modelId: string, workspaceId: string) {
+export async function modelSnapshot(modelId: string, workspaceId: string) {
   const [m] =
     await sql`SELECT id,provider,model_id,base_url,secret_id,capabilities,context_window,max_output_tokens FROM model_configurations WHERE id=${modelId} AND workspace_id=${workspaceId} AND archived_at IS NULL`;
   if (!m) throw new HttpError(400, "Select a model from this workspace");
@@ -210,6 +212,13 @@ async function streamChat(
       : span.spanContext().traceId;
   try {
     await sql.begin(async (tx) => {
+      const [locked] =
+        await tx`SELECT handoff_status FROM conversations WHERE id=${conversation.id} FOR UPDATE`;
+      if (["pending", "active"].includes(locked?.handoff_status))
+        throw new HttpError(
+          409,
+          "This conversation is with the human support team",
+        );
       await tx`INSERT INTO agent_runs(id,conversation_id,organization_id,workspace_id,status,trace_id) VALUES (${runId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},'running',${traceId})`;
       await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content) VALUES (${randomUUID()},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'user',${message})`;
     });
@@ -819,6 +828,7 @@ export async function registerAgentRoutes(
         });
         const model = await modelSnapshot(c.modelId, w.id);
         validateAgentModel(c, model);
+        await assertQualityGate(tx, locked, c, model);
         await connection(model, w.id, w.organization_id);
         const [previous] =
           await tx`SELECT COALESCE(max(version),0) AS latest FROM agent_versions WHERE agent_id=${a.id}`;
@@ -986,7 +996,7 @@ export async function registerAgentRoutes(
         const conversationId = randomUUID();
         [conversation] = await sql<
           ConversationRow[]
-        >`INSERT INTO conversations(id,organization_id,workspace_id,agent_id,user_id,config_snapshot,model_snapshot) VALUES (${conversationId},${w.organization_id},${w.id},${a.id},${u.id},${sql.json(c)},${sql.json(model)}) RETURNING *`;
+        >`INSERT INTO conversations(id,organization_id,workspace_id,agent_id,user_id,config_snapshot,model_snapshot,channel) VALUES (${conversationId},${w.organization_id},${w.id},${a.id},${u.id},${sql.json(c)},${sql.json(model)},'playground') RETURNING *`;
       }
       await streamChat(
         r,
@@ -999,58 +1009,79 @@ export async function registerAgentRoutes(
       );
     },
   );
-  app.get("/public/deployments/:deploymentId", async (r) => {
-    const d = await publicDeployment(id(params(r).deploymentId));
-    const c = agentConfig.parse(d.config);
-    return {
-      id: d.id,
-      name: d.name,
-      description: d.public_description,
-      welcomeMessage: c.welcomeMessage,
-      conversationStarters: c.conversationStarters,
-    };
-  });
-  app.post(
-    "/public/deployments/:deploymentId/chat",
-    {
-      ...schema(chatInput),
-      config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
-    },
-    async (r, reply) => {
+  for (const channel of ["deployments", "widgets"])
+    app.get(`/public/${channel}/:deploymentId`, async (r) => {
       const d = await publicDeployment(id(params(r).deploymentId));
-      const data = chatInput.parse(r.body);
-      let conversation: ConversationRow | undefined;
-      let raw: string | undefined;
-      if (data.conversationId) {
-        [conversation] = await sql<
-          ConversationRow[]
-        >`SELECT * FROM conversations WHERE id=${data.conversationId} AND deployment_id=${d.id} AND user_id IS NULL`;
-        const bearer = r.headers.authorization?.replace(/^Bearer /, "") ?? "";
-        if (
-          !conversation?.guest_token_hash ||
-          !equalToken(bearer, conversation.guest_token_hash)
-        )
-          throw new HttpError(404, "Conversation not found");
-      } else {
-        await connection(
-          modelSnapshotSchema.parse(d.model_snapshot),
-          d.workspace_id,
-          d.organization_id,
+      const c = agentConfig.parse(d.config);
+      return {
+        id: d.id,
+        name: d.name,
+        description: d.public_description,
+        welcomeMessage: c.welcomeMessage,
+        conversationStarters: c.conversationStarters,
+        ...(channel === "widgets"
+          ? {
+              widget: (
+                await sql`SELECT widget_settings FROM deployments WHERE id=${d.id}`
+              )[0]!.widget_settings,
+            }
+          : {}),
+      };
+    });
+  for (const channel of ["deployments", "widgets"])
+    app.post(
+      `/public/${channel}/:deploymentId/chat`,
+      {
+        ...schema(chatInput),
+        config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
+      },
+      async (r, reply) => {
+        if (channel === "widgets") await requireWidgetOrigin(r);
+        const d = await publicDeployment(id(params(r).deploymentId));
+        const data = chatInput.parse(r.body);
+        let conversation: ConversationRow | undefined;
+        let raw: string | undefined;
+        if (data.conversationId) {
+          [conversation] = await sql<
+            ConversationRow[]
+          >`SELECT * FROM conversations WHERE id=${data.conversationId} AND deployment_id=${d.id} AND user_id IS NULL`;
+          const bearer = r.headers.authorization?.replace(/^Bearer /, "") ?? "";
+          if (
+            !conversation?.guest_token_hash ||
+            !equalToken(bearer, conversation.guest_token_hash)
+          )
+            throw new HttpError(404, "Conversation not found");
+          const [binding] =
+            await sql`SELECT channel,widget_origin FROM conversations WHERE id=${conversation!.id}`;
+          if (
+            (channel === "widgets") !== (binding!.channel === "widget") ||
+            (channel === "widgets" &&
+              binding!.widget_origin !== r.headers.origin)
+          )
+            throw new HttpError(
+              403,
+              "Conversation channel or origin does not match",
+            );
+        } else {
+          await connection(
+            modelSnapshotSchema.parse(d.model_snapshot),
+            d.workspace_id,
+            d.organization_id,
+          );
+          raw = token();
+          [conversation] = await sql<
+            ConversationRow[]
+          >`INSERT INTO conversations(id,organization_id,workspace_id,agent_id,version_id,deployment_id,guest_token_hash,config_snapshot,model_snapshot,channel,widget_origin) VALUES (${randomUUID()},${d.organization_id},${d.workspace_id},${d.agent_id},${d.version_id},${d.id},${digest(raw)},${sql.json(d.config)},${sql.json(d.model_snapshot)},${channel === "widgets" ? "widget" : "hosted"},${channel === "widgets" ? r.headers.origin! : null}) RETURNING *`;
+        }
+        await streamChat(
+          r,
+          reply,
+          conversation!,
+          data.message,
+          factory,
+          raw,
+          ragTool,
         );
-        raw = token();
-        [conversation] = await sql<
-          ConversationRow[]
-        >`INSERT INTO conversations(id,organization_id,workspace_id,agent_id,version_id,deployment_id,guest_token_hash,config_snapshot,model_snapshot) VALUES (${randomUUID()},${d.organization_id},${d.workspace_id},${d.agent_id},${d.version_id},${d.id},${digest(raw)},${sql.json(d.config)},${sql.json(d.model_snapshot)}) RETURNING *`;
-      }
-      await streamChat(
-        r,
-        reply,
-        conversation!,
-        data.message,
-        factory,
-        raw,
-        ragTool,
-      );
-    },
-  );
+      },
+    );
 }

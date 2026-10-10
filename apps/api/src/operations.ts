@@ -69,7 +69,7 @@ export async function registerOperationsRoutes(app: FastifyInstance) {
           .enum(["running", "completed", "failed", "cancelled"])
           .optional(),
         rating: z.enum(["like", "dislike"]).optional(),
-        channel: z.enum(["playground", "hosted"]).optional(),
+        channel: z.enum(["playground", "hosted", "widget"]).optional(),
         days: z.coerce.number().int().min(1).max(90).default(30),
         before: z.iso.datetime().optional(),
         beforeId: z.uuid().optional(),
@@ -78,7 +78,7 @@ export async function registerOperationsRoutes(app: FastifyInstance) {
     if (!!q.before !== !!q.beforeId)
       throw new HttpError(400, "Cursor requires before and beforeId");
     const from = new Date(Date.now() - q.days * 86400000).toISOString();
-    return sql`SELECT c.id,c.created_at,c.agent_id,c.deployment_id,a.name,latest.status,latest.error_code,(CASE WHEN c.deployment_id IS NULL THEN 'playground' ELSE 'hosted' END) AS channel FROM conversations c JOIN agents a ON a.id=c.agent_id LEFT JOIN LATERAL (SELECT status,error_code FROM agent_runs WHERE conversation_id=c.id ORDER BY started_at DESC,id DESC LIMIT 1) latest ON true WHERE c.workspace_id=${w.id} AND c.created_at>=${from} AND (${q.agentId ?? null}::uuid IS NULL OR c.agent_id=${q.agentId ?? null}) AND (${q.status ?? null}::text IS NULL OR latest.status=${q.status ?? null}) AND (${q.channel ?? null}::text IS NULL OR (${q.channel ?? null}='hosted')=(c.deployment_id IS NOT NULL)) AND (${q.rating ?? null}::text IS NULL OR EXISTS(SELECT 1 FROM conversation_reviews cr JOIN messages m ON m.id=cr.message_id WHERE m.conversation_id=c.id AND cr.rating=${q.rating ?? null})) AND (c.created_at,c.id)<(${q.before ?? new Date().toISOString()},${q.beforeId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"}) ORDER BY c.created_at DESC,c.id DESC LIMIT 30`;
+    return sql`SELECT c.id,c.created_at,c.agent_id,c.deployment_id,a.name,latest.status,latest.error_code,c.channel FROM conversations c JOIN agents a ON a.id=c.agent_id LEFT JOIN LATERAL (SELECT status,error_code FROM agent_runs WHERE conversation_id=c.id ORDER BY started_at DESC,id DESC LIMIT 1) latest ON true WHERE c.workspace_id=${w.id} AND c.created_at>=${from} AND (${q.agentId ?? null}::uuid IS NULL OR c.agent_id=${q.agentId ?? null}) AND (${q.status ?? null}::text IS NULL OR latest.status=${q.status ?? null}) AND (${q.channel ?? null}::text IS NULL OR c.channel=${q.channel ?? null}) AND (${q.rating ?? null}::text IS NULL OR EXISTS(SELECT 1 FROM conversation_reviews cr JOIN messages m ON m.id=cr.message_id WHERE m.conversation_id=c.id AND cr.rating=${q.rating ?? null})) AND (c.created_at,c.id)<(${q.before ?? new Date().toISOString()},${q.beforeId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"}) ORDER BY c.created_at DESC,c.id DESC LIMIT 30`;
   });
   app.get("/conversations/:conversationId/reviews", async (r) => {
     const u = await actor(r);
