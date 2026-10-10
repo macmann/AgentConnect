@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   useInfiniteQuery,
   useQuery,
@@ -19,6 +19,7 @@ import {
 import { requestJson } from "./agent-client";
 import { Button } from "./button";
 import { SupportPresence } from "./support-presence";
+import { SupportPolicy } from "./support-policy";
 import { SupportTeam } from "./support-team";
 import { SupportCasePanel } from "./support-case-panel";
 import {
@@ -39,6 +40,7 @@ export function SupportStudio({
   const base = `/workspaces/${workspaceId}/support`,
     cache = useQueryClient();
   const [settings, setSettings] = useState(false);
+  const [policySettings, setPolicySettings] = useState(false);
   const [selected, setSelected] = useState(""),
     [scope, setScope] = useState("open"),
     [status, setStatus] = useState(""),
@@ -49,12 +51,20 @@ export function SupportStudio({
     [searchDraft, setSearchDraft] = useState(""),
     [search, setSearch] = useState("");
   const draft = useRef(false);
+  const onPolicyDraft = useCallback((dirty: boolean) => {
+    draft.current = dirty;
+  }, []);
   useEffect(() => {
     const read = () => {
       const value =
         new URLSearchParams(window.location.hash.slice(1)).get("supportCase") ??
         "";
-      setSelected(/^[a-f0-9]{8}-[a-f0-9-]{27}$/i.test(value) ? value : "");
+      const caseId = /^[a-f0-9]{8}-[a-f0-9-]{27}$/i.test(value) ? value : "";
+      setSelected(caseId);
+      if (caseId) {
+        setSettings(false);
+        setPolicySettings(false);
+      }
     };
     read();
     window.addEventListener("popstate", read);
@@ -148,9 +158,14 @@ export function SupportStudio({
         aria-label="Support sections"
       >
         <Button
-          className={!settings ? "" : "secondary"}
-          aria-pressed={!settings}
-          onClick={() => setSettings(false)}
+          className={!settings && !policySettings ? "" : "secondary"}
+          aria-pressed={!settings && !policySettings}
+          onClick={() => {
+            if ((!settings && !policySettings) || select("")) {
+              setSettings(false);
+              setPolicySettings(false);
+            }
+          }}
         >
           Inbox
         </Button>
@@ -158,10 +173,25 @@ export function SupportStudio({
           className={settings ? "" : "secondary"}
           aria-pressed={settings}
           onClick={() => {
-            if (select("")) setSettings(true);
+            if (select("")) {
+              setSettings(true);
+              setPolicySettings(false);
+            }
           }}
         >
           Operators & routing
+        </Button>
+        <Button
+          className={policySettings ? "" : "secondary"}
+          aria-pressed={policySettings}
+          onClick={() => {
+            if (select("")) {
+              setPolicySettings(true);
+              setSettings(false);
+            }
+          }}
+        >
+          Handoff policy
         </Button>
       </div>
       <SupportPresence
@@ -170,7 +200,13 @@ export function SupportStudio({
         userId={userId}
         role={role}
       />
-      {settings ? (
+      {policySettings ? (
+        <SupportPolicy
+          workspaceId={workspaceId}
+          role={role}
+          onDraftChange={onPolicyDraft}
+        />
+      ) : settings ? (
         <SupportTeam workspaceId={workspaceId} role={role} />
       ) : (
         <>

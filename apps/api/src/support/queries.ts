@@ -55,3 +55,17 @@ export async function conversationTimeline(
  ) timeline WHERE (created_at,id)<(${before ?? new Date().toISOString()},${beforeId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"})
  ORDER BY created_at DESC,id DESC LIMIT ${limit + 1}`;
 }
+
+// Private copilot input intentionally excludes internal notes and metadata events before pagination.
+export async function copilotTranscript(
+  conversationId: string,
+  workspaceId: string,
+) {
+  return sql`SELECT * FROM (
+    SELECT m.id,CASE m.role WHEN 'user' THEN 'customer' ELSE 'ai' END AS role,left(m.content,2000) AS content,ar.status,m.created_at
+    FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${conversationId} AND m.workspace_id=${workspaceId}
+    UNION ALL
+    SELECT e.id,CASE WHEN e.actor_type='customer' THEN 'customer' ELSE 'operator' END,left(COALESCE(e.payload->>'content',''),2000),NULL::text,e.created_at
+    FROM support_events e WHERE e.conversation_id=${conversationId} AND e.workspace_id=${workspaceId} AND e.type='message.created'
+  ) messages ORDER BY created_at DESC,id DESC LIMIT 30`;
+}

@@ -345,6 +345,7 @@ test("Private notes persist, audit without content and never enter public thread
   );
 });
 test("Guest APIs cannot read internal notes; timeline pagination is bounded and tenant scoped", async () => {
+  await sql`INSERT INTO support_policies(id,organization_id,workspace_id,scope,target_id,policy) VALUES (${randomUUID()},${org},${workspace},'workspace',${workspace},${sql.json({ humanEntryMode: "always_available", aiTriageEnabled: false, generateHandoffSummary: false })})`;
   const path = `/public/deployments/${deployment}/conversations/${guestConversation}/handoff`;
   assert.equal(
     (await call("POST", path, { action: "request" }, "", guestToken))

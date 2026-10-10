@@ -681,13 +681,18 @@ export async function buildApp(
   await registerOperationsRoutes(app);
   await registerGenerativeRoutes(app);
   await registerChannelRoutes(app);
-  await registerSupportRoutes(app, {
-    actor,
-    audit,
-    id,
-    params,
-    workspaceAccess,
-  });
+  await registerSupportRoutes(
+    app,
+    {
+      actor,
+      audit,
+      id,
+      params,
+      workspaceAccess,
+    },
+    options.providerFactory,
+    options.embeddingFactory,
+  );
   await registerQualityRoutes(app);
   await registerConnectorRoutes(app, options.sharePointClientFactory);
   await registerRetentionRoutes(app);

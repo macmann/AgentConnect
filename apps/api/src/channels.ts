@@ -1,3 +1,8 @@
+import {
+  customerHandoffState,
+  confirmHandoff,
+  dismissHandoff,
+} from "./support/policy.js";
 import { legacyHandoff } from "./support/cases.js";
 import { permitted } from "@agentconnect/schemas/foundation";
 import { timingSafeEqual } from "node:crypto";
@@ -131,6 +136,7 @@ export async function registerChannelRoutes(app: FastifyInstance) {
       const { c } = await conversationAccess(r, publicRoute);
       return {
         status: c.handoff_status,
+        access: await sql.begin((tx) => customerHandoffState(tx, c as never)),
         events: (
           await sql`SELECT id,kind,content,created_at FROM handoff_events WHERE conversation_id=${c.id} ORDER BY created_at DESC,id DESC LIMIT 500`
         ).reverse(),
@@ -143,7 +149,14 @@ export async function registerChannelRoutes(app: FastifyInstance) {
         const { c, userId } = await conversationAccess(r, publicRoute);
         const d = z
           .object({
-            action: z.enum(["request", "claim", "message", "reply", "resolve"]),
+            action: z.enum([
+              "request",
+              "dismiss",
+              "claim",
+              "message",
+              "reply",
+              "resolve",
+            ]),
             content: z.string().trim().max(4000).default(""),
           })
           .strict()
@@ -167,15 +180,19 @@ export async function registerChannelRoutes(app: FastifyInstance) {
         await sql.begin(async (tx) => {
           if (["message", "reply"].includes(d.action) && !d.content)
             throw new HttpError(400, "Message content required");
-          await legacyHandoff(tx, c.id, c.workspace_id, d.action, d.content, {
-            id: userId ?? null,
-            type: operatorAction
-              ? supervise
-                ? "supervisor"
-                : "operator"
-              : "customer",
-            supervise,
-          });
+          if (d.action === "request")
+            await confirmHandoff(tx, c as never, userId);
+          else if (d.action === "dismiss") await dismissHandoff(tx, c as never);
+          else
+            await legacyHandoff(tx, c.id, c.workspace_id, d.action, d.content, {
+              id: userId ?? null,
+              type: operatorAction
+                ? supervise
+                  ? "supervisor"
+                  : "operator"
+                : "customer",
+              supervise,
+            });
           if (userId)
             await audit(
               tx,
@@ -184,6 +201,7 @@ export async function registerChannelRoutes(app: FastifyInstance) {
               "handoff." +
                 {
                   request: "requested",
+                  dismiss: "dismissed",
                   claim: "claimed",
                   resolve: "resolved",
                   reply: "operator_message",

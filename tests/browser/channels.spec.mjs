@@ -49,6 +49,7 @@ test.beforeAll(async () => {
     await tx`INSERT INTO sessions(id_hash,user_id,expires_at) VALUES (${createHash("sha256").update(session).digest("hex")},${user},now()+interval '1 hour')`;
     await tx`INSERT INTO organizations(id,name) VALUES (${org},'Channels browser')`;
     await tx`INSERT INTO workspaces(id,organization_id,name) VALUES (${workspace},${org},'Channel workspace')`;
+    await tx`INSERT INTO support_policies(id,organization_id,workspace_id,scope,target_id,policy) VALUES (${randomUUID()},${org},${workspace},'workspace',${workspace},${tx.json({ humanEntryMode: "always_available", aiTriageEnabled: false, generateHandoffSummary: false })})`;
     await tx`INSERT INTO memberships(id,organization_id,user_id,role) VALUES (${randomUUID()},${org},${user},'owner')`;
   });
 });

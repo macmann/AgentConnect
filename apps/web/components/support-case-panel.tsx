@@ -1,4 +1,6 @@
 "use client";
+import { SupportCopilot } from "./support-copilot";
+import { SupportBrief } from "./support-brief";
 import { SupportRoutingPanel } from "./support-routing-panel";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
@@ -59,6 +61,7 @@ export function SupportCasePanel({
     [busy, setBusy] = useState(false),
     [dialog, setDialog] = useState<"resolve" | "assign" | null>(null),
     [statusChoice, setStatusChoice] = useState("");
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const path = base + `/cases/${caseId}`;
   const detail = useQuery({
     queryKey: ["support", workspaceId, "case", caseId],
@@ -342,6 +345,7 @@ export function SupportCasePanel({
                   <label>
                     {composer === "note" ? "Private note" : "Reply to customer"}
                     <textarea
+                      ref={composerRef}
                       rows={3}
                       maxLength={4000}
                       value={text}
@@ -395,6 +399,26 @@ export function SupportCasePanel({
               </p>
             )}
           </div>
+          <SupportCopilot
+            path={path}
+            canUse={canReply}
+            onUse={(draft) => {
+              if (
+                text.trim() &&
+                !window.confirm(
+                  "Replace the text currently in your composer with this suggestion?",
+                )
+              )
+                return;
+              setText(draft);
+              setComposer("reply");
+              requestAnimationFrame(() => composerRef.current?.focus());
+              onDraftChange(true);
+              setNotice(
+                "AI draft copied to the reply composer. Review and edit it before sending.",
+              );
+            }}
+          />
         </section>
         <aside className="panel support-context" aria-label="Case context">
           <h3>Case context</h3>
@@ -428,6 +452,12 @@ export function SupportCasePanel({
               </small>
             </div>
           )}
+          <SupportBrief
+            s={s}
+            base={base}
+            workspaceId={workspaceId}
+            role={role}
+          />
           <SupportRoutingPanel
             s={s}
             base={base}

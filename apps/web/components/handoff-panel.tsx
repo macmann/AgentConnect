@@ -13,6 +13,11 @@ export function HandoffPanel({
   busy: boolean;
   onStatus: (open: boolean) => void;
 }) {
+  const [access, setAccess] = useState<{
+    entryMode: string;
+    canRequest: boolean;
+    offer: { id: string; reason_code: string } | null;
+  } | null>(null);
   const [status, setStatus] = useState("none"),
     [events, setEvents] = useState<
       { id: string; kind: string; content: string }[]
@@ -33,6 +38,8 @@ export function HandoffPanel({
           d = await r.json();
         if (!r.ok) throw new Error(d.error ?? "Support unavailable");
         if (active) {
+          setAccess(d.access);
+          setError("");
           setStatus(d.status);
           setEvents(d.events);
           onStatus(["pending", "active"].includes(d.status));
@@ -47,7 +54,7 @@ export function HandoffPanel({
       active = false;
       clearInterval(timer);
     };
-  }, [endpoint, guestToken, onStatus]);
+  }, [endpoint, guestToken, onStatus, busy]);
   async function post(action: string) {
     setSending(true);
     setError("");
@@ -70,6 +77,8 @@ export function HandoffPanel({
         setStatus("pending");
         onStatus(true);
       }
+      if (action === "dismiss")
+        setAccess((a) => (a ? { ...a, canRequest: false, offer: null } : a));
       setText("");
     } catch (e) {
       setError((e as Error).message);
@@ -78,6 +87,7 @@ export function HandoffPanel({
     }
   }
   const open = ["pending", "active"].includes(status);
+  if (!open && access?.entryMode === "disabled" && !error) return null;
   return (
     <section className="handoff-panel">
       <h4>Human support</h4>
@@ -119,16 +129,32 @@ export function HandoffPanel({
           <p>
             {status === "resolved"
               ? "Support resolved this request. You can chat with the agent again."
-              : "Request an operator if you need help beyond the agent. Response time depends on workspace staffing."}
+              : access?.offer
+                ? "We haven’t been able to resolve this yet. Would you like to connect with a support specialist?"
+                : access?.canRequest
+                  ? "A support specialist can help. Response time depends on workspace staffing."
+                  : "You can ask the agent for a support specialist if you need more help."}
           </p>
-          <Button
-            type="button"
-            className="secondary"
-            disabled={busy || sending}
-            onClick={() => void post("request")}
-          >
-            Request human support
-          </Button>
+          {access?.canRequest && (
+            <Button
+              type="button"
+              className="secondary"
+              disabled={busy || sending}
+              onClick={() => void post("request")}
+            >
+              {access.offer ? "Connect me" : "Request human support"}
+            </Button>
+          )}
+          {access?.offer && (
+            <Button
+              type="button"
+              className="secondary"
+              disabled={busy || sending}
+              onClick={() => void post("dismiss")}
+            >
+              Keep trying with AI
+            </Button>
+          )}
         </>
       )}
       {error && (

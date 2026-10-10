@@ -1,3 +1,5 @@
+import { registerCopilotRoutes } from "./copilot.js";
+import { registerPolicyRoutes } from "./policy-routes.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Capability } from "@agentconnect/schemas/foundation";
 import { permitted } from "@agentconnect/schemas/foundation";
@@ -53,6 +55,8 @@ const routeOptions = (summary: string) => ({
 export async function registerSupportRoutes(
   app: FastifyInstance,
   helpers: Helpers,
+  factory?: import("@agentconnect/provider-sdk").ProviderFactory,
+  embeddings?: import("@agentconnect/provider-sdk/embeddings").EmbeddingFactory,
 ) {
   const { actor, audit, id, params, workspaceAccess } = helpers;
   async function context(r: FastifyRequest, capability: Capability) {
@@ -70,6 +74,8 @@ export async function registerSupportRoutes(
     return { u, w, a };
   }
 
+  await registerCopilotRoutes(app, helpers, factory, embeddings);
+  await registerPolicyRoutes(app, helpers);
   await registerSupportConsoleRoutes(app, helpers);
   await registerOperatorRoutes(app, helpers);
   const base = "/workspaces/:workspaceId/support";

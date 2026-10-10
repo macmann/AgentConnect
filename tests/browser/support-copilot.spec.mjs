@@ -10,16 +10,48 @@ const sql = postgres(process.env.DATABASE_URL, { max: 1 }),
   workspace = randomUUID();
 const users = {},
   sessions = {};
-let agent, deployment, caseId, customer, operatorContext, analystContext;
+let agent,
+  deployment,
+  customer,
+  operatorContext,
+  analystContext,
+  failCopilot = false,
+  copilotCalls = 0;
 const provider = createServer(async (req, res) => {
-  for await (const chunk of req) void chunk;
+  let raw = "";
+  for await (const chunk of req) raw += chunk;
+  const copilot = JSON.parse(raw).messages.some(
+    (m) =>
+      m.role === "system" &&
+      m.content.includes("PRIVATE support operator copilot"),
+  );
+  if (copilot) {
+    copilotCalls++;
+    expect(raw).not.toContain("PRIVATE: copilot note");
+    if (failCopilot) {
+      res.writeHead(503, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "Fixture outage" } }));
+      return;
+    }
+  }
   res.writeHead(200, { "content-type": "text/event-stream" });
   res.end(
     "data: " +
       JSON.stringify({
         choices: [
           {
-            delta: { content: "Support browser fixture answer" },
+            delta: {
+              content: copilot
+                ? JSON.stringify({
+                    reply: "Please send your order number.",
+                    summary: "Customer has a billing question.",
+                    sentiment: "unknown",
+                    nextAction: "request_information",
+                    rationale: "An order number will help.",
+                    toolRecommendations: [],
+                  })
+                : "Support browser fixture answer",
+            },
             finish_reason: "stop",
           },
         ],
@@ -29,6 +61,22 @@ const provider = createServer(async (req, res) => {
   );
 });
 test.beforeAll(async () => {
+  const budget = await fetch("http://localhost:4000/auth/me");
+  if (Number(budget.headers.get("x-ratelimit-remaining") ?? 300) < 200) {
+    await new Promise((r) =>
+      setTimeout(
+        r,
+        Math.min(
+          59000,
+          Number(
+            budget.headers.get("retry-after") ??
+              budget.headers.get("x-ratelimit-reset") ??
+              60,
+          ) * 1000,
+        ),
+      ),
+    );
+  }
   await new Promise((r) => provider.listen(4551, "127.0.0.1", r));
   await sql.begin(async (tx) => {
     await tx`INSERT INTO organizations(id,name) VALUES (${org},'Human support browser')`;
@@ -88,7 +136,7 @@ async function openSupport(page) {
     page.getByRole("heading", { name: "Human Support", exact: true }),
   ).toBeVisible();
 }
-test("Support console assigns, accepts, notes privately, replies and restores customer AI chat", async ({
+test("Private copilot drafts require operator review, preserve manual support on failure and fit mobile", async ({
   page,
   context,
   browser,
@@ -157,9 +205,6 @@ test("Support console assigns, accepts, notes privately, replies and restores cu
   await expect(page.getByRole("log")).toContainText(
     "Please review my billing question",
   );
-  caseId = (
-    await sql`SELECT id FROM support_cases WHERE workspace_id=${workspace}`
-  )[0].id;
   await page.getByRole("button", { name: "Assign case", exact: true }).click();
   const assign = page.getByRole("dialog");
   await assign.getByLabel("Assign to").selectOption(users.operator);
@@ -183,48 +228,110 @@ test("Support console assigns, accepts, notes privately, replies and restores cu
   await expect(
     operator.getByRole("button", { name: "Send reply", exact: true }),
   ).toBeVisible();
+
   await operator
     .getByRole("button", { name: "Internal note", exact: true })
     .click();
   await operator
     .getByLabel("Private note", { exact: true })
-    .fill("PRIVATE: identity reviewed by staff");
+    .fill("PRIVATE: copilot note");
   await operator
     .getByRole("button", { name: "Save internal note", exact: true })
     .click();
   await expect(operator.getByRole("log")).toContainText(
-    "PRIVATE: identity reviewed by staff",
+    "PRIVATE: copilot note",
   );
-  await expect(
-    visitor.getByText("PRIVATE: identity reviewed by staff"),
-  ).toHaveCount(0);
-  await operator
-    .getByRole("button", { name: "Customer reply", exact: true })
+  const panel = operator.getByRole("region", {
+    name: "Private operator copilot",
+  });
+  await panel
+    .getByRole("button", { name: "Suggest reply", exact: true })
     .click();
-  await operator
-    .getByRole("textbox", { name: "Reply to customer", exact: true })
-    .fill("I am reviewing your billing request.");
+  await expect(
+    panel.getByText("Please send your order number.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    visitor.getByText("Please send your order number.", { exact: true }),
+  ).toHaveCount(0);
+  await panel
+    .getByRole("button", { name: "Use draft in reply composer" })
+    .click();
+  const reply = operator.getByRole("textbox", {
+    name: "Reply to customer",
+    exact: true,
+  });
+  await expect(reply).toHaveValue("Please send your order number.");
+  await reply.fill("Keep my existing draft.");
+  operator.once("dialog", (d) => d.dismiss());
+  await panel
+    .getByRole("button", { name: "Use draft in reply composer" })
+    .click();
+  await expect(reply).toHaveValue("Keep my existing draft.");
+  operator.once("dialog", (d) => d.accept());
+  await panel
+    .getByRole("button", { name: "Use draft in reply composer" })
+    .click();
+  await expect(reply).toHaveValue("Please send your order number.");
+  await reply.fill("Please share your order number so I can check.");
   await operator
     .getByRole("button", { name: "Send reply", exact: true })
     .click();
   await expect(
-    visitor.getByText("I am reviewing your billing request.", { exact: false }),
+    visitor.getByText("Please share your order number so I can check.", {
+      exact: false,
+    }),
   ).toBeVisible({ timeout: 15000 });
-  await visitor
-    .getByLabel("Message to support")
-    .fill("Thank you for reviewing");
-  await visitor
-    .getByRole("button", { name: "Send to support", exact: true })
+  failCopilot = true;
+  await panel
+    .getByRole("button", { name: "Regenerate suggestion", exact: true })
     .click();
-  await expect(operator.getByRole("log")).toContainText(
-    "Thank you for reviewing",
-    { timeout: 15000 },
+  await expect(panel.getByRole("alert")).toContainText("manually");
+  await reply.fill("I can still help while AI is unavailable.");
+  await operator
+    .getByRole("button", { name: "Send reply", exact: true })
+    .click();
+  await expect(
+    visitor.getByText("I can still help while AI is unavailable.", {
+      exact: false,
+    }),
+  ).toBeVisible({ timeout: 15000 });
+  failCopilot = false;
+  await panel
+    .getByRole("button", { name: "Regenerate suggestion", exact: true })
+    .click();
+  await expect(
+    panel.getByText("Please send your order number.", { exact: true }),
+  ).toBeVisible();
+  expect(copilotCalls).toBe(3);
+  await panel
+    .getByRole("button", { name: "Ignore suggestion", exact: true })
+    .click();
+  await expect(
+    panel.getByText("No private suggestions yet. Choose an action above."),
+  ).toBeVisible();
+  await panel
+    .getByRole("button", { name: "Suggest reply", exact: true })
+    .click();
+  await expect(
+    panel.getByText("Please send your order number.", { exact: true }),
+  ).toBeVisible();
+  expect(copilotCalls).toBe(3);
+  await operator.setViewportSize({ width: 360, height: 800 });
+  await operator.evaluate(() =>
+    window.scrollTo({ top: 0, behavior: "instant" }),
   );
-  await expect(operator).toHaveURL(new RegExp(caseId));
-  await operator.reload();
-  await expect(operator.getByRole("log")).toContainText(
-    "PRIVATE: identity reviewed by staff",
-  );
+  expect(
+    await operator.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(360);
+  await operator.screenshot({
+    path: "docs/support-console/copilot-mobile.png",
+    fullPage: true,
+  });
+  await operator.setViewportSize({ width: 1440, height: 1000 });
+  await operator.screenshot({
+    path: "docs/support-console/copilot-desktop.png",
+    fullPage: true,
+  });
   analystContext = await browser.newContext({
     baseURL: "http://localhost:3000",
   });
@@ -234,161 +341,10 @@ test("Support console assigns, accepts, notes privately, replies and restores cu
   await analyst
     .getByRole("button", { name: /Open Case .* for Guest visitor/ })
     .click();
-  await expect(analyst.getByRole("log")).toContainText(
-    "PRIVATE: identity reviewed by staff",
-  );
   await expect(
-    analyst.getByRole("button", { name: "Send reply", exact: true }),
+    analyst.getByRole("button", { name: "Suggest reply", exact: true }),
   ).toHaveCount(0);
   await expect(
-    analyst.getByRole("button", {
-      name: "Resolve and return to AI",
-      exact: true,
-    }),
+    visitor.getByText("Customer has a billing question.", { exact: true }),
   ).toHaveCount(0);
-  await operator
-    .getByRole("button", { name: "Resolve and return to AI", exact: true })
-    .click();
-  const resolve = operator.getByRole("dialog");
-  await resolve
-    .getByLabel("Private resolution summary")
-    .fill("PRIVATE: billing request reviewed successfully");
-  await resolve
-    .getByLabel("Final reply to customer (optional)")
-    .fill("Your billing request has been reviewed.");
-  await resolve
-    .getByRole("button", { name: "Confirm resolution", exact: true })
-    .click();
-  await expect(resolve).toBeHidden();
-  await expect(
-    visitor.getByText(
-      "Support resolved this request. You can chat with the agent again.",
-    ),
-  ).toBeVisible({ timeout: 15000 });
-  await expect(visitor.getByText("PRIVATE:", { exact: false })).toHaveCount(0);
-  await expect(
-    visitor.getByText("Your billing request has been reviewed.", {
-      exact: false,
-    }),
-  ).toBeVisible();
-  await visitor
-    .getByLabel("Message", { exact: true })
-    .fill("Can I continue chatting?");
-  await visitor
-    .getByRole("button", { name: "Send message", exact: true })
-    .click();
-  await expect(
-    visitor.getByText("Support browser fixture answer", { exact: true }),
-  ).toHaveCount(2);
-  await page.getByLabel("Cases", { exact: true }).selectOption("all");
-  await page
-    .getByLabel("Queue", { exact: true })
-    .selectOption({ label: "Billing" });
-  await page.getByLabel("Status", { exact: true }).selectOption("resolved");
-  await expect(
-    page.getByRole("button", { name: /Open Case .* for Guest visitor/ }),
-  ).toBeVisible();
-  await page.setViewportSize({ width: 360, height: 800 });
-  await page
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "Conversation", exact: true }),
-  ).toBeVisible();
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= window.innerWidth,
-    ),
-  ).toBeTruthy();
-  await page.evaluate(() => {
-    document.activeElement?.blur();
-    window.scrollTo(0, 0);
-  });
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
-  await page.screenshot({
-    path: "docs/support-console/mobile.png",
-    fullPage: false,
-  });
-  await page
-    .getByRole("button", { name: "Back to inbox", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: /Open Case .* for Guest visitor/ }),
-  ).toBeVisible();
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await page
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
-    .click();
-  await visitor
-    .getByRole("button", { name: "Request human support", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Reset filters", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: /Open Case .* for Guest visitor/ }),
-  ).toBeVisible({ timeout: 15000 });
-  await page
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
-    .click();
-  await page.getByRole("button", { name: "Claim case", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Send reply", exact: true }),
-  ).toBeVisible();
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.evaluate(() => {
-    document.activeElement?.blur();
-    window.scrollTo(0, 0);
-  });
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
-  await page.screenshot({
-    path: "docs/support-console/desktop.png",
-    fullPage: false,
-  });
-  await page.bringToFront();
-  await page
-    .getByRole("textbox", { name: "Reply to customer", exact: true })
-    .fill("Unsaved support draft");
-  page.once("dialog", (dialog) => dialog.dismiss());
-  await page
-    .getByRole("button", { name: "Back to inbox", exact: true })
-    .click();
-  await expect(
-    page.getByRole("textbox", { name: "Reply to customer", exact: true }),
-  ).toHaveValue("Unsaved support draft");
-  page.once("dialog", (dialog) => dialog.accept());
-  await page
-    .getByRole("button", { name: "Back to inbox", exact: true })
-    .click();
-});
-test("Inbox shows an accessible empty state and retries a failed case request", async ({
-  page,
-  context,
-}) => {
-  await staff(context, "owner");
-  await openSupport(page);
-  await page.getByLabel("Cases", { exact: true }).selectOption("mine");
-  await page
-    .getByRole("textbox", { name: "Search cases" })
-    .fill("not-a-real-support-case");
-  await page.getByRole("button", { name: "Search cases", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "No matching cases" }),
-  ).toBeVisible();
-  await page.route("**/support/cases?*", (route) =>
-    route.fulfill({
-      status: 503,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "Support fixture outage" }),
-    }),
-  );
-  await page.getByRole("button", { name: "Refresh support inbox" }).click();
-  await expect(
-    page.getByRole("alert").filter({ hasText: "Support fixture outage" }),
-  ).toBeVisible();
-  await page.unroute("**/support/cases?*");
-  await page.getByRole("button", { name: "Retry cases", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "No matching cases" }),
-  ).toBeVisible();
 });
