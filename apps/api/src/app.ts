@@ -1,3 +1,4 @@
+import { registerRetentionRoutes } from "./retention.js";
 import { registerConnectorRoutes, connectorHttpError } from "./connectors.js";
 import { registerQualityRoutes } from "./quality.js";
 import {
@@ -127,8 +128,9 @@ export async function audit(
   entityId: string | null,
   orgId: string | null = null,
   workspaceId: string | null = null,
+  metadata: Record<string, unknown> = {},
 ) {
-  await tx`INSERT INTO audit_events(id,organization_id,workspace_id,actor_id,action,entity_id,ip,user_agent) VALUES (${randomUUID()},${orgId},${workspaceId},${userId},${action},${entityId},${r.ip},${String(r.headers["user-agent"] ?? "").slice(0, 512)})`;
+  await tx`INSERT INTO audit_events(id,organization_id,workspace_id,actor_id,action,entity_id,metadata,ip,user_agent) VALUES (${randomUUID()},${orgId},${workspaceId},${userId},${action},${entityId},${tx.json(metadata as never)},${r.ip},${String(r.headers["user-agent"] ?? "").slice(0, 512)})`;
 }
 async function authToken(user: Actor, purpose: "verify" | "reset") {
   const raw = token();
@@ -680,6 +682,7 @@ export async function buildApp(
   await registerChannelRoutes(app);
   await registerQualityRoutes(app);
   await registerConnectorRoutes(app, options.sharePointClientFactory);
+  await registerRetentionRoutes(app);
   await registerAgentRoutes(
     app,
     options.providerFactory,

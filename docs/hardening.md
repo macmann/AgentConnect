@@ -39,3 +39,7 @@ Live Teams and Slack acceptance also remains pending until administrator-configu
 ## Backup and recovery verification
 
 Run `pnpm recovery:drill` to restore a synthetic encrypted PostgreSQL/object backup into uniquely named local targets and verify tenant data, vectors, object integrity and master-key decryptability. See [backup-recovery.md](backup-recovery.md) for prerequisites, cleanup, measured scope and production recovery acceptance. Scheduled backups, PITR, independent object replication and key escrow remain pending.
+
+## Workspace retention
+
+Migration 0016 adds disabled-by-default workspace retention, administrator settings/preview, daily and manual cleanup batches, tenant-bound generated-object deletion with retries and audit counts. See [retention.md](retention.md) for deletion scope, scheduling, active-work protection, operational monitoring and remaining compliance obligations. Raw audit, knowledge/dataset copies, webhooks, backups and storage old versions require separate policies.

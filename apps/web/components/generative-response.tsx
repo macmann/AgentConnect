@@ -429,7 +429,11 @@ function FileBlock({
           void download();
         }}
       >
-        {busy ? "Preparing…" : "Download file"}
+        {!block.artifactId
+          ? "File expired"
+          : busy
+            ? "Preparing…"
+            : "Download file"}
       </Button>
       {error && (
         <p className="error" role="alert">

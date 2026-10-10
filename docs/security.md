@@ -18,7 +18,7 @@ Agent execution requires a tenant-scoped capability. Model credentials must refe
 
 Anonymous hosted conversation IDs alone grant no continuation access: a random bearer token is required, hashed in storage, and scoped to the deployment. Public metadata does not include prompts or credential references. Guest tokens and all chat output are rendered as text; generated HTML is not executed. Hosted chat has per-IP request limits; tenant spending quotas, moderation and bot protection remain later hardening work.
 
-Conversation content is stored in PostgreSQL and readable by authorized workspace operators/builders. Production retention and privacy controls require the later operations phase. Provider error bodies are redacted. Only IDs, provider/model identity and reported usage are explicitly added to trace spans; review collector access and instrumentation before production.
+Conversation content is stored in PostgreSQL and readable by authorized workspace operators/builders. Workspace retention can remove expired conversations, runs and generated files with administrator settings, preview and scheduled cleanup; see retention.md for protections and remaining privacy obligations. Provider error bodies are redacted. Only IDs, provider/model identity and reported usage are explicitly added to trace spans; review collector access and instrumentation before production.
 
 ## Phase 2 knowledge boundaries
 
@@ -43,3 +43,5 @@ Webhook registration uses a separate exact-host HTTPS policy; delivery uses the 
 ## Phase 10 tenant-isolation checks
 
 Run `pnpm test:security` against isolated test infrastructure; see [coverage](tenant-isolation.md). Widget-origin binding and the current widget allowlist apply to new guest generative actions and artifact download grants as well as chat and handoff. Previously issued signed artifact URLs remain bearer capabilities until their five-minute expiry. The suite verifies permission revocation for new requests and queued connector work; it does not claim independent penetration testing, RLS or interruption of already-authorized streams.
+
+Retention management is restricted to administrators and a saved current policy revision. Scheduled cleanup rechecks and locks current administrator membership, serializes policy updates, locks affected conversation roots and rechecks activity before deleting. Generated-object tombstones accept only the exact tenant/artifact key. Database failure rolls back content deletion and outbox writes; object failure retries without restoring application download access. Raw audit and retention metadata are preserved. Backup copies, old S3 versions, copied datasets, webhook payloads and legal holds require separate controls.

@@ -458,6 +458,7 @@ function deny(
   );
 }
 const collections = [
+  "retention",
   "agents",
   "models",
   "secrets",

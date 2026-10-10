@@ -150,6 +150,9 @@ export const conversations = pgTable("conversations", {
   configSnapshot: jsonb("config_snapshot").notNull(),
   modelSnapshot: jsonb("model_snapshot").notNull(),
   createdAt: created(),
+  lastActivityAt: timestamp("last_activity_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const agentRuns = pgTable("agent_runs", {
@@ -632,4 +635,46 @@ export const connectorItems = pgTable("connector_items", {
   sourceId: uuid("source_id").notNull(),
   fingerprint: text("fingerprint").notNull(),
   lastSeenSync: uuid("last_seen_sync").notNull(),
+});
+
+export const workspaceRetention = pgTable("workspace_retention", {
+  workspaceId: uuid("workspace_id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  enabled: boolean("enabled").notNull().default(false),
+  revision: integer("revision").notNull().default(1),
+  conversationDays: integer("conversation_days"),
+  runDays: integer("run_days"),
+  artifactDays: integer("artifact_days"),
+  connectorDays: integer("connector_days"),
+  updatedBy: uuid("updated_by").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+});
+export const retentionRuns = pgTable("retention_runs", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  policyRevision: integer("policy_revision").notNull(),
+  requestedBy: uuid("requested_by").notNull(),
+  triggerKind: text("trigger_kind").notNull(),
+  status: text("status").notNull(),
+  counts: jsonb("counts").notNull().default({}),
+  errorCode: text("error_code"),
+  createdAt: created(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+export const retentionObjectDeletions = pgTable("retention_object_deletions", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  storageKey: text("storage_key").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  status: text("status").notNull().default("pending"),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  errorCode: text("error_code"),
+  createdAt: created(),
 });

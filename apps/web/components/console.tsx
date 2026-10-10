@@ -1,4 +1,5 @@
 "use client";
+import { RetentionStudio } from "./retention-studio";
 import { ConnectorsStudio } from "./connectors-studio";
 import { QualityStudio } from "./quality-studio";
 import { useEffect, useState, type FormEvent } from "react";
@@ -456,6 +457,7 @@ function Studio() {
             { label: "Quality", icon: Activity },
             { label: "Members", icon: Users },
             { label: "Secrets", icon: KeyRound },
+            { label: "Retention", icon: ShieldCheck },
             { label: "Audit log", icon: Activity },
           ].map(({ label, icon: Icon }) => (
             <button
@@ -570,6 +572,7 @@ function Studio() {
             </div>
           )}
           {[
+            "Retention",
             "Agents",
             "Models",
             "Conversations",
@@ -584,6 +587,12 @@ function Studio() {
           ].includes(view) &&
             (!wid ? (
               <p className="empty">Choose or create a workspace first.</p>
+            ) : view === "Retention" ? (
+              <RetentionStudio
+                key={wid}
+                workspaceId={wid}
+                role={currentWorkspace?.role ?? "viewer"}
+              />
             ) : view === "Agents" ? (
               <AgentStudio
                 onNavigate={setView}

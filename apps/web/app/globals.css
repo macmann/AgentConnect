@@ -2231,3 +2231,70 @@ form small {
   border-top: 1px solid #d5ded9;
   padding: 16px 0;
 }
+
+.retention-studio {
+  display: grid;
+  gap: 24px;
+}
+.retention-settings,
+.retention-preview {
+  padding: 24px;
+}
+.retention-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+.retention-fields label {
+  display: grid;
+  gap: 8px;
+}
+.retention-fields label span,
+.retention-fields small,
+.retention-settings p,
+.retention-preview p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.retention-fields input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: white;
+}
+.retention-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 24px 0 16px;
+}
+.retention-toggle input {
+  width: auto;
+}
+.retention-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 20px 0;
+}
+.retention-counts div {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 130px;
+}
+.retention-counts strong {
+  font-size: 24px;
+}
+.retention-counts span {
+  font-size: 13px;
+}
+@media (max-width: 700px) {
+  .retention-fields {
+    grid-template-columns: 1fr;
+  }
+}
