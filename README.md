@@ -22,3 +22,5 @@ Run `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. API health: `/heal
 Teams and Slack channel ingestion builds on all unmerged Phase 9 changes on `feat/teams-slack-connectors`. Salesforce, Zendesk and Zoho are deferred. The first Phase 10 slice adds bounded schema-aware readiness and `pnpm deployment:check`; see [hardening](docs/hardening.md) for checks and outstanding production acceptance.
 
 The next Phase 10 slice on `feat/tenant-isolation-hardening` adds `pnpm test:security` and closes the widget artifact/action origin-policy gap. See [tenant isolation coverage](docs/tenant-isolation.md).
+
+Run `pnpm recovery:drill` for the isolated local database/object/secret recovery check. See [backup and recovery verification](docs/backup-recovery.md) for prerequisites and production limits.

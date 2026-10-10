@@ -35,3 +35,7 @@ For local development only, `pnpm deployment:check --development` checks the rea
 - Accessibility review with keyboard/screen reader testing, representative performance profiling and operator/customer documentation.
 
 Live Teams and Slack acceptance also remains pending until administrator-configured credentials and approved egress are available. Protocol fixtures exercise the adapters and actual local ingestion; they do not establish live account permission acceptance.
+
+## Backup and recovery verification
+
+Run `pnpm recovery:drill` to restore a synthetic encrypted PostgreSQL/object backup into uniquely named local targets and verify tenant data, vectors, object integrity and master-key decryptability. See [backup-recovery.md](backup-recovery.md) for prerequisites, cleanup, measured scope and production recovery acceptance. Scheduled backups, PITR, independent object replication and key escrow remain pending.
