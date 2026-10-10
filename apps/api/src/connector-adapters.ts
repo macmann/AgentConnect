@@ -17,6 +17,9 @@ import {
   oneDriveSelection,
   oneDriveCredential,
   sharePointSelection,
+  teamsSelection,
+  slackSelection,
+  slackCredential,
 } from "@agentconnect/schemas/connectors";
 import {
   createGoogleDriveAdapter,
@@ -27,6 +30,10 @@ import {
   oneDriveEndpoints,
 } from "./onedrive-adapter.js";
 import { createSharePointAdapter } from "./sharepoint.js";
+import {
+  createTeamsAdapter,
+  createSlackAdapter,
+} from "./messaging-adapters.js";
 import { createPrivateKey } from "node:crypto";
 import { sql } from "./db.js";
 import { decrypt } from "./security.js";
@@ -103,7 +110,8 @@ export async function connectorCredentials(
         throw new Error("Invalid signing key");
       return credential;
     }
-    if (kind === "onedrive" || kind === "sharepoint")
+    if (kind === "slack") return slackCredential.parse(value);
+    if (kind === "onedrive" || kind === "sharepoint" || kind === "teams")
       return oneDriveCredential.parse(value);
     return s3Credential.parse(value);
   } catch {
@@ -111,7 +119,14 @@ export async function connectorCredentials(
   }
 }
 export function validateConnectorSelection(kind: string, selection: unknown) {
-  if (kind === "google-drive") {
+  if (kind === "slack") {
+    slackSelection.parse(selection);
+    validateConnectorEndpoint("https://slack.com/api");
+  } else if (kind === "teams") {
+    teamsSelection.parse(selection);
+    for (const endpoint of oneDriveEndpoints)
+      validateConnectorEndpoint(endpoint);
+  } else if (kind === "google-drive") {
     googleDriveSelection.parse(selection);
     for (const endpoint of googleDriveEndpoints)
       validateConnectorEndpoint(endpoint);
@@ -125,6 +140,19 @@ export function validateConnectorSelection(kind: string, selection: unknown) {
   else throw new ConnectorError("CONNECTOR_UNSUPPORTED");
 }
 export const createSourceAdapter: AdapterFactory = async (connector) => {
+  if (connector.kind === "teams" || connector.kind === "slack") {
+    validateConnectorSelection(connector.kind, connector.selection);
+    const credential = await connectorCredentials(connector, connector.kind);
+    return connector.kind === "teams"
+      ? createTeamsAdapter(
+          teamsSelection.parse(connector.selection),
+          oneDriveCredential.parse(credential),
+        )
+      : createSlackAdapter(
+          slackSelection.parse(connector.selection),
+          slackCredential.parse(credential),
+        );
+  }
   if (connector.kind === "sharepoint") {
     validateConnectorSelection(connector.kind, connector.selection);
     return createSharePointAdapter(

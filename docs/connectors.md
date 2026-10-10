@@ -103,3 +103,19 @@ Pausing cancels active/queued syncs and retains imported knowledge. Disconnectin
 ## Current limits
 
 One connector sync executes at a time per worker process. Sync history returns the latest 50 runs. Counts are stored at completion/failure. Large-bucket streaming, change feeds, retention/connection hard deletion, interactive user OAuth/assume-role renewal, source ACL mirroring, richer exclusion filters and other provider adapters remain extensions. Compatible endpoints are supported through path-style S3 requests; AWS production IAM/KMS/network behavior and live Google Cloud service-account/shared-drive behavior still need live integration acceptance. Local MinIO and protocol-fixture tests establish the implemented pipeline, not enterprise production readiness.
+
+## Microsoft Teams channel messages
+
+Select Microsoft Teams in Connectors and supply a Microsoft Graph team UUID and standard-channel ID (`19:…@thread.tacv2`). Use the shared Entra application JSON secret `{ "tenantId": "UUID", "clientId": "UUID", "clientSecret": "…" }`. Grant `Channel.ReadBasic.All` and `ChannelMessage.Read.All` application permissions with administrator consent. Approve `graph.microsoft.com` and `login.microsoftonline.com` in `CONNECTOR_ALLOWED_HOSTS` on API and worker. Access tokens renew in memory. This connector only reads channel metadata, messages and replies; it never sends messages. Private/shared channels, chats, files and interactive delegated sign-in are outside this slice.
+
+## Slack channel messages
+
+Select Slack and supply the workspace ID (`T…`) and channel ID (`C…` or `G…`). Save a JSON workspace secret `{ "token": "xoxp-…" }` containing the app's **user OAuth token**, with `channels:read`, `channels:history`, `groups:read` and `groups:history` as appropriate. The authorizing user must belong to the selected channel. Bot tokens cannot read channel replies through this flow and are rejected. Approve `slack.com` in `CONNECTOR_ALLOWED_HOSTS` on API and worker. The token's workspace is checked with `auth.test`; direct messages and externally shared channels are excluded. Rotate/revoke the token in Slack and update the selected workspace secret as needed. This release does not implement installation OAuth or refresh-token rotation.
+
+## Channel sync semantics
+
+Each message and reply becomes a separate TXT knowledge source with channel/thread/author metadata and an official message link. Teams HTML is converted to plain text without active markup. Files and attachments are excluded. Each complete scan is bounded by `maxObjects` (1–1000 messages **including replies and deleted/empty records**), 100 pages per collection, 1 MB per text source and 10 MB aggregate snapshot. Slack uses 15-message pages to accommodate restricted app pagination; large or slow channels can exceed the five-minute sync deadline. Use this release for small, curated channels. It has no rolling date window, archive export, delta feed or provider retry/backoff service.
+
+Snapshots are imported from the same bounded in-memory scan; unchanged content hashes skip ingestion. Edits update managed source revisions. Successfully completed inventories reconcile missing messages; incomplete/rejected/over-limit scans retain existing sources. Provider history may reflect retention or concurrent changes; there is no cross-request atomic provider snapshot. Imported content inherits knowledge-base access rather than mirroring channel membership. Choose an appropriately restricted knowledge base before importing. Pausing/disconnecting retains knowledge, and source workspace/channel identifiers cannot be edited after creation.
+
+Teams/Slack tests use explicit provider-protocol fixtures; real account acceptance requires your app credentials, permissions and approved egress.

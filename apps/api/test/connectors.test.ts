@@ -1,3 +1,13 @@
+import { messagingFixture } from "./messaging-fixture.js";
+import {
+  createTeamsAdapter,
+  createSlackAdapter,
+} from "../src/messaging-adapters.js";
+import {
+  teamsSelection,
+  slackSelection,
+  slackCredential,
+} from "@agentconnect/schemas/connectors";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID, generateKeyPairSync } from "node:crypto";
@@ -995,3 +1005,112 @@ test("SharePoint site-bound registry sync ingests documents and preserves source
     200,
   );
 });
+
+for (const kind of ["teams", "slack"] as const) {
+  test(`${kind} registration, tenant access, message ingestion, updates and safe removals use the durable sync pipeline`, async () => {
+    const f = messagingFixture(kind);
+    const saved = await call("POST", base + "/secrets", {
+      name: kind.toUpperCase() + "_CHANNEL",
+      value: JSON.stringify(f.credential),
+    });
+    assert.equal(saved.statusCode, 201, saved.body);
+    const sid = (await call("GET", base + "/secrets"))
+      .json()
+      .find(
+        (s: { name: string }) => s.name === kind.toUpperCase() + "_CHANNEL",
+      ).id;
+    const input = {
+      name: kind + " Support",
+      kind,
+      knowledgeBaseId: kbId,
+      secretId: sid,
+      selection: f.selection,
+    };
+    config.CONNECTOR_ALLOWED_HOSTS = "";
+    assert.equal(
+      (await call("POST", base + "/connectors", input)).statusCode,
+      400,
+    );
+    config.CONNECTOR_ALLOWED_HOSTS =
+      kind === "teams"
+        ? "graph.microsoft.com,login.microsoftonline.com"
+        : "slack.com";
+    assert.equal(
+      (await call("POST", base + "/connectors", input, "builder")).statusCode,
+      403,
+    );
+    assert.equal(
+      (await call("POST", base + "/connectors", input, "outsider")).statusCode,
+      403,
+    );
+    const created = await call("POST", base + "/connectors", input);
+    assert.equal(created.statusCode, 201, created.body);
+    const cid = created.json().id;
+    assert.ok(
+      !(await call("GET", base + "/connectors")).body.includes(
+        "fixture-user-token",
+      ),
+    );
+    const factory: AdapterFactory = async (c) =>
+      kind === "teams"
+        ? createTeamsAdapter(
+            teamsSelection.parse(c.selection),
+            oneDriveCredential.parse(await connectorCredentials(c, c.kind)),
+            f.transport,
+          )
+        : createSlackAdapter(
+            slackSelection.parse(c.selection),
+            slackCredential.parse(await connectorCredentials(c, c.kind)),
+            f.transport,
+          );
+    let job = await queue(cid);
+    await processConnectorSync(factory);
+    assert.equal((await run(job)).status, "completed");
+    assert.equal((await run(job)).counts.imported, 2);
+    const items =
+      await sql`SELECT source_id FROM connector_items WHERE connector_id=${cid}`;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await processKnowledgeJob(embedding);
+      const ready =
+        await sql`SELECT id FROM knowledge_sources WHERE id IN ${sql(items.map((i) => i.source_id))} AND status='ready'`;
+      if (ready.length === 2) break;
+    }
+    const sources =
+      await sql`SELECT status,source_url FROM knowledge_sources WHERE id IN ${sql(items.map((i) => i.source_id))}`;
+    assert.ok(
+      sources.every(
+        (s) =>
+          s.status === "ready" &&
+          s.source_url.includes(
+            kind === "teams" ? "teams.microsoft.com" : "app.slack.com",
+          ),
+      ),
+    );
+    job = await queue(cid);
+    await processConnectorSync(factory);
+    assert.equal((await run(job)).counts.unchanged, 2);
+    f.state.text = "Refunds now within 60 days.";
+    job = await queue(cid);
+    await processConnectorSync(factory);
+    assert.equal((await run(job)).counts.updated, 1);
+    f.state.denied = true;
+    job = await queue(cid);
+    await processConnectorSync(factory);
+    assert.equal((await run(job)).error_code, "CONNECTOR_ACCESS_DENIED");
+    assert.equal(
+      (
+        await sql`SELECT id FROM knowledge_sources WHERE id IN ${sql(items.map((i) => i.source_id))} AND status='deleted'`
+      ).length,
+      0,
+    );
+    f.state.denied = false;
+    f.state.visible = false;
+    job = await queue(cid);
+    await processConnectorSync(factory);
+    assert.equal((await run(job)).counts.removed, 2);
+    assert.equal(
+      (await call("DELETE", base + "/connectors/" + cid)).statusCode,
+      200,
+    );
+  });
+}

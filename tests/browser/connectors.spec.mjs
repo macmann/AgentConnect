@@ -171,7 +171,7 @@ test("S3 setup, worker ingestion, incremental sync, schedule, pause and disconne
     .click();
   await expect(
     page.getByText(
-      "Connector saved. Run Sync now to verify access and import files.",
+      "Connector saved. Run Sync now to verify access and import sources.",
       { exact: true },
     ),
   ).toBeVisible();
@@ -307,7 +307,7 @@ test("Google Drive setup explains sharing, saves selected provider and locks sou
     .click();
   await expect(
     page.getByText(
-      "Connector saved. Run Sync now to verify access and import files.",
+      "Connector saved. Run Sync now to verify access and import sources.",
       { exact: true },
     ),
   ).toBeVisible();
@@ -421,7 +421,7 @@ test("OneDrive setup requires drive and folder IDs, saves application credential
     .click();
   await expect(
     page.getByText(
-      "Connector saved. Run Sync now to verify access and import files.",
+      "Connector saved. Run Sync now to verify access and import sources.",
       { exact: true },
     ),
   ).toBeVisible();
@@ -603,7 +603,7 @@ test("SharePoint discovery wizard selects a library folder, resets stale choices
     .click();
   await expect(
     page.getByText(
-      "Connector saved. Run Sync now to verify access and import files.",
+      "Connector saved. Run Sync now to verify access and import sources.",
       { exact: true },
     ),
   ).toBeVisible();
@@ -641,3 +641,114 @@ test("SharePoint discovery wizard selects a library folder, resets stale choices
   ).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+for (const kind of ["teams", "slack"]) {
+  test(`${kind} channel setup links, registration and lifecycle controls persist without exposing credentials`, async ({
+    page,
+    context,
+  }) => {
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await context.addCookies([
+      {
+        name: "session",
+        value: session,
+        url: "http://localhost:3000",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    const base = `http://localhost:4000/workspaces/${workspace}`;
+    const saved = await context.request.post(base + "/secrets", {
+      headers: { origin: "http://localhost:3000" },
+      data: {
+        name: kind.toUpperCase() + "_MESSAGES",
+        value: JSON.stringify(
+          kind === "teams"
+            ? {
+                tenantId: randomUUID(),
+                clientId: randomUUID(),
+                clientSecret: "fixture-teams-client-secret",
+              }
+            : { token: "xoxp-fixture-slack-user-token" },
+        ),
+      },
+    });
+    expect(saved.status()).toBe(201);
+    const secrets = await (await context.request.get(base + "/secrets")).json(),
+      bases = await (
+        await context.request.get(base + "/knowledge-bases")
+      ).json();
+    await page.goto("/");
+    await page.getByRole("button", { name: "Connectors", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Add connector", exact: true })
+      .click();
+    await page
+      .getByLabel("Connector provider", { exact: true })
+      .selectOption(kind);
+    await expect(
+      page.getByRole("button", { name: "Open Secrets", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/Imported content inherits knowledge base access/),
+    ).toBeVisible();
+    await page
+      .getByLabel("Connector name", { exact: true })
+      .fill(kind + " support");
+    await page
+      .getByLabel("Connector knowledge base", { exact: true })
+      .selectOption(bases[0].id);
+    await page
+      .getByLabel("Source workspace credential", { exact: true })
+      .selectOption(
+        secrets.find((s) => s.name === kind.toUpperCase() + "_MESSAGES").id,
+      );
+    await expect(
+      page.getByRole("button", { name: "Save connector", exact: true }),
+    ).toBeDisabled();
+    const teamId = kind === "teams" ? randomUUID() : "TFIXTURE",
+      channelId = kind === "teams" ? "19:fixture@thread.tacv2" : "CFIXTURE";
+    const teamLabel = kind === "teams" ? "Teams team ID" : "Slack workspace ID";
+    await page.getByLabel(teamLabel, { exact: true }).fill(teamId);
+    await page.getByLabel("Channel ID", { exact: true }).fill(channelId);
+    await page
+      .getByRole("button", { name: "Save connector", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Sync now", exact: true }),
+    ).toBeVisible();
+    const records = await (
+        await context.request.get(base + "/connectors")
+      ).json(),
+      record = records.find((c) => c.name === kind + " support");
+    expect(record.kind).toBe(kind);
+    expect(record.selection).toEqual({ teamId, channelId, maxObjects: 100 });
+    expect(JSON.stringify(records)).not.toContain("fixture-slack-user-token");
+    await page
+      .getByRole("button", { name: "Edit connector", exact: true })
+      .click();
+    await expect(page.getByLabel(teamLabel, { exact: true })).toBeDisabled();
+    await expect(page.getByLabel("Channel ID", { exact: true })).toBeDisabled();
+    await page
+      .getByLabel("Connector name", { exact: true })
+      .fill(kind + " renamed");
+    await page
+      .getByRole("button", { name: "Save connector", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Pause connector", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Sync now", exact: true }),
+    ).toBeDisabled();
+    await page.getByRole("button", { name: "Resume connector", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Sync now", exact: true }),
+    ).toBeEnabled();
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Disconnect connector", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: kind + " renamed", exact: true }),
+    ).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+}

@@ -231,9 +231,9 @@ export function connectorHttpError(error: unknown) {
     return new HttpError(
       error.code === "CONNECTOR_ENDPOINT_NOT_ALLOWED" ? 400 : 409,
       error.code === "CONNECTOR_ENDPOINT_NOT_ALLOWED"
-        ? "Connector endpoint is not approved. Google Drive requires www.googleapis.com and oauth2.googleapis.com; OneDrive and SharePoint require graph.microsoft.com and login.microsoftonline.com. Add its exact host to CONNECTOR_ALLOWED_HOSTS in the API and worker environment, preserving existing hosts, then restart both services. Trusted private endpoints require CONNECTOR_PRIVATE_HOSTS."
+        ? "Connector endpoint is not approved. Google Drive requires www.googleapis.com and oauth2.googleapis.com; OneDrive, SharePoint and Teams require graph.microsoft.com and login.microsoftonline.com; Slack requires slack.com. Add its exact host to CONNECTOR_ALLOWED_HOSTS in the API and worker environment, preserving existing hosts, then restart both services. Trusted private endpoints require CONNECTOR_PRIVATE_HOSTS."
         : error.code === "CONNECTOR_CREDENTIAL_INVALID"
-          ? "Credential JSON must match the provider: S3 needs accessKeyId and secretAccessKey; Google Drive needs service-account client_email and an RSA private_key; OneDrive/SharePoint need tenantId, clientId and clientSecret."
+          ? "Credential JSON must match the provider: S3 needs accessKeyId and secretAccessKey; Google Drive needs service-account client_email and an RSA private_key; OneDrive/SharePoint/Teams need tenantId, clientId and clientSecret; Slack needs a user token in a JSON token field (xoxp-...)."
           : error.code,
     );
   return null;

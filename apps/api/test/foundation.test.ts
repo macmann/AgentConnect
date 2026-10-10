@@ -378,3 +378,20 @@ test("password reset is one-time and revokes existing sessions", async () => {
     await sql`SELECT id_hash FROM sessions WHERE id_hash=${digest(outsider.replace("session=", ""))}`;
   assert.equal(s, undefined);
 });
+
+test("operational liveness remains available above the application rate limit", async () => {
+  for (let offset = 0; offset < 305; offset += 10) {
+    const responses = await Promise.all(
+      Array.from({ length: Math.min(10, 305 - offset) }, () =>
+        app.inject({
+          method: "GET",
+          url: "/health/live",
+          remoteAddress: "127.0.0.22",
+        }),
+      ),
+    );
+    assert.ok(
+      responses.every((r) => r.statusCode === 200 && r.json().status === "ok"),
+    );
+  }
+});

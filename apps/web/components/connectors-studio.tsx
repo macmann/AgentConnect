@@ -7,7 +7,7 @@ import { Button } from "./button";
 type Connector = {
   id: string;
   name: string;
-  kind: "s3" | "google-drive" | "onedrive" | "sharepoint";
+  kind: "s3" | "google-drive" | "onedrive" | "sharepoint" | "teams" | "slack";
   knowledge_name: string;
   knowledge_base_id: string;
   secret_id: string;
@@ -25,6 +25,8 @@ type Connector = {
     folderId?: string;
     driveId?: string;
     siteId?: string;
+    teamId?: string;
+    channelId?: string;
     recursive?: boolean;
     maxObjects: number;
   };
@@ -75,8 +77,10 @@ export function ConnectorsStudio({
     [editing, setEditing] = useState(false),
     [name, setName] = useState(""),
     [kind, setKind] = useState<
-      "s3" | "google-drive" | "onedrive" | "sharepoint"
+      "s3" | "google-drive" | "onedrive" | "sharepoint" | "teams" | "slack"
     >("s3"),
+    [teamId, setTeamId] = useState(""),
+    [channelId, setChannelId] = useState(""),
     [folderId, setFolderId] = useState(""),
     [driveId, setDriveId] = useState(""),
     [siteId, setSiteId] = useState(""),
@@ -165,6 +169,8 @@ export function ConnectorsStudio({
     setName(c?.name ?? "");
     setKind(c?.kind ?? "s3");
     setSiteId(c?.selection.siteId ?? "");
+    setTeamId(c?.selection.teamId ?? "");
+    setChannelId(c?.selection.channelId ?? "");
     setSiteUrl("");
     setSite(null);
     setLibraries([]);
@@ -200,8 +206,8 @@ export function ConnectorsStudio({
           <div>
             <h3>Enterprise sources</h3>
             <p>
-              Sync approved S3, Google Drive, OneDrive or SharePoint documents
-              into a knowledge base.
+              Sync approved document sources and Teams or Slack channels into a
+              knowledge base.
             </p>
           </div>
           {canManage && (
@@ -230,7 +236,7 @@ export function ConnectorsStudio({
               <h4>No enterprise sources yet</h4>
               <p>
                 Create a knowledge base and save a source credential, then
-                connect an S3 prefix, Google Drive or OneDrive folder.
+                connect a document folder or a Teams or Slack channel.
               </p>
               <div className="button-row">
                 <Button onClick={() => onNavigate("Knowledge")}>
@@ -261,7 +267,9 @@ export function ConnectorsStudio({
                 {c.knowledge_name} ·{" "}
                 {c.kind === "s3"
                   ? `${c.selection.bucket}/${c.selection.prefix}`
-                  : `${c.kind === "sharepoint" ? "SharePoint" : c.kind === "onedrive" ? "OneDrive" : "Google Drive"} folder ${c.selection.folderId}`}{" "}
+                  : c.kind === "teams" || c.kind === "slack"
+                    ? `${c.kind === "teams" ? "Teams" : "Slack"} channel ${c.selection.channelId}`
+                    : `${c.kind === "sharepoint" ? "SharePoint" : c.kind === "onedrive" ? "OneDrive" : "Google Drive"} folder ${c.selection.folderId}`}{" "}
                 · {c.enabled ? (c.status ?? "Not synced") : "Paused"}
               </span>
             </button>
@@ -269,7 +277,7 @@ export function ConnectorsStudio({
           {editing && canManage && (
             <>
               <h4>
-                {connector ? "Edit connector" : "Connect a document source"}
+                {connector ? "Edit connector" : "Connect a knowledge source"}
               </h4>
               <label>
                 Provider
@@ -281,6 +289,8 @@ export function ConnectorsStudio({
                     resetDiscovery();
                     setDriveId("");
                     setFolderId("");
+                    setTeamId("");
+                    setChannelId("");
                     setKind(e.target.value as Connector["kind"]);
                   }}
                 >
@@ -288,6 +298,8 @@ export function ConnectorsStudio({
                   <option value="google-drive">Google Drive</option>
                   <option value="onedrive">OneDrive for Business</option>
                   <option value="sharepoint">SharePoint</option>
+                  <option value="teams">Microsoft Teams</option>
+                  <option value="slack">Slack</option>
                 </select>
               </label>
               <label>
@@ -342,9 +354,13 @@ export function ConnectorsStudio({
               <p>
                 {kind === "s3"
                   ? "Save a JSON secret with accessKeyId, secretAccessKey and optional sessionToken. Grant only ListBucket and GetObject for the selected prefix."
-                  : kind === "onedrive" || kind === "sharepoint"
+                  : kind === "onedrive" ||
+                      kind === "sharepoint" ||
+                      kind === "teams"
                     ? "Register a Microsoft Entra application with read-only Microsoft Graph application permissions and administrator consent. Save a JSON secret with tenantId, clientId and clientSecret. Access tokens renew automatically. Personal OneDrive accounts need a future delegated sign-in flow."
-                    : "Enable Google Drive API in your Google Cloud project. Save the service-account JSON key in Secrets, then share this folder with its client_email as Viewer. Tokens refresh automatically; no user impersonation is used."}{" "}
+                    : kind === "slack"
+                      ? "Save a JSON secret with token set to your Slack app user OAuth token (xoxp-...). Grant channels:read, channels:history, groups:read and groups:history for the selected channel. The authorizing user must be a channel member. Bot tokens do not support this channel-replies flow."
+                      : "Enable Google Drive API in your Google Cloud project. Save the service-account JSON key in Secrets, then share this folder with its client_email as Viewer. Tokens refresh automatically; no user impersonation is used."}{" "}
                 Values remain encrypted on the server.
               </p>
               <Button onClick={() => onNavigate("Secrets")}>
@@ -399,6 +415,50 @@ export function ConnectorsStudio({
                     selects the whole bucket. Source location and knowledge base
                     are fixed after creation; create another connector to change
                     them.
+                  </p>
+                </>
+              ) : kind === "teams" || kind === "slack" ? (
+                <>
+                  <label>
+                    {kind === "teams" ? "Teams team ID" : "Slack workspace ID"}
+                    <input
+                      aria-label={
+                        kind === "teams"
+                          ? "Teams team ID"
+                          : "Slack workspace ID"
+                      }
+                      disabled={!!connector || busy}
+                      value={teamId}
+                      onChange={(e) => setTeamId(e.target.value)}
+                      placeholder={
+                        kind === "teams" ? "Microsoft Graph team UUID" : "T…"
+                      }
+                    />
+                  </label>
+                  <label>
+                    Channel ID
+                    <input
+                      aria-label="Channel ID"
+                      disabled={!!connector || busy}
+                      value={channelId}
+                      onChange={(e) => setChannelId(e.target.value)}
+                      placeholder={
+                        kind === "teams" ? "19:…@thread.tacv2" : "C… or G…"
+                      }
+                    />
+                  </label>
+                  <p>
+                    {kind === "teams"
+                      ? "Use IDs from Microsoft Graph or decode the channel link. Grant ChannelMessage.Read.All and Channel.ReadBasic.All application permissions with administrator consent. Approve graph.microsoft.com and login.microsoftonline.com in CONNECTOR_ALLOWED_HOSTS on API and worker. This release supports standard channels."
+                      : "Use the workspace ID from your Slack web URL and Channel ID from channel details. Approve slack.com in CONNECTOR_ALLOWED_HOSTS on API and worker. Direct messages and externally shared channels are excluded."}
+                  </p>
+                  <p>
+                    Messages and replies become searchable text sources. Files
+                    are excluded. Set the scan limit high enough for the whole
+                    channel; an incomplete scan fails without removing sources.
+                    Imported content inherits knowledge base access, so select a
+                    base approved for this channel’s audience. Workspace and
+                    channel stay fixed after creation.
                   </p>
                 </>
               ) : kind === "sharepoint" ? (
@@ -676,9 +736,11 @@ export function ConnectorsStudio({
                   !secret ||
                   (kind === "s3"
                     ? !bucket
-                    : !folderId ||
-                      ((kind === "onedrive" || kind === "sharepoint") &&
-                        !driveId)) ||
+                    : kind === "teams" || kind === "slack"
+                      ? !teamId || !channelId
+                      : !folderId ||
+                        ((kind === "onedrive" || kind === "sharepoint") &&
+                          !driveId)) ||
                   (kind === "sharepoint" && (!siteId || !folderConfirmed))
                 }
                 onClick={() =>
@@ -714,22 +776,28 @@ export function ConnectorsStudio({
                                   prefix,
                                   maxObjects: limit,
                                 }
-                              : kind === "sharepoint"
-                                ? {
-                                    siteId,
-                                    driveId,
-                                    folderId,
-                                    recursive,
-                                    maxObjects: limit,
-                                  }
-                                : kind === "onedrive"
+                              : kind === "teams" || kind === "slack"
+                                ? { teamId, channelId, maxObjects: limit }
+                                : kind === "sharepoint"
                                   ? {
+                                      siteId,
                                       driveId,
                                       folderId,
                                       recursive,
                                       maxObjects: limit,
                                     }
-                                  : { folderId, recursive, maxObjects: limit },
+                                  : kind === "onedrive"
+                                    ? {
+                                        driveId,
+                                        folderId,
+                                        recursive,
+                                        maxObjects: limit,
+                                      }
+                                    : {
+                                        folderId,
+                                        recursive,
+                                        maxObjects: limit,
+                                      },
                           scheduleMinutes: schedule ? Number(schedule) : null,
                         },
                       );
@@ -737,7 +805,7 @@ export function ConnectorsStudio({
                     }
                     setEditing(false);
                     setNotice(
-                      "Connector saved. Run Sync now to verify access and import files.",
+                      "Connector saved. Run Sync now to verify access and import sources.",
                     );
                   })
                 }
@@ -759,7 +827,7 @@ export function ConnectorsStudio({
                   : ""}
               </p>
               <p>
-                Sync imports files and queues document parsing/embedding
+                Sync imports sources and queues document parsing/embedding
                 separately. Open Knowledge to check source readiness before
                 attaching it to an agent.
               </p>

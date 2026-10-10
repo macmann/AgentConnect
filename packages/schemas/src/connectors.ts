@@ -81,6 +81,32 @@ export const sharePointDiscoveryInput = z.discriminatedUnion("action", [
     })
     .strict(),
 ]);
+export const teamsSelection = z
+  .object({
+    teamId: z.uuid(),
+    channelId: z
+      .string()
+      .regex(/^19:[a-zA-Z0-9_.-]+@thread\.(tacv2|skype)$/)
+      .max(200),
+    maxObjects: z.number().int().min(1).max(1000).default(100),
+  })
+  .strict();
+export const slackSelection = z
+  .object({
+    teamId: z.string().regex(/^T[A-Z0-9]{2,30}$/),
+    channelId: z.string().regex(/^[CG][A-Z0-9]{2,30}$/),
+    maxObjects: z.number().int().min(1).max(1000).default(100),
+  })
+  .strict();
+export const slackCredential = z
+  .object({
+    token: z
+      .string()
+      .trim()
+      .regex(/^xoxp-[A-Za-z0-9-]+$/)
+      .max(10000),
+  })
+  .strict();
 const connectorCommon = {
   name: z.string().trim().min(1).max(100),
   knowledgeBaseId: z.uuid(),
@@ -88,6 +114,20 @@ const connectorCommon = {
   scheduleMinutes: z.number().int().min(15).max(10080).nullable().default(null),
 };
 export const connectorInput = z.discriminatedUnion("kind", [
+  z
+    .object({
+      ...connectorCommon,
+      kind: z.literal("teams"),
+      selection: teamsSelection,
+    })
+    .strict(),
+  z
+    .object({
+      ...connectorCommon,
+      kind: z.literal("slack"),
+      selection: slackSelection,
+    })
+    .strict(),
   z
     .object({
       ...connectorCommon,
