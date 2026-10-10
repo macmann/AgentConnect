@@ -21,9 +21,13 @@ Checks run concurrently with a five-second deadline per dependency, share concur
 
 For local development only, `pnpm deployment:check --development` checks the real schema/dependencies while explicitly omitting production environment/role/default-credential requirements. Never treat that result as production acceptance. The CLI prints safe status/check names or a failure code and returns nonzero on failure; it does not print credentials or provider error bodies.
 
+## Tenant isolation regressions
+
+`pnpm test:security` exercises real API/database/storage boundaries across sibling workspaces and unrelated organizations, with explicit model protocol fixtures. It covers scoped registries, histories, attachments, all six connector providers, nested references, API keys, widget tokens, session/membership revocation and composite database constraints. Widget artifact grants and actions now enforce the originating conversation site and current widget access policy. See [coverage and limits](tenant-isolation.md), including the existing five-minute bearer lifetime of already-issued artifact links.
+
 ## Remaining Phase 10 acceptance
 
-- Independent penetration testing and expanded cross-tenant negative cases, including published/widget/API-key access, attachments, histories and every new connector.
+- Independent penetration testing and expanded concurrency/race assessment beyond the implemented tenant-isolation regressions.
 - Measured agent/ingestion/workflow throughput and p95 targets; worker crash/lease recovery under load; database/Redis/S3/Temporal failover with real infrastructure.
 - Encrypted PostgreSQL point-in-time recovery, object versioning/replication and secure master-key backups. Restore all three into an isolated environment, check tenant data and decryptability, and measure RPO/RTO. A database-only backup cannot restore encrypted objects and secrets.
 - Organization-approved retention periods covering messages, runs, generated artifacts, evaluations, connector history, raw objects and audit events. Current source deletion/purge does not provide comprehensive retention policy enforcement.
@@ -31,3 +35,7 @@ For local development only, `pnpm deployment:check --development` checks the rea
 - Accessibility review with keyboard/screen reader testing, representative performance profiling and operator/customer documentation.
 
 Live Teams and Slack acceptance also remains pending until administrator-configured credentials and approved egress are available. Protocol fixtures exercise the adapters and actual local ingestion; they do not establish live account permission acceptance.
+
+## Backup and recovery verification
+
+Run `pnpm recovery:drill` to restore a synthetic encrypted PostgreSQL/object backup into uniquely named local targets and verify tenant data, vectors, object integrity and master-key decryptability. See [backup-recovery.md](backup-recovery.md) for prerequisites, cleanup, measured scope and production recovery acceptance. Scheduled backups, PITR, independent object replication and key escrow remain pending.

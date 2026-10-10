@@ -148,7 +148,9 @@ See connectors.md for setup, permissions and the initial release's sync semantic
 - [x] Readiness verifies required release migrations and actual pgvector extension version.
 - [x] Read-only deployment preflight with explicit production environment, database privilege and default-credential checks.
 - [x] Executable local readiness concurrency smoke and deployment/recovery runbook.
-- [ ] Independent penetration testing, expanded tenant-isolation assessment and realistic agent/workflow load tests.
+- [x] Adversarial tenant/workspace reference checks across registries, histories, attachments, six connector providers, public tokens and revocation; widget artifact/action origin-policy guard.
+- [x] Isolated synthetic PostgreSQL/S3 encrypted recovery drill with tenant, vector, secret and corruption verification.
+- [ ] Independent penetration testing, broader concurrency/race assessment and realistic agent/workflow load tests.
 - [ ] Production HA/failover, measured backup/restore RPO/RTO, comprehensive data retention, release automation and on-premise packaging.
 - [ ] Performance targets, accessibility review and live provider/SMTP acceptance.
 

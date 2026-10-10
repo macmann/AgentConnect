@@ -13,6 +13,7 @@ import { HttpError } from "./http-error.js";
 import { sql } from "./db.js";
 import { config } from "./config.js";
 import { digest } from "./security.js";
+import { widgetOriginAllowed } from "./channels.js";
 import {
   storeKnowledge,
   readKnowledge,
@@ -95,7 +96,7 @@ export async function prepareArtifacts(
 }
 async function messageAccess(r: FastifyRequest, messageId: string) {
   const [m] =
-    await sql`SELECT m.*,c.user_id,c.guest_token_hash,c.deployment_id,c.config_snapshot FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.id=${messageId} AND m.role='assistant'`;
+    await sql`SELECT m.*,c.user_id,c.guest_token_hash,c.deployment_id,c.config_snapshot,c.channel,c.widget_origin FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.id=${messageId} AND m.role='assistant'`;
   if (!m) throw new HttpError(404, "Assistant message not found");
   const bearer = r.headers.authorization?.replace(/^Bearer /, "");
   let userId: string | null = null;
@@ -105,6 +106,15 @@ async function messageAccess(r: FastifyRequest, messageId: string) {
     if (!active) throw new HttpError(403, "Deployment is no longer available");
     if (bearer.length > 128 || digest(bearer) !== m.guest_token_hash)
       throw new HttpError(403, "Conversation token required");
+    if (
+      m.channel === "widget" &&
+      (m.widget_origin !== r.headers.origin ||
+        !(await widgetOriginAllowed(m.deployment_id, r.headers.origin)))
+    )
+      throw new HttpError(
+        403,
+        "Conversation origin or widget policy does not match",
+      );
   } else {
     const u = await actor(r);
     await workspaceAccess(u.id, m.workspace_id, "conversation:view");
