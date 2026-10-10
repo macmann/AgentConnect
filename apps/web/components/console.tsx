@@ -1,4 +1,5 @@
 "use client";
+import { ConnectorsStudio } from "./connectors-studio";
 import { QualityStudio } from "./quality-studio";
 import { useEffect, useState, type FormEvent } from "react";
 import {
@@ -445,6 +446,7 @@ function Studio() {
             { label: "Agents", icon: Sparkles },
             { label: "Models", icon: Boxes },
             { label: "Knowledge", icon: BookOpen },
+            { label: "Connectors", icon: Boxes },
             { label: "Tools", icon: Boxes },
             { label: "Workflows", icon: Workflow },
             { label: "Conversations", icon: Activity },
@@ -576,6 +578,7 @@ function Studio() {
             "Channels",
             "Quality",
             "Knowledge",
+            "Connectors",
             "Tools",
             "Workflows",
           ].includes(view) &&
@@ -587,6 +590,13 @@ function Studio() {
                 key={wid}
                 workspaceId={wid}
                 role={currentWorkspace?.role ?? "viewer"}
+              />
+            ) : view === "Connectors" ? (
+              <ConnectorsStudio
+                key={wid}
+                workspaceId={wid}
+                role={currentWorkspace?.role ?? "viewer"}
+                onNavigate={setView}
               />
             ) : view === "Quality" ? (
               <QualityStudio

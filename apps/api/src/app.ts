@@ -1,3 +1,4 @@
+import { registerConnectorRoutes, connectorHttpError } from "./connectors.js";
 import { registerQualityRoutes } from "./quality.js";
 import {
   registerChannelRoutes,
@@ -271,6 +272,11 @@ export async function buildApp(
               : 400,
         )
         .send({ error: error.code });
+    const connectorError = connectorHttpError(error);
+    if (connectorError)
+      return reply
+        .code(connectorError.statusCode)
+        .send({ error: connectorError.message });
     if (error instanceof ProviderError)
       return reply
         .code(error.retryable ? 503 : 400)
@@ -699,6 +705,7 @@ export async function buildApp(
   await registerGenerativeRoutes(app);
   await registerChannelRoutes(app);
   await registerQualityRoutes(app);
+  await registerConnectorRoutes(app);
   await registerAgentRoutes(
     app,
     options.providerFactory,

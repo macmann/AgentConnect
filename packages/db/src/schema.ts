@@ -589,3 +589,47 @@ export const agentQualityGates = pgTable("agent_quality_gates", {
   updatedBy: uuid("updated_by").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 });
+
+export const enterpriseConnectors = pgTable("enterprise_connectors", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  kind: text("kind").notNull(),
+  knowledgeBaseId: uuid("knowledge_base_id").notNull(),
+  secretId: uuid("secret_id"),
+  selection: jsonb("selection").notNull(),
+  enabled: boolean("enabled").notNull(),
+  revision: integer("revision").notNull(),
+  scheduleMinutes: integer("schedule_minutes"),
+  nextSyncAt: timestamp("next_sync_at", { withTimezone: true }),
+  createdBy: uuid("created_by").notNull(),
+  updatedBy: uuid("updated_by").notNull(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  createdAt: created(),
+});
+export const connectorSyncs = pgTable("connector_syncs", {
+  id: uuid("id").primaryKey(),
+  connectorId: uuid("connector_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  requestedBy: uuid("requested_by").notNull(),
+  connectorRevision: integer("connector_revision").notNull(),
+  status: text("status").notNull(),
+  attempts: integer("attempts").notNull(),
+  leaseToken: uuid("lease_token"),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
+  counts: jsonb("counts").notNull(),
+  errorCode: text("error_code"),
+  createdAt: created(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+export const connectorItems = pgTable("connector_items", {
+  connectorId: uuid("connector_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  externalKey: text("external_key").notNull(),
+  sourceId: uuid("source_id").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  lastSeenSync: uuid("last_seen_sync").notNull(),
+});

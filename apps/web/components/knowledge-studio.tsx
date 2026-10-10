@@ -40,7 +40,13 @@ type Source = {
   error_code: string | null;
   revision: number;
   chunk_count: number;
-  metadata: { question?: string; answer?: string; tags?: string[] };
+  metadata: {
+    question?: string;
+    answer?: string;
+    tags?: string[];
+    connectorId?: string;
+    externalKey?: string;
+  };
 };
 type Result = {
   query: string;
@@ -763,8 +769,16 @@ export function KnowledgeStudio({
                           <td>
                             <strong>{s.title}</strong>
                             <small>
-                              {s.kind} · revision {s.revision}
+                              {s.metadata.connectorId ? "S3 connector" : s.kind}{" "}
+                              · revision {s.revision}
                             </small>
+                            {s.metadata.connectorId && (
+                              <small>
+                                Managed source: {s.metadata.externalKey}. Sync
+                                can restore a deleted file while the connector
+                                is active.
+                              </small>
+                            )}
                           </td>
                           <td>
                             <span className={"source-status " + s.status}>

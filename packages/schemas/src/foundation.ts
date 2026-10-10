@@ -35,6 +35,9 @@ export const resetInput = tokenInput.extend({
 });
 export const emailInput = z.object({ email: credentials.shape.email });
 export const capabilities = [
+  "connector:read",
+  "connector:manage",
+  "connector:sync",
   "quality:read",
   "quality:manage",
   "quality:execute",
@@ -71,6 +74,8 @@ const grants: Record<Role, readonly Capability[]> = {
   org_admin: capabilities,
   workspace_admin: capabilities.filter((c) => c !== "workspace:create"),
   builder: [
+    "connector:read",
+    "connector:sync",
     "quality:read",
     "quality:manage",
     "quality:execute",
@@ -93,6 +98,7 @@ const grants: Record<Role, readonly Capability[]> = {
     "conversation:view",
   ],
   operator: [
+    "connector:read",
     "quality:read",
     "operations:view",
     "conversation:review",
@@ -104,6 +110,7 @@ const grants: Record<Role, readonly Capability[]> = {
     "tool:read",
   ],
   analyst: [
+    "connector:read",
     "quality:read",
     "operations:view",
     "conversation:view",

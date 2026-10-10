@@ -59,6 +59,7 @@
     "./ingestion": "./src/ingestion.ts",
     "./workflows": "./src/workflow-runtime.ts",
     "./webhooks": "./src/webhooks.ts",
-    "./quality": "./src/quality-worker.ts"
+    "./quality": "./src/quality-worker.ts",
+    "./connectors": "./src/connector-worker.ts"
   }
 }
