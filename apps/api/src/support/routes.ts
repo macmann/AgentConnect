@@ -1,3 +1,5 @@
+import { validateOperations } from "./operations.js";
+import { registerOperationsRoutes } from "./operations-routes.js";
 import { registerCopilotRoutes } from "./copilot.js";
 import { registerPolicyRoutes } from "./policy-routes.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -19,6 +21,9 @@ type Helpers = Pick<
   typeof import("../app.js"),
   "actor" | "audit" | "id" | "params" | "workspaceAccess"
 >;
+import { effectivePolicy } from "./policy.js";
+import { agentConfig } from "@agentconnect/schemas/agents";
+import { restoreAI } from "./continuation.js";
 import { sql } from "../db.js";
 import { listCases } from "./queries.js";
 import { registerOperatorRoutes } from "./operator-routes.js";
@@ -37,6 +42,8 @@ import {
   sendSupportMessage,
   readCase,
   type SupportActor,
+  assertController,
+  appendEvent,
 } from "./cases.js";
 const pageRows = (rows: Record<string, unknown>[], limit: number) => {
   const items = rows.slice(0, limit),
@@ -74,6 +81,7 @@ export async function registerSupportRoutes(
     return { u, w, a };
   }
 
+  await registerOperationsRoutes(app, helpers);
   await registerCopilotRoutes(app, helpers, factory, embeddings);
   await registerPolicyRoutes(app, helpers);
   await registerSupportConsoleRoutes(app, helpers);
@@ -103,10 +111,16 @@ export async function registerSupportRoutes(
             ...input.routingConfig.requiredSkills,
             ...input.routingConfig.preferredSkills,
           ]);
+          await validateOperations(
+            tx,
+            w.id,
+            w.organization_id,
+            input.operations,
+          );
           if (input.isDefault)
             await tx`UPDATE support_queues SET is_default=false WHERE workspace_id=${w.id} AND is_default`;
           const [s] =
-            await tx`INSERT INTO support_queues(id,workspace_id,organization_id,name,description,enabled,priority,routing_strategy,assignment_mode,is_default,routing_config) VALUES (${randomUUID()},${w.id},${w.organization_id},${input.name},${input.description},${input.enabled},${input.priority},${input.routingStrategy},${input.assignmentMode},${input.isDefault},${tx.json(input.routingConfig)}) RETURNING *`;
+            await tx`INSERT INTO support_queues(id,workspace_id,organization_id,name,description,enabled,priority,routing_strategy,assignment_mode,is_default,routing_config,operations_config) VALUES (${randomUUID()},${w.id},${w.organization_id},${input.name},${input.description},${input.enabled},${input.priority},${input.routingStrategy},${input.assignmentMode},${input.isDefault},${tx.json(input.routingConfig)},${tx.json(input.operations)}) RETURNING *`;
           await audit(
             tx,
             r,
@@ -140,6 +154,14 @@ export async function registerSupportRoutes(
           const [s] =
             await tx`SELECT * FROM support_queues WHERE id=${id(params(r).queueId)} AND workspace_id=${w.id} AND organization_id=${w.organization_id} FOR UPDATE`;
           if (!s) throw new HttpError(404, "Support queue unavailable");
+          if (input.operations)
+            await validateOperations(
+              tx,
+              w.id,
+              w.organization_id,
+              input.operations,
+              s.id,
+            );
           if (input.routingConfig)
             await validateRoutingSkills(tx, w.id, [
               ...input.routingConfig.requiredSkills,
@@ -163,7 +185,7 @@ export async function registerSupportRoutes(
               await tx`INSERT INTO support_queue_members(organization_id,workspace_id,queue_id,user_id,enabled,priority_weight) VALUES (${w.organization_id},${w.id},${s.id},${m.userId},${m.enabled},${m.priorityWeight}) ON CONFLICT(queue_id,user_id) DO UPDATE SET enabled=EXCLUDED.enabled,priority_weight=EXCLUDED.priority_weight`;
           }
           const [updated] =
-            await tx`UPDATE support_queues SET name=${input.name ?? s.name},description=${input.description ?? s.description},enabled=${input.enabled ?? s.enabled},priority=${input.priority ?? s.priority},routing_strategy=${input.routingStrategy ?? s.routing_strategy},assignment_mode=${input.assignmentMode ?? s.assignment_mode},is_default=${input.isDefault ?? s.is_default},routing_config=${tx.json(input.routingConfig ?? s.routing_config)},updated_at=now() WHERE id=${s.id} RETURNING *`;
+            await tx`UPDATE support_queues SET name=${input.name ?? s.name},description=${input.description ?? s.description},enabled=${input.enabled ?? s.enabled},priority=${input.priority ?? s.priority},routing_strategy=${input.routingStrategy ?? s.routing_strategy},assignment_mode=${input.assignmentMode ?? s.assignment_mode},is_default=${input.isDefault ?? s.is_default},routing_config=${tx.json(input.routingConfig ?? s.routing_config)},operations_config=${tx.json(input.operations ?? s.operations_config)},updated_at=now() WHERE id=${s.id} RETURNING *`;
           await audit(
             tx,
             r,
@@ -253,7 +275,39 @@ export async function registerSupportRoutes(
       return pageRows(rows, q.limit);
     },
   );
-  const actions = ["claim", "assign", "status", "resolve", "messages"] as const;
+  app.get(
+    base + "/cases/:caseId/resolution/options",
+    routeOptions("Read approved continuation options for an assigned case"),
+    async (r) => {
+      const { w, a } = await context(r, "support:resolve");
+      return sql.begin(async (tx) => {
+        const s = await lockCase(tx, id(params(r).caseId), w.id);
+        assertController(s, a);
+        const [c] =
+          await tx`SELECT * FROM conversations WHERE id=${s.conversation_id} AND workspace_id=${w.id}`;
+        const policy = await effectivePolicy(tx, c as never),
+          cfg = agentConfig.parse(c!.config_snapshot);
+        const tools = cfg.tools.toolIds.length
+          ? await tx`SELECT id,name FROM tools WHERE id=ANY(${cfg.tools.toolIds}::uuid[]) AND workspace_id=${w.id} AND organization_id=${w.organization_id} ORDER BY name`
+          : [];
+        return {
+          tools,
+          returnToAIEnabled: policy.policy.returnToAIEnabled,
+          summaryEnabled:
+            policy.policy.generateResolutionSummary &&
+            policy.policy.copilotEnabled,
+        };
+      });
+    },
+  );
+  const actions = [
+    "claim",
+    "assign",
+    "status",
+    "resolve",
+    "messages",
+    "resume",
+  ] as const;
   for (const action of actions) {
     app.post(
       base + "/cases/:caseId/" + action,
@@ -301,15 +355,33 @@ export async function registerSupportRoutes(
               (input as { status: typeof s.status }).status,
               a,
             );
-          else if (action === "resolve") {
-            const resolution = input as {
-              summary: string;
-              code: string;
-              finalResponse?: string;
-            };
+          else if (action === "resume") {
+            assertController(s, a);
+            if (!(await restoreAI(tx, s)))
+              throw new HttpError(
+                409,
+                "Enable return to AI in Handoff policy first",
+              );
+            await appendEvent(tx, s, "ai.resumed", a, {
+              caseId: s.id,
+              contextVersion: 1,
+            });
+          } else if (action === "resolve") {
+            const resolution = input as import("zod").infer<
+              typeof supportResolution
+            >;
             if (resolution.finalResponse && s.status !== "resolved")
               await sendSupportMessage(tx, s, a, resolution.finalResponse);
-            await resolveCase(tx, s, a, resolution.summary, resolution.code);
+            await resolveCase(
+              tx,
+              s,
+              a,
+              resolution.summary,
+              resolution.code,
+              false,
+              resolution.resume,
+              resolution.finalResponse,
+            );
           } else
             await sendSupportMessage(
               tx,

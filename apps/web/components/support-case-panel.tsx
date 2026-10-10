@@ -1,4 +1,5 @@
 "use client";
+import { SupportCaseOperations } from "./support-case-operations";
 import { SupportCopilot } from "./support-copilot";
 import { SupportBrief } from "./support-brief";
 import { SupportRoutingPanel } from "./support-routing-panel";
@@ -28,10 +29,17 @@ import {
   supportTime,
 } from "./support-utils";
 const eventNames: Record<string, string> = {
+  "case.transferred": "Case transferred",
+  "case.priority_changed": "Priority changed",
+  "assignment.expired": "Assignment acceptance expired",
+  "sla.warning": "SLA warning",
+  "sla.breached": "SLA breached",
   "case.created": "Human support requested",
   "case.claimed": "Support specialist joined",
   "case.assigned": "Case assigned",
-  "case.resolved": "Case resolved · AI control restored",
+  "case.resolved": "Case resolved",
+  "ai.resumed": "AI assistant resumed with approved resolution context",
+  "ai.resume_paused": "AI continuation paused by policy",
   "case.status_changed": "Case status changed",
 };
 export function SupportCasePanel({
@@ -90,6 +98,13 @@ export function SupportCasePanel({
       ["active", "waiting_customer", "waiting_external"].includes(s.status) &&
       permitted(role, "support:reply"),
     canNote = open && control && permitted(role, "support:note");
+  const resolutionOptions = useQuery({
+    queryKey: ["support-resolution-options", path],
+    queryFn: () =>
+      requestJson<{ returnToAIEnabled: boolean }>(path + "/resolution/options"),
+    enabled: canReply && permitted(role, "support:resolve"),
+    retry: false,
+  });
   async function refresh() {
     await cache.invalidateQueries({ queryKey: ["support", workspaceId] });
     await cache.invalidateQueries({ queryKey: ["handoffs"] });
@@ -442,6 +457,14 @@ export function SupportCasePanel({
             <dt>Case ID</dt>
             <dd className="support-id">{s.id}</dd>
           </dl>
+          <SupportCaseOperations
+            key={s.id}
+            s={s}
+            base={base}
+            role={role}
+            control={control}
+            onSaved={refresh}
+          />
           {s.resolution_summary && (
             <div className="support-resolution">
               <h4>Resolution</h4>
@@ -452,6 +475,48 @@ export function SupportCasePanel({
               </small>
             </div>
           )}
+          {s.resume_context?.schemaVersion === 1 && s.resume_context.facts && (
+            <section
+              className="support-brief"
+              aria-label="Approved AI resolution context"
+            >
+              <h4>Approved AI continuation</h4>
+              <p>{s.resume_context.facts.resolution}</p>
+              <small>
+                {s.resume_context.origin === "operator"
+                  ? "Operator-approved facts"
+                  : "Deterministic fallback"}
+              </small>
+              <dl>
+                <dt>Expected next step</dt>
+                <dd>
+                  {s.resume_context.facts.expectedNextStep || "Not specified"}
+                </dd>
+                <dt>Do not repeat</dt>
+                <dd>
+                  {s.resume_context.facts.doNotRepeat.join(", ") ||
+                    "Not specified"}
+                </dd>
+              </dl>
+            </section>
+          )}
+          {s.ai_resume_case_id === s.id &&
+            s.conversation_mode === "returning_to_ai" &&
+            control &&
+            permitted(role, "support:resolve") && (
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  void act(
+                    "resume",
+                    {},
+                    "AI chat resumed with approved resolution context.",
+                  )
+                }
+              >
+                Resume AI
+              </Button>
+            )}
           <SupportBrief
             s={s}
             base={base}
@@ -507,7 +572,9 @@ export function SupportCasePanel({
               )}
             {canReply && permitted(role, "support:resolve") && (
               <Button disabled={busy} onClick={() => setDialog("resolve")}>
-                Resolve and return to AI
+                {resolutionOptions.data?.returnToAIEnabled === false
+                  ? "Resolve support case"
+                  : "Resolve and return to AI"}
               </Button>
             )}
             {control &&
@@ -566,6 +633,7 @@ export function SupportCasePanel({
       </div>
       <CaseActionDialog
         action={dialog}
+        returnToAIEnabled={resolutionOptions.data?.returnToAIEnabled ?? true}
         onClose={() => setDialog(null)}
         s={s}
         base={base}
@@ -578,7 +646,7 @@ export function SupportCasePanel({
               action,
               body,
               action === "resolve"
-                ? "Case resolved. The customer can chat with AI again."
+                ? "Case resolved. Approved AI continuation context saved."
                 : "Case assigned. The selected operator can accept it.",
             )
           ) {

@@ -1,3 +1,4 @@
+import { continuationContext } from "./support/continuation.js";
 import { evaluateEscalation } from "./support/policy.js";
 import { assertQualityGate } from "./quality-gate.js";
 import { requireWidgetOrigin } from "./channels.js";
@@ -211,10 +212,15 @@ async function streamChat(
     span.spanContext().traceId === "00000000000000000000000000000000"
       ? randomUUID().replaceAll("-", "")
       : span.spanContext().traceId;
+  let continuation = {
+    grounding: "",
+    blockedToolIds: [] as string[],
+    caseIds: [] as string[],
+  };
   try {
     await sql.begin(async (tx) => {
       const [locked] =
-        await tx`SELECT conversation_mode FROM conversations WHERE id=${conversation.id} FOR UPDATE`;
+        await tx`SELECT * FROM conversations WHERE id=${conversation.id} AND workspace_id=${conversation.workspace_id} AND organization_id=${conversation.organization_id} FOR UPDATE`;
       if (!locked)
         throw new HttpError(404, "Conversation expired or unavailable");
       if (locked.conversation_mode !== "ai")
@@ -222,6 +228,11 @@ async function streamChat(
           409,
           "This conversation is with the human support team",
         );
+      continuation = await continuationContext(
+        tx,
+        locked as never,
+        c.tools.toolIds,
+      );
       await tx`INSERT INTO agent_runs(id,conversation_id,organization_id,workspace_id,status,trace_id) VALUES (${runId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},'running',${traceId})`;
       await tx`UPDATE conversations SET last_customer_message_at=now() WHERE id=${conversation.id}`;
       await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content) VALUES (${randomUUID()},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'user',${message})`;
@@ -288,6 +299,13 @@ async function streamChat(
   let citations: Citation[] = [];
   let retrievalMs: number | null = null;
   try {
+    if (
+      Buffer.byteLength(JSON.stringify(messages)) +
+        Buffer.byteLength(JSON.stringify(c.prompt)) +
+        Buffer.byteLength(continuation.grounding) >
+      model.contextWindow - c.maxOutputTokens
+    )
+      throw new ProviderError("CONTEXT_LIMIT");
     if (c.rag.knowledgeBaseIds.length) {
       const started = performance.now();
       sources = await ragTool.execute(
@@ -306,7 +324,15 @@ async function streamChat(
       write("sources", { sources });
     }
     const toolsResult = await runAgentTools(
-      c,
+      {
+        ...c,
+        tools: {
+          ...c.tools,
+          toolIds: c.tools.toolIds.filter(
+            (id) => !continuation.blockedToolIds.includes(id),
+          ),
+        },
+      },
       provider,
       message,
       {
@@ -319,8 +345,10 @@ async function streamChat(
       controller.signal,
       (data) => write("tool", data),
       model.contextWindow - c.maxOutputTokens,
+      continuation.grounding,
     );
     const grounding =
+      continuation.grounding +
       (sources.length ? groundedPrompt(sources) : "") +
       toolsResult.grounding +
       (c.generative.enabled

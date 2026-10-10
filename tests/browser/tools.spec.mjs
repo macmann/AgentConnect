@@ -164,12 +164,16 @@ test("register, test, attach and trace a read-only tool in playground and hosted
   await page.getByRole("button", { name: "Create agent", exact: true }).click();
   await page.getByLabel("Agent name").fill("Weather assistant");
   await page
+    .getByRole("navigation", { name: "Configure sections" })
+    .getByRole("button", { name: "Tools", exact: true })
+    .click();
+  await page
     .getByRole("checkbox", {
       name: "Weather lookup · Public chat enabled",
       exact: true,
     })
     .check();
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(
     page.getByText("Draft saved. Start a new chat to use these changes."),
   ).toBeVisible();

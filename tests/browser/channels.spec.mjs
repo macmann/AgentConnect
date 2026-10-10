@@ -40,6 +40,23 @@ const website = createServer((_req, res) => {
   );
 });
 test.beforeAll(async () => {
+  const budget = await fetch("http://localhost:4000/auth/me");
+  if (Number(budget.headers.get("x-ratelimit-remaining") ?? 300) < 200)
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.min(
+          59000,
+          Number(
+            budget.headers.get("retry-after") ??
+              budget.headers.get("x-ratelimit-reset") ??
+              60,
+          ) *
+            1000 +
+            500,
+        ),
+      ),
+    );
   await Promise.all([
     new Promise((r) => provider.listen(4551, "127.0.0.1", r)),
     new Promise((r) => website.listen(4500, "127.0.0.1", r)),

@@ -53,7 +53,11 @@ try {
                                                 ? "0019_support_routing.sql"
                                                 : version === "0020"
                                                   ? "0020_support_triage.sql"
-                                                  : "0021_support_copilot.sql";
+                                                  : version === "0021"
+                                                    ? "0021_support_copilot.sql"
+                                                    : version === "0022"
+                                                      ? "0022_support_continuation.sql"
+                                                      : "0023_support_operations.sql";
         await tx.unsafe(
           await readFile(
             new URL(`../../../packages/db/migrations/${file}`, import.meta.url),

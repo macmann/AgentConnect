@@ -48,6 +48,28 @@ const provider = createServer(async (req, res) => {
   res.on("close", () => clearTimeout(timer));
 });
 test.beforeAll(async () => {
+  const budget = await fetch("http://localhost:4000/auth/me");
+  if (Number(budget.headers.get("x-ratelimit-remaining") ?? 300) < 200) {
+    console.log(
+      "Pacing agent configuration browser regression for the API rate-limit window",
+    );
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.min(
+          59000,
+          Number(
+            budget.headers.get("retry-after") ??
+              budget.headers.get("x-ratelimit-reset") ??
+              60,
+          ) *
+            1000 +
+            500,
+        ),
+      ),
+    );
+  }
+
   await new Promise((resolve) => provider.listen(4545, "127.0.0.1", resolve));
   await sql.begin(async (tx) => {
     await tx`INSERT INTO users(id,email,name,password_hash,verified_at) VALUES (${user},${user + "@example.com"},'Agent Builder','unused-browser-fixture',now())`;
@@ -116,14 +138,12 @@ test("model registration, agent editor, streaming playground, publish and anonym
   await expect(
     page.getByRole("cell", { name: "Explicit browser fixture", exact: true }),
   ).toBeVisible();
-  const modelRow = page
-    .getByRole("row")
-    .filter({
-      has: page.getByRole("cell", {
-        name: "Explicit browser fixture",
-        exact: true,
-      }),
-    });
+  const modelRow = page.getByRole("row").filter({
+    has: page.getByRole("cell", {
+      name: "Explicit browser fixture",
+      exact: true,
+    }),
+  });
   await modelRow.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(page.getByLabel("Model identifier")).toHaveValue("fixture-only");
   await expect(page.getByLabel(/^Base URL/)).toHaveValue(
@@ -142,14 +162,12 @@ test("model registration, agent editor, streaming playground, publish and anonym
   await page.getByLabel("Model identifier").fill("fixture-disposable");
   await page.getByLabel(/^Base URL/).fill("http://127.0.0.1:4545/v1");
   await page.getByRole("button", { name: "Save model", exact: true }).click();
-  const disposable = page
-    .getByRole("row")
-    .filter({
-      has: page.getByRole("cell", {
-        name: "Disposable browser fixture",
-        exact: true,
-      }),
-    });
+  const disposable = page.getByRole("row").filter({
+    has: page.getByRole("cell", {
+      name: "Disposable browser fixture",
+      exact: true,
+    }),
+  });
   await disposable.getByRole("button", { name: "Delete", exact: true }).click();
   await page.getByRole("button", { name: "Delete model", exact: true }).click();
   await expect(
@@ -160,9 +178,13 @@ test("model registration, agent editor, streaming playground, publish and anonym
   await page.getByRole("button", { name: "Create agent", exact: true }).click();
   await page.getByLabel("Agent name").fill("Browser assistant");
   await page
+    .getByRole("navigation", { name: "Configure sections" })
+    .getByRole("button", { name: "Prompt", exact: true })
+    .click();
+  await page
     .getByLabel("Instructions", { exact: true })
     .fill("Answer with concise guidance.");
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(
     page.getByText("Draft saved. Start a new chat to use these changes."),
   ).toBeVisible();

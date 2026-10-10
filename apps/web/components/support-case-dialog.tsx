@@ -1,4 +1,8 @@
 "use client";
+import {
+  SupportResolutionEditor,
+  type ResolutionDraft,
+} from "./support-resolution-editor";
 import { useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -15,6 +19,7 @@ import { Button } from "./button";
 import { supportCursor, statusLabel } from "./support-utils";
 export function CaseActionDialog({
   action,
+  returnToAIEnabled,
   onClose,
   s,
   base,
@@ -25,6 +30,7 @@ export function CaseActionDialog({
   error,
 }: {
   action: "resolve" | "assign" | null;
+  returnToAIEnabled: boolean;
   onClose: () => void;
   s: SupportCaseView;
   base: string;
@@ -38,7 +44,11 @@ export function CaseActionDialog({
     [queue, setQueue] = useState(s.queue_id ?? ""),
     [code, setCode] = useState("resolved"),
     [summary, setSummary] = useState(""),
-    [finalResponse, setFinalResponse] = useState("");
+    [finalResponse, setFinalResponse] = useState(""),
+    [resumeDraft, setResumeDraft] = useState<ResolutionDraft>({
+      facts: null,
+      error: "",
+    });
   const operators = useInfiniteQuery({
     queryKey: ["support", workspaceId, "operators"],
     initialPageParam: null as SupportCursor | null,
@@ -62,12 +72,14 @@ export function CaseActionDialog({
           <Dialog.Title>
             {action === "assign"
               ? "Assign support case"
-              : "Resolve and return to AI"}
+              : returnToAIEnabled
+                ? "Resolve and return to AI"
+                : "Resolve support case"}
           </Dialog.Title>
           <Dialog.Description>
             {action === "assign"
               ? "Choose an eligible workspace teammate. They must accept the case before replying."
-              : "Save the specialist’s resolution and restore AI chat on this same conversation. The summary stays private."}
+              : "Save the private resolution note and separately approve the facts the AI may use to continue this conversation."}
           </Dialog.Description>
           <form
             onSubmit={(e) => {
@@ -79,6 +91,7 @@ export function CaseActionDialog({
                   : {
                       code,
                       summary,
+                      resume: resumeDraft.facts ?? undefined,
                       finalResponse: finalResponse.trim() || undefined,
                     },
               );
@@ -194,6 +207,16 @@ export function CaseActionDialog({
                     disabled={busy}
                   />
                 </label>
+                <SupportResolutionEditor
+                  path={base + "/cases/" + s.id}
+                  busy={busy}
+                  onChange={setResumeDraft}
+                />
+                {resumeDraft.error && (
+                  <p className="error" role="alert">
+                    {resumeDraft.error}
+                  </p>
+                )}
               </>
             )}
             {error && (
@@ -204,7 +227,10 @@ export function CaseActionDialog({
             <div className="support-dialog-actions">
               <Button
                 disabled={
-                  busy || (action === "assign" ? !operator : !summary.trim())
+                  busy ||
+                  (action === "assign"
+                    ? !operator
+                    : !summary.trim() || !!resumeDraft.error)
                 }
                 type="submit"
               >

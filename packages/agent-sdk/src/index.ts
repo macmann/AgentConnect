@@ -1,4 +1,6 @@
 import type { AgentConfig } from "@agentconnect/schemas/agents";
+import { renderPrompt } from "@agentconnect/schemas/agent-prompt";
+export { renderPrompt } from "@agentconnect/schemas/agent-prompt";
 import type {
   ChatMessage,
   ChatProvider,
@@ -12,16 +14,6 @@ export interface AgentRuntime {
     signal: AbortSignal,
     grounding?: string,
   ): AsyncIterable<ProviderEvent>;
-}
-export function renderPrompt(config: AgentConfig) {
-  const p = config.prompt;
-  const sections =
-    p.advanced ??
-    Object.entries(p)
-      .filter(([key, value]) => key !== "advanced" && value)
-      .map(([key, value]) => `${key}: ${value}`)
-      .join("\n\n");
-  return `${sections}\n\nRespond in ${config.language}.`;
 }
 export class SingleAgentRuntime implements AgentRuntime {
   run(

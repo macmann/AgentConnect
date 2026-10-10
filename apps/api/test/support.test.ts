@@ -289,10 +289,7 @@ test("Resolution restores AI on the same conversation; later escalation does not
     code: "dispute_created",
   });
   assert.equal(result.statusCode, 200, result.body);
-  assert.equal(
-    result.json().resume_context.summary,
-    "Dispute DSP-29219 created",
-  );
+  assert.equal(result.json().resume_context.origin, "deterministic_fallback");
   const [c] =
     await sql`SELECT conversation_mode,active_support_case_id FROM conversations WHERE id=${conversation}`;
   assert.equal(c!.conversation_mode, "ai");
@@ -403,7 +400,7 @@ test("Resolution and reply serialize without a message appearing after case reso
   const timeline = (await call("GET", base + `/cases/${s!.id}/events`))
     .json()
     .items.reverse();
-  assert.equal(timeline.at(-1).type, "case.resolved");
+  assert.equal(timeline.at(-1).type, "ai.resumed");
 });
 
 test("Queue PATCH preserves omitted configuration and cursors avoid duplicate events", async () => {

@@ -1,3 +1,5 @@
+import { availableQueue, queueIsOpen } from "./operations.js";
+import { queueOperations } from "@agentconnect/schemas/support";
 import { randomUUID } from "node:crypto";
 import type { TransactionSql } from "postgres";
 import {
@@ -53,7 +55,11 @@ export async function validatePolicy(
     if (rows.length !== skills.length)
       throw new HttpError(400, "Choose enabled skills in this workspace");
   }
-  for (const modelId of [p.triageModelId, p.copilotModelId].filter(Boolean)) {
+  for (const modelId of [
+    p.triageModelId,
+    p.copilotModelId,
+    p.resolutionModelId,
+  ].filter(Boolean)) {
     const [model] =
       await tx`SELECT id FROM model_configurations WHERE id=${modelId!} AND workspace_id=${wid} AND organization_id=${org} AND archived_at IS NULL`;
     if (!model)
@@ -67,11 +73,36 @@ export async function customerHandoffState(
   const { policy } = await effectivePolicy(tx, c);
   const [offer] =
     await tx`SELECT id,reason_code FROM support_offers WHERE conversation_id=${c.id} AND status='offered' AND expires_at>now()`;
+  const [selectedQueue] =
+    await tx`SELECT COALESCE((SELECT queue_id FROM support_cases WHERE conversation_id=${c.id} AND status NOT IN ('resolved','closed','cancelled') LIMIT 1),${policy.defaultQueueId}::uuid,(SELECT id FROM support_queues WHERE workspace_id=${c.workspace_id} AND organization_id=${c.organization_id} AND enabled AND is_default)) AS id`;
+  const q = await availableQueue(
+    tx,
+    c.workspace_id,
+    c.organization_id,
+    selectedQueue?.id ?? null,
+  );
+  const settings = q ? queueOperations.parse(q.operations_config) : null;
+  const open = settings ? queueIsOpen(settings) : true;
+  const hours = settings?.businessHours;
+  const businessHours = hours?.enabled
+    ? {
+        open,
+        timezone: hours.timezone,
+        weekly: hours.weekly,
+        message: open
+          ? "Support is within business hours."
+          : hours.afterHours === "continue_with_ai"
+            ? "Support is outside business hours. Continue with the AI assistant."
+            : "Support is outside business hours. Your request and messages are saved for the next available specialist.",
+      }
+    : null;
   return {
+    businessHours,
     entryMode: policy.humanEntryMode,
     canRequest:
-      policy.humanEntryMode === "always_available" ||
-      (policy.humanEntryMode === "policy_controlled" && !!offer),
+      (open || hours?.afterHours !== "continue_with_ai") &&
+      (policy.humanEntryMode === "always_available" ||
+        (policy.humanEntryMode === "policy_controlled" && !!offer)),
     offer:
       policy.humanEntryMode === "policy_controlled" ? (offer ?? null) : null,
   };

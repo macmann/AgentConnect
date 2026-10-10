@@ -2,7 +2,7 @@ import { sql } from "../db.js";
 import type { z } from "zod";
 import type { supportCaseQuery } from "@agentconnect/schemas/support";
 // Projection is shared by list/detail so the console never invents customer or operator context.
-const projection = sql`s.*,c.channel,c.conversation_mode,c.active_support_case_id,a.name AS agent_name,COALESCE(customer.name,'Guest visitor') AS customer_name,q.name AS queue_name,operator.name AS assigned_operator_name`;
+const projection = sql`s.*,c.channel,c.conversation_mode,c.active_support_case_id,c.ai_resume_case_id,a.name AS agent_name,COALESCE(customer.name,'Guest visitor') AS customer_name,q.name AS queue_name,operator.name AS assigned_operator_name`;
 const joins = sql`FROM support_cases s JOIN conversations c ON c.id=s.conversation_id JOIN agents a ON a.id=c.agent_id LEFT JOIN users customer ON customer.id=c.user_id LEFT JOIN users operator ON operator.id=s.assigned_operator_id LEFT JOIN support_queues q ON q.id=s.queue_id`;
 export async function caseDetail(caseId: string, workspaceId: string) {
   const [row] =
@@ -23,6 +23,10 @@ export async function listCases(
   UNION ALL SELECT e.payload->>'content',e.created_at,e.id FROM support_events e WHERE e.conversation_id=c.id AND (e.type='message.created')
  ) messages ORDER BY created_at DESC,id DESC LIMIT 1) latest ON true
  WHERE s.workspace_id=${workspaceId} AND s.organization_id=${organizationId}
+ AND (${q.slaState ?? null}::text IS NULL OR s.sla_state=${q.slaState ?? null})
+ AND (${q.language ?? null}::text IS NULL OR s.triage_result->>'language'=${q.language ?? null})
+ AND (${q.fromDate ?? null}::text IS NULL OR s.created_at>=${q.fromDate ? q.fromDate + "T00:00:00Z" : null}::timestamptz)
+ AND (${q.toDate ?? null}::text IS NULL OR s.created_at<${q.toDate ? q.toDate + "T00:00:00Z" : null}::timestamptz+interval '24 hours')
  AND (${q.status ?? null}::text IS NULL OR s.status=${q.status ?? null})
  AND (${q.queueId ?? null}::uuid IS NULL OR s.queue_id=${q.queueId ?? null})
  AND (${q.assignedOperatorId ?? null}::uuid IS NULL OR s.assigned_operator_id=${q.assignedOperatorId ?? null})

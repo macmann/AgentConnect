@@ -28,7 +28,31 @@ const provider = createServer(async (req, res) => {
       "\n\ndata: [DONE]\n\n",
   );
 });
+async function paceSupportBrowser() {
+  const r = await fetch("http://localhost:4000/auth/me");
+  if (Number(r.headers.get("x-ratelimit-remaining") ?? 300) < 180)
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.min(
+          59000,
+          Number(
+            r.headers.get("retry-after") ??
+              r.headers.get("x-ratelimit-reset") ??
+              60,
+          ) *
+            1000 +
+            500,
+        ),
+      ),
+    );
+}
+test.beforeEach(async () => {
+  test.setTimeout(120000);
+  await paceSupportBrowser();
+});
 test.beforeAll(async () => {
+  await paceSupportBrowser();
   await new Promise((r) => provider.listen(4551, "127.0.0.1", r));
   await sql.begin(async (tx) => {
     await tx`INSERT INTO organizations(id,name) VALUES (${org},'Human support browser')`;

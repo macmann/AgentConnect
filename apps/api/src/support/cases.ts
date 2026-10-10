@@ -1,3 +1,5 @@
+import { availableQueue, refreshCaseSLA } from "./operations.js";
+import { approveResolution, restoreAI } from "./continuation.js";
 import { randomUUID } from "node:crypto";
 import type { TransactionSql } from "postgres";
 import {
@@ -5,6 +7,7 @@ import {
   controlForCase,
   isOpenCase,
   type SupportCaseStatus,
+  type ResumeFacts,
 } from "@agentconnect/schemas/support";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
 import { reserveOperator, lockSupportCapacity } from "./operator-capacity.js";
@@ -118,15 +121,24 @@ export async function createCase(
       await tx`SELECT id FROM support_queues WHERE id=${input.queueId} AND workspace_id=${c.workspace_id} AND organization_id=${c.organization_id} AND enabled FOR SHARE`;
     if (!queue) throw new HttpError(404, "Enabled support queue unavailable");
   }
+  const effectiveQueue = await availableQueue(
+    tx,
+    c.workspace_id,
+    c.organization_id,
+    input.queueId ?? null,
+    actor.type === "customer",
+  );
+  if (effectiveQueue) input.queueId = effectiveQueue.id;
   const [s] = await tx<
     SupportCase[]
-  >`INSERT INTO support_cases(id,organization_id,workspace_id,conversation_id,status,queue_id,reason_code,reason_text,priority,trigger_type,queued_at,idempotency_key) VALUES (${randomUUID()},${c.organization_id},${c.workspace_id},${c.id},'queued',${input.queueId ?? null},${input.reasonCode ?? "explicit_request"},${input.reasonText ?? ""},${input.priority ?? "normal"},${actor.type === "customer" ? "customer" : "manual"},now(),${input.idempotencyKey ?? null}) RETURNING *`;
+  >`INSERT INTO support_cases(id,organization_id,workspace_id,conversation_id,status,queue_id,reason_code,reason_text,priority,trigger_type,queued_at,idempotency_key) VALUES (${randomUUID()},${c.organization_id},${c.workspace_id},${c.id},'queued',${input.queueId ?? null},${input.reasonCode ?? "explicit_request"},${input.reasonText ?? ""},${input.priority ?? effectiveQueue?.priority ?? "normal"},${actor.type === "customer" ? "customer" : "manual"},now(),${input.idempotencyKey ?? null}) RETURNING *`;
   await tx`UPDATE conversations SET conversation_mode='waiting_human',active_support_case_id=${s!.id},handoff_status='pending' WHERE id=${c.id}`;
   await appendEvent(tx, s!, "case.created", actor);
   await legacyEvent(tx, s!, "requested", actor);
   return { supportCase: s!, created: true };
 }
 export function assertController(s: SupportCase, actor: SupportActor) {
+  if (actor.type === "system" && actor.supervise) return;
   if (!actor.id || (!actor.supervise && s.assigned_operator_id !== actor.id))
     throw new HttpError(
       403,
@@ -152,12 +164,13 @@ async function setStatus(
       throw new HttpError(409, "Conversation already has an open support case");
   }
   const control = controlForCase(to);
+  const mode = to === "resolved" ? "returning_to_ai" : control.mode;
   await tx`UPDATE support_cases SET status=${to},updated_at=now(),resolved_at=CASE WHEN ${to}='resolved' THEN now() WHEN ${to}='active' AND status='resolved' THEN NULL ELSE resolved_at END,closed_at=CASE WHEN ${to}='closed' THEN now() ELSE closed_at END WHERE id=${s.id}`;
   // Closing an old resolved case must not overwrite a newer case's control.
   const [c] =
     await tx`SELECT active_support_case_id FROM conversations WHERE id=${s.conversation_id}`;
   if (isOpenCase(to) || c?.active_support_case_id === s.id)
-    await tx`UPDATE conversations SET conversation_mode=${control.mode},handoff_status=${control.legacy},active_support_case_id=${isOpenCase(to) ? s.id : null} WHERE id=${s.conversation_id}`;
+    await tx`UPDATE conversations SET conversation_mode=${mode},handoff_status=${control.legacy},active_support_case_id=${isOpenCase(to) ? s.id : null} WHERE id=${s.conversation_id}`;
   await appendEvent(tx, s, event, actor, { from: s.status, to });
   s.status = to;
 }
@@ -223,7 +236,7 @@ export async function assignCase(
     if (!queue) throw new HttpError(404, "Enabled support queue unavailable");
   }
   await reserveOperator(tx, operatorId, s.workspace_id, s.id);
-  await tx`UPDATE support_cases SET queue_id=${queueId === undefined ? s.queue_id : queueId},assigned_operator_id=${operatorId},assigned_at=now() WHERE id=${s.id}`;
+  await tx`UPDATE support_cases SET queue_id=${queueId === undefined ? s.queue_id : queueId},assigned_operator_id=${operatorId},assigned_at=clock_timestamp() WHERE id=${s.id}`;
   s.assigned_operator_id = operatorId;
   if (queueId !== undefined) s.queue_id = queueId;
   await setStatus(tx, s, "assigned", actor, "case.assigned");
@@ -251,6 +264,15 @@ export async function transitionCase(
       "Use the dedicated claim, assign or resolve action",
     );
   if (to === s.status) return;
+  if (to === "active" && s.status === "assigned") {
+    const [expired] =
+      await tx`SELECT id FROM support_cases WHERE id=${s.id} AND acceptance_deadline<=clock_timestamp()`;
+    if (expired)
+      throw new HttpError(
+        409,
+        "Assignment expired. Wait for requeue or ask a supervisor to assign it again.",
+      );
+  }
   if (to === "active" && s.status === "resolved" && s.assigned_operator_id) {
     await eligibleOperator(
       tx,
@@ -262,9 +284,13 @@ export async function transitionCase(
   }
   await setStatus(tx, s, to, actor, "case.status_changed");
   if (to === "active" && s.assigned_operator_id) {
+    await tx`UPDATE conversations SET ai_resume_case_id=NULL WHERE id=${s.conversation_id} AND ai_resume_case_id=${s.id}`;
+    if (s.status === "active")
+      await tx`UPDATE support_cases SET resume_context='{}' WHERE id=${s.id}`;
     await tx`UPDATE support_cases SET accepted_at=now() WHERE id=${s.id}`;
     await legacyEvent(tx, s, "claimed", actor);
   }
+  if (["closed", "cancelled"].includes(to)) await refreshCaseSLA(tx, s);
   if (to === "queued")
     await tx`UPDATE support_cases SET assigned_operator_id=NULL,assigned_at=NULL,accepted_at=NULL WHERE id=${s.id}`;
 }
@@ -275,6 +301,8 @@ export async function resolveCase(
   summary: string,
   code: string,
   legacy = false,
+  approvedFacts?: ResumeFacts,
+  finalResponse?: string,
 ) {
   assertController(s, actor);
   if (!legacy && s.status === "resolved") return;
@@ -283,8 +311,22 @@ export async function resolveCase(
     await claimCase(tx, s, actor);
   if (!["active", "waiting_customer", "waiting_external"].includes(s.status))
     throw new HttpError(409, "Support case must be active before resolution");
-  await tx`UPDATE support_cases SET resolution_code=${code},resolution_summary=${summary},resume_context=${tx.json({ summary, code })} WHERE id=${s.id}`;
+  const approved = await approveResolution(
+    tx,
+    s,
+    actor,
+    approvedFacts,
+    finalResponse,
+  );
+  await tx`UPDATE support_cases SET resolution_code=${code},resolution_summary=${summary},resume_context=${tx.json(approved)} WHERE id=${s.id}`;
   await setStatus(tx, s, "resolved", actor, "case.resolved");
+  await tx`UPDATE conversations SET ai_resume_case_id=${s.id} WHERE id=${s.conversation_id}`;
+  const resumed = await restoreAI(tx, s);
+  await appendEvent(tx, s, resumed ? "ai.resumed" : "ai.resume_paused", actor, {
+    caseId: s.id,
+    contextVersion: 1,
+  });
+  await refreshCaseSLA(tx, s);
   await legacyEvent(tx, s, "resolved", actor);
 }
 export async function sendSupportMessage(

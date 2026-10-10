@@ -2,7 +2,18 @@
 import { BookOpen, Wrench, ArrowUpRight, Plus } from "lucide-react";
 import { Button } from "./button";
 
-type Attachment = { id: string; name: string; public_access: boolean };
+type Attachment = {
+  id: string;
+  name: string;
+  public_access: boolean;
+  enabled?: boolean;
+  source_count?: number;
+  ready_count?: number;
+  failed_count?: number;
+  indexing_count?: number;
+  kind?: string;
+  type?: string;
+};
 export function AgentAttachments({
   kind,
   items,
@@ -90,9 +101,21 @@ export function AgentAttachments({
                       type="checkbox"
                       aria-label={`${item.name} · ${item.public_access ? "Public chat enabled" : "Workspace only"}`}
                       checked={selected.includes(item.id)}
+                      disabled={
+                        !selected.includes(item.id) &&
+                        (item.enabled === false ||
+                          selected.length >= (knowledge ? 5 : 8))
+                      }
                       onChange={(e) => onToggle(item.id, e.target.checked)}
                     />
-                    <span className="attachment-option-name">{item.name}</span>
+                    <span className="attachment-option-name">
+                      {item.name}
+                      <small className="attachment-health">
+                        {knowledge
+                          ? `${item.ready_count ?? 0} / ${item.source_count ?? 0} sources ready${item.failed_count ? ` · ${item.failed_count} failed` : ""}${item.indexing_count ? ` · ${item.indexing_count} indexing` : ""}`
+                          : `${item.enabled === false ? "Disabled" : "Enabled"}${item.kind || item.type ? ` · ${item.kind ?? item.type}` : ""}`}
+                      </small>
+                    </span>
                     <span
                       className={`attachment-access${item.public_access ? " is-public" : ""}`}
                     >
