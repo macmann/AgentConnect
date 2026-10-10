@@ -11,7 +11,8 @@
     "storage:init": "tsx --env-file=../../.env src/init-storage.ts",
     "mail:inspect": "tsx --env-file=../../.env src/local-mail.ts",
     "mail:worker": "tsx --env-file=../../.env src/mail-worker.ts",
-    "start": "node --env-file=../../.env dist/server.js"
+    "start": "node --env-file=../../.env dist/server.js",
+    "deployment:check": "tsx --env-file=../../.env src/deployment-check.ts"
   },
   "dependencies": {
     "@agentconnect/agent-sdk": "workspace:*",

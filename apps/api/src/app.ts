@@ -33,7 +33,7 @@ import {
   HeadBucketCommand,
   CreateBucketCommand,
 } from "@aws-sdk/client-s3";
-import { Connection } from "@temporalio/client";
+import { infrastructureReadiness } from "./readiness-infrastructure.js";
 import {
   register,
   credentials,
@@ -146,6 +146,7 @@ export async function buildApp(
   options: {
     providerFactory?: import("@agentconnect/provider-sdk").ProviderFactory;
     embeddingFactory?: import("@agentconnect/provider-sdk/embeddings").EmbeddingFactory;
+    sharePointClientFactory?: import("./sharepoint.js").SharePointClientFactory;
   } = {},
 ) {
   class QuietLogs extends LogController {
@@ -306,46 +307,18 @@ export async function buildApp(
             : "Request failed",
     });
   });
-  app.get("/health/live", async () => ({ status: "ok" }));
-  app.get("/health/ready", async (_r, reply) => {
-    let service = "postgres";
-    try {
-      await sql`SELECT 1`;
-      service = "redis";
-      await redis.ping();
-      service = "storage";
-      const s3 = new S3Client({
-        endpoint: config.S3_ENDPOINT,
-        region: "us-east-1",
-        forcePathStyle: true,
-        credentials: {
-          accessKeyId: config.S3_ACCESS_KEY,
-          secretAccessKey: config.S3_SECRET_KEY,
-        },
-      });
-      try {
-        await s3.send(new HeadBucketCommand({ Bucket: config.S3_BUCKET }));
-      } finally {
-        s3.destroy();
-      }
-      service = "temporal";
-      const c = await Connection.connect({
-        address: config.TEMPORAL_ADDRESS,
-        connectTimeout: "3s",
-      });
-      try {
-        await c.workflowService.getSystemInfo({});
-      } finally {
-        await c.close();
-      }
-      return {
-        status: "ready",
-        services: ["postgres", "redis", "storage", "temporal"],
-      };
-    } catch {
-      return reply.code(503).send({ status: "unavailable", service });
-    }
-  });
+  app.get("/health/live", { config: { rateLimit: false } }, async () => ({
+    status: "ok",
+  }));
+  const readiness = infrastructureReadiness();
+  app.get(
+    "/health/ready",
+    { config: { rateLimit: false } },
+    async (_r, reply) => {
+      const result = await readiness.probe();
+      return reply.code(result.status === "ready" ? 200 : 503).send(result);
+    },
+  );
   app.get("/openapi.json", async () => app.swagger());
   const sessionCookie = {
     httpOnly: true,
@@ -695,6 +668,7 @@ export async function buildApp(
     return sql`SELECT id,action,entity_id,created_at,actor_id FROM audit_events WHERE organization_id=${w.organization_id} AND workspace_id=${w.id} AND created_at<${query.before ?? new Date().toISOString()} ORDER BY created_at DESC,id DESC LIMIT 100`;
   });
   app.addHook("onClose", async () => {
+    await readiness.close();
     await redis.quit();
     await closeDb();
   });
@@ -705,7 +679,7 @@ export async function buildApp(
   await registerGenerativeRoutes(app);
   await registerChannelRoutes(app);
   await registerQualityRoutes(app);
-  await registerConnectorRoutes(app);
+  await registerConnectorRoutes(app, options.sharePointClientFactory);
   await registerAgentRoutes(
     app,
     options.providerFactory,

@@ -82,4 +82,10 @@ Run `pnpm db:migrate` for migration 0007, then restart API, web and worker. The 
 
 ## Enterprise source endpoints
 
-Phase 9 requires migration 0011 and a restarted API/worker. Configure `CONNECTOR_ALLOWED_HOSTS` for exact public HTTPS source endpoints, or explicit trusted `CONNECTOR_PRIVATE_HOSTS` host:port exceptions. These grants are independent of model/tool/crawl settings; source credentials are selected encrypted workspace secrets, not application storage credentials. See [connector setup](connectors.md) for S3 permissions and sync behavior.
+Phase 9 requires migrations 0011–0015 and a restarted API/worker. Configure `CONNECTOR_ALLOWED_HOSTS` for exact public HTTPS source endpoints, or explicit trusted `CONNECTOR_PRIVATE_HOSTS` host:port exceptions. These grants are independent of model/tool/crawl settings; source credentials are selected encrypted workspace secrets, not application storage credentials. See [connector setup](connectors.md) for S3 permissions, Google Drive service-account sharing/token refresh, OneDrive application setup, SharePoint site/library selection and sync behavior. Google Drive requires approved `www.googleapis.com` and `oauth2.googleapis.com` destinations on both API and worker. OneDrive requires `graph.microsoft.com`, `login.microsoftonline.com` and the exact Microsoft tenant download host (often `YOUR_TENANT-my.sharepoint.com`). SharePoint requires the same Graph/login destinations and its exact tenant download host; `Sites.Selected` also requires a separate site read grant.
+
+Teams uses the same Graph/login grants, with Channel.ReadBasic.All and ChannelMessage.Read.All application permissions. Slack requires slack.com and a selected user OAuth token. See connectors.md for supported channels, permissions and scan limits. Salesforce, Zendesk and Zoho are deferred.
+
+## Phase 10 deployment checks
+
+Read [hardening](hardening.md) before production rollout. `pnpm deployment:check` performs read-only production preflight; `pnpm deployment:check --development` is explicitly a local dependency/schema check. Readiness now requires all release migrations (through 0015) and the actual pgvector extension, with bounded shared dependency probes.

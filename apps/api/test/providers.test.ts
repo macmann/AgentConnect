@@ -6,6 +6,7 @@ import {
   ProviderError,
   decodeSSE,
   safeTransport,
+  safeHttpTransport,
   validateEndpoint,
   type ProviderName,
   type Transport,
@@ -320,5 +321,38 @@ test("HTTP diagnostics keep recognized codes/parameters but redact arbitrary pro
       },
     );
     assert.equal(closed, true);
+  }
+});
+
+test("OAuth form transport sends exact encoded body without JSON quoting", async () => {
+  let received = "";
+  const server = createServer(async (req, res) => {
+    assert.equal(
+      req.headers["content-type"],
+      "application/x-www-form-urlencoded",
+    );
+    for await (const chunk of req) received += chunk;
+    res.writeHead(200).end("{}");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const host = `127.0.0.1:${address.port}`;
+  try {
+    const body = new URLSearchParams({
+      grant_type: "jwt-bearer",
+      assertion: "signed.jwt+value",
+    }).toString();
+    const r = await safeHttpTransport([], [host])(
+      `http://${host}/token`,
+      { "content-type": "application/x-www-form-urlencoded" },
+      body,
+      AbortSignal.timeout(10000),
+      "POST",
+    );
+    await r.close();
+    assert.equal(received, body);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

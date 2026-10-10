@@ -1,6 +1,16 @@
+import { messagingFixture } from "./messaging-fixture.js";
+import {
+  createTeamsAdapter,
+  createSlackAdapter,
+} from "../src/messaging-adapters.js";
+import {
+  teamsSelection,
+  slackSelection,
+  slackCredential,
+} from "@agentconnect/schemas/connectors";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, generateKeyPairSync } from "node:crypto";
 import {
   S3Client,
   CreateBucketCommand,
@@ -21,11 +31,29 @@ import {
   type AdapterFactory,
   type ConnectorRow,
 } from "../src/connector-adapters.js";
+import {
+  createSharePointClient,
+  createSharePointAdapter,
+} from "../src/sharepoint.js";
+import { createSharePointFixture } from "./sharepoint-fixture.js";
+import { sharePointSelection } from "@agentconnect/schemas/connectors";
+import { createOneDriveAdapter } from "../src/onedrive-adapter.js";
+import {
+  oneDriveCredential,
+  oneDriveSelection,
+} from "@agentconnect/schemas/connectors";
+import { createGoogleDriveAdapter } from "../src/google-drive-adapter.js";
+import {
+  googleDriveCredential,
+  googleDriveSelection,
+} from "@agentconnect/schemas/connectors";
+import { connectorCredentials } from "../src/connector-adapters.js";
 import { processKnowledgeJob } from "../src/ingestion.js";
 import { cleanupKnowledgeFixtures } from "./knowledge-cleanup.mjs";
 if (config.NODE_ENV === "production")
   throw new Error("Tests refuse production");
 const originalPrivate = config.CONNECTOR_PRIVATE_HOSTS;
+const originalAllowed = config.CONNECTOR_ALLOWED_HOSTS;
 config.CONNECTOR_PRIVATE_HOSTS = new URL(config.S3_ENDPOINT).host;
 const org = randomUUID(),
   workspace = randomUUID(),
@@ -47,12 +75,17 @@ let kbId = "",
   secretId = "",
   connectorId = "",
   sourceId = "";
+const sharePointFixture = createSharePointFixture();
 const embedding = () => ({
     async embed(texts: string[]) {
       return texts.map(() => [1, 0.3, 0.2]);
     },
   }),
-  app = await buildApp({ embeddingFactory: embedding });
+  app = await buildApp({
+    embeddingFactory: embedding,
+    sharePointClientFactory: (credential) =>
+      createSharePointClient(credential, sharePointFixture.transport),
+  });
 const base = `/workspaces/${workspace}`;
 async function call(
   method: "GET" | "POST" | "PUT" | "DELETE",
@@ -186,6 +219,7 @@ after(async () => {
     for (const uid of users) await tx`DELETE FROM users WHERE id=${uid}`;
   });
   config.CONNECTOR_PRIVATE_HOSTS = originalPrivate;
+  config.CONNECTOR_ALLOWED_HOSTS = originalAllowed;
   await app.close();
 });
 test("connector registration enforces roles, credentials and endpoint approval", async () => {
@@ -568,3 +602,515 @@ test("disconnect retains imported knowledge and releases the credential referenc
     assert.notEqual(s!.status, "deleted");
   }
 });
+
+test("Google Drive registration validates provider credentials and native exports enter durable knowledge sync", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const credential = {
+    client_email: "fixture@project.iam.gserviceaccount.com",
+    private_key: privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
+  };
+  const secret = await call("POST", base + "/secrets", {
+    name: "DRIVE_ACCOUNT",
+    value: JSON.stringify(credential),
+  });
+  assert.equal(secret.statusCode, 201, secret.body);
+  const sid = (await call("GET", base + "/secrets"))
+    .json()
+    .find((s: { name: string }) => s.name === "DRIVE_ACCOUNT").id;
+  const input = {
+    name: "Drive policies",
+    kind: "google-drive",
+    knowledgeBaseId: kbId,
+    secretId: sid,
+    selection: { folderId: "root", recursive: true, maxObjects: 10 },
+  };
+  config.CONNECTOR_ALLOWED_HOSTS = "www.googleapis.com";
+  assert.equal(
+    (await call("POST", base + "/connectors", input)).statusCode,
+    400,
+  );
+  config.CONNECTOR_ALLOWED_HOSTS = "www.googleapis.com,oauth2.googleapis.com";
+  assert.equal(
+    (await call("POST", base + "/connectors", input, "analyst")).statusCode,
+    403,
+  );
+  const created = await call("POST", base + "/connectors", input);
+  assert.equal(created.statusCode, 201, created.body);
+  const cid = created.json().id;
+  let visible = true;
+  const metadata = {
+    id: "policy",
+    name: "Drive policy",
+    mimeType: "application/vnd.google-apps.document",
+    version: "1",
+    modifiedTime: "2026-10-10T00:00:00Z",
+    parents: ["root"],
+    trashed: false,
+  };
+  const factory: AdapterFactory = async (c) =>
+    createGoogleDriveAdapter(
+      googleDriveSelection.parse(c.selection),
+      googleDriveCredential.parse(await connectorCredentials(c, c.kind)),
+      async (raw) => {
+        const u = new URL(raw);
+        const value =
+          u.hostname === "oauth2.googleapis.com"
+            ? {
+                access_token: "fixture",
+                token_type: "Bearer",
+                expires_in: 3600,
+              }
+            : u.pathname.endsWith("/root")
+              ? {
+                  ...metadata,
+                  id: "root",
+                  mimeType: "application/vnd.google-apps.folder",
+                  parents: [],
+                }
+              : u.pathname.endsWith("/files")
+                ? { files: visible ? [metadata] : [] }
+                : u.pathname.endsWith("/export")
+                  ? "Drive refunds within 90 days."
+                  : metadata;
+        return {
+          status: 200,
+          headers: {},
+          body: (async function* () {
+            yield Buffer.from(
+              typeof value === "string" ? value : JSON.stringify(value),
+            );
+          })(),
+          close: async () => {},
+        };
+      },
+    );
+  let job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).status, "completed");
+  assert.equal((await run(job)).counts.imported, 1);
+  const [item] =
+    await sql`SELECT source_id FROM connector_items WHERE connector_id=${cid}`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await processKnowledgeJob(embedding);
+    const [state] =
+      await sql`SELECT status FROM knowledge_sources WHERE id=${item!.source_id}`;
+    if (state!.status === "ready") break;
+  }
+  const [source] =
+    await sql`SELECT status,source_url FROM knowledge_sources WHERE id=${item!.source_id}`;
+  assert.equal(source!.status, "ready");
+  assert.equal(
+    source!.source_url,
+    "https://drive.google.com/file/d/policy/view",
+  );
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.unchanged, 1);
+  visible = false;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.removed, 1);
+  assert.equal(
+    (await call("DELETE", base + "/connectors/" + cid)).statusCode,
+    200,
+  );
+});
+
+test("OneDrive credentials, endpoint grants, durable ingestion and removal use the existing tenant sync pipeline", async () => {
+  const credential = {
+    tenantId: randomUUID(),
+    clientId: randomUUID(),
+    clientSecret: "fixture-secret",
+  };
+  assert.equal(
+    (
+      await call("POST", base + "/secrets", {
+        name: "ONEDRIVE_APP",
+        value: JSON.stringify(credential),
+      })
+    ).statusCode,
+    201,
+  );
+  const sid = (await call("GET", base + "/secrets"))
+    .json()
+    .find((s: { name: string }) => s.name === "ONEDRIVE_APP").id;
+  const input = {
+    name: "OneDrive policies",
+    kind: "onedrive",
+    knowledgeBaseId: kbId,
+    secretId: sid,
+    selection: {
+      driveId: "b!drive",
+      folderId: "folder",
+      recursive: true,
+      maxObjects: 10,
+    },
+  };
+  config.CONNECTOR_ALLOWED_HOSTS = "graph.microsoft.com";
+  assert.equal(
+    (await call("POST", base + "/connectors", input)).statusCode,
+    400,
+  );
+  config.CONNECTOR_ALLOWED_HOSTS =
+    "graph.microsoft.com,login.microsoftonline.com";
+  assert.equal(
+    (await call("POST", base + "/connectors", input, "analyst")).statusCode,
+    403,
+  );
+  await call("PUT", base + "/secrets/" + sid, {
+    value: JSON.stringify({ ...credential, tenantId: "common" }),
+  });
+  assert.equal(
+    (await call("POST", base + "/connectors", input)).statusCode,
+    409,
+  );
+  await call("PUT", base + "/secrets/" + sid, {
+    value: JSON.stringify(credential),
+  });
+  const created = await call("POST", base + "/connectors", input);
+  assert.equal(created.statusCode, 201, created.body);
+  const cid = created.json().id;
+  assert.ok(
+    !(await call("GET", base + "/connectors")).body.includes("fixture-secret"),
+  );
+  let visible = true,
+    denied = false;
+  const bytes = Buffer.from("OneDrive refunds within 120 days.");
+  const item = {
+    id: "policy",
+    name: "OneDrive policy.txt",
+    size: bytes.length,
+    eTag: '"etag-1"',
+    lastModifiedDateTime: "2026-10-10T00:00:00Z",
+    webUrl: "https://fixture-my.sharepoint.com/policy.txt",
+    parentReference: { driveId: "b!drive", id: "folder" },
+    file: {},
+  };
+  const factory: AdapterFactory = async (c) =>
+    createOneDriveAdapter(
+      oneDriveSelection.parse(c.selection),
+      oneDriveCredential.parse(await connectorCredentials(c, c.kind)),
+      async (raw) => {
+        const u = new URL(raw);
+        const value =
+          u.hostname === "login.microsoftonline.com"
+            ? {
+                access_token: "fixture",
+                token_type: "Bearer",
+                expires_in: 3600,
+              }
+            : u.pathname.endsWith("/drives/b!drive")
+              ? { id: "b!drive", driveType: "business" }
+              : u.pathname.endsWith("/items/folder")
+                ? { ...item, id: "folder", file: undefined, folder: {} }
+                : u.pathname.endsWith("/children")
+                  ? { value: visible ? [item] : [] }
+                  : u.pathname.endsWith("/content")
+                    ? bytes
+                    : item;
+        return {
+          status:
+            denied && u.hostname !== "login.microsoftonline.com" ? 403 : 200,
+          headers: {},
+          body: (async function* () {
+            yield Buffer.isBuffer(value)
+              ? value
+              : Buffer.from(JSON.stringify(value));
+          })(),
+          close: async () => {},
+        };
+      },
+    );
+  let job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).status, "completed");
+  assert.equal((await run(job)).counts.imported, 1);
+  const [mapped] =
+    await sql`SELECT source_id FROM connector_items WHERE connector_id=${cid}`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await processKnowledgeJob(embedding);
+    const [state] =
+      await sql`SELECT status FROM knowledge_sources WHERE id=${mapped!.source_id}`;
+    if (state!.status === "ready") break;
+  }
+  const [source] =
+    await sql`SELECT status,source_url FROM knowledge_sources WHERE id=${mapped!.source_id}`;
+  assert.equal(source!.status, "ready");
+  assert.equal(source!.source_url, item.webUrl);
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.unchanged, 1);
+  denied = true;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).error_code, "CONNECTOR_ACCESS_DENIED");
+  assert.equal(
+    (
+      await sql`SELECT status FROM knowledge_sources WHERE id=${mapped!.source_id}`
+    )[0]!.status,
+    "ready",
+  );
+  denied = false;
+  visible = false;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.removed, 1);
+  assert.equal(
+    (await call("DELETE", base + "/connectors/" + cid)).statusCode,
+    200,
+  );
+});
+
+test("SharePoint discovery is administrator-only and decrypts only the selected workspace secret", async () => {
+  const credential = {
+    tenantId: randomUUID(),
+    clientId: randomUUID(),
+    clientSecret: "sharepoint-selected-secret",
+  };
+  assert.equal(
+    (
+      await call("POST", base + "/secrets", {
+        name: "SHAREPOINT_APP",
+        value: JSON.stringify(credential),
+      })
+    ).statusCode,
+    201,
+  );
+  const sid = (await call("GET", base + "/secrets"))
+    .json()
+    .find((s: { name: string }) => s.name === "SHAREPOINT_APP").id;
+  const input = {
+      action: "site",
+      secretId: sid,
+      siteUrl: sharePointFixture.site.webUrl,
+    },
+    endpoint = base + "/connectors/sharepoint/discover";
+  config.CONNECTOR_ALLOWED_HOSTS =
+    "graph.microsoft.com,login.microsoftonline.com";
+  for (const role of ["analyst", "builder", "outsider"])
+    assert.equal((await call("POST", endpoint, input, role)).statusCode, 403);
+  assert.equal(sharePointFixture.requests.length, 0);
+  assert.equal(
+    (await call("POST", endpoint, { ...input, secretId: randomUUID() }))
+      .statusCode,
+    409,
+  );
+  assert.equal(sharePointFixture.requests.length, 0);
+  assert.equal(
+    (
+      await call("POST", endpoint, {
+        ...input,
+        siteUrl: "https://unapproved.example/sites/Support",
+      })
+    ).statusCode,
+    400,
+  );
+  const resolved = await call("POST", endpoint, input);
+  assert.equal(resolved.statusCode, 200, resolved.body);
+  assert.equal(resolved.json().site.id, sharePointFixture.site.id);
+  assert.equal(resolved.json().libraries[0].id, sharePointFixture.library.id);
+  assert.ok(!resolved.body.includes(credential.clientSecret));
+  const auth = sharePointFixture.requests.find((r) => r.method === "POST")!;
+  assert.equal(
+    new URLSearchParams(auth.form).get("client_secret"),
+    credential.clientSecret,
+  );
+  const root = await call("POST", endpoint, {
+    action: "folders",
+    secretId: sid,
+    siteId: sharePointFixture.site.id,
+    driveId: sharePointFixture.library.id,
+  });
+  assert.equal(root.statusCode, 200, root.body);
+  assert.equal(root.json().folder.id, sharePointFixture.root.id);
+  assert.equal(root.json().folders[0].id, sharePointFixture.policies.id);
+  const foreign = await call("POST", endpoint, {
+    action: "folders",
+    secretId: sid,
+    siteId: sharePointFixture.site.id,
+    driveId: "foreign",
+  });
+  assert.equal(foreign.statusCode, 409);
+});
+test("SharePoint site-bound registry sync ingests documents and preserves sources when library access changes", async () => {
+  const sid = (await call("GET", base + "/secrets"))
+    .json()
+    .find((s: { name: string }) => s.name === "SHAREPOINT_APP").id;
+  const selection = {
+    siteId: sharePointFixture.site.id,
+    driveId: sharePointFixture.library.id,
+    folderId: sharePointFixture.policies.id,
+    recursive: true,
+    maxObjects: 10,
+  };
+  const created = await call("POST", base + "/connectors", {
+    name: "SharePoint policies",
+    kind: "sharepoint",
+    knowledgeBaseId: kbId,
+    secretId: sid,
+    selection,
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  const cid = created.json().id;
+  const factory: AdapterFactory = async (c) =>
+    createSharePointAdapter(
+      sharePointSelection.parse(c.selection),
+      oneDriveCredential.parse(await connectorCredentials(c, c.kind)),
+      sharePointFixture.transport,
+    );
+  let job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).status, "completed");
+  assert.equal((await run(job)).counts.imported, 1);
+  const [mapped] =
+    await sql`SELECT source_id FROM connector_items WHERE connector_id=${cid}`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await processKnowledgeJob(embedding);
+    const [state] =
+      await sql`SELECT status FROM knowledge_sources WHERE id=${mapped!.source_id}`;
+    if (state!.status === "ready") break;
+  }
+  const [source] =
+    await sql`SELECT status,source_url FROM knowledge_sources WHERE id=${mapped!.source_id}`;
+  assert.equal(source!.status, "ready");
+  assert.equal(
+    source!.source_url,
+    sharePointFixture.policies.webUrl + "/policy.txt",
+  );
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.unchanged, 1);
+  sharePointFixture.state.linked = false;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).error_code, "CONNECTOR_LIBRARY_UNAVAILABLE");
+  assert.equal(
+    (
+      await sql`SELECT status FROM knowledge_sources WHERE id=${mapped!.source_id}`
+    )[0]!.status,
+    "ready",
+  );
+  sharePointFixture.state.linked = true;
+  sharePointFixture.state.content = "SharePoint refunds within 60 days.";
+  sharePointFixture.state.version++;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.updated, 1);
+  sharePointFixture.state.visible = false;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.removed, 1);
+  assert.equal(
+    (await call("DELETE", base + "/connectors/" + cid)).statusCode,
+    200,
+  );
+});
+
+for (const kind of ["teams", "slack"] as const) {
+  test(`${kind} registration, tenant access, message ingestion, updates and safe removals use the durable sync pipeline`, async () => {
+    const f = messagingFixture(kind);
+    const saved = await call("POST", base + "/secrets", {
+      name: kind.toUpperCase() + "_CHANNEL",
+      value: JSON.stringify(f.credential),
+    });
+    assert.equal(saved.statusCode, 201, saved.body);
+    const sid = (await call("GET", base + "/secrets"))
+      .json()
+      .find(
+        (s: { name: string }) => s.name === kind.toUpperCase() + "_CHANNEL",
+      ).id;
+    const input = {
+      name: kind + " Support",
+      kind,
+      knowledgeBaseId: kbId,
+      secretId: sid,
+      selection: f.selection,
+    };
+    config.CONNECTOR_ALLOWED_HOSTS = "";
+    assert.equal(
+      (await call("POST", base + "/connectors", input)).statusCode,
+      400,
+    );
+    config.CONNECTOR_ALLOWED_HOSTS =
+      kind === "teams"
+        ? "graph.microsoft.com,login.microsoftonline.com"
+        : "slack.com";
+    assert.equal(
+      (await call("POST", base + "/connectors", input, "builder")).statusCode,
+      403,
+    );
+    assert.equal(
+      (await call("POST", base + "/connectors", input, "outsider")).statusCode,
+      403,
+    );
+    const created = await call("POST", base + "/connectors", input);
+    assert.equal(created.statusCode, 201, created.body);
+    const cid = created.json().id;
+    assert.ok(
+      !(await call("GET", base + "/connectors")).body.includes(
+        "fixture-user-token",
+      ),
+    );
+    const factory: AdapterFactory = async (c) =>
+      kind === "teams"
+        ? createTeamsAdapter(
+            teamsSelection.parse(c.selection),
+            oneDriveCredential.parse(await connectorCredentials(c, c.kind)),
+            f.transport,
+          )
+        : createSlackAdapter(
+            slackSelection.parse(c.selection),
+            slackCredential.parse(await connectorCredentials(c, c.kind)),
+            f.transport,
+          );
+    let job = await queue(cid);
+    await processConnectorSync(factory);
+    assert.equal((await run(job)).status, "completed");
+    assert.equal((await run(job)).counts.imported, 2);
+    const items =
+      await sql`SELECT source_id FROM connector_items WHERE connector_id=${cid}`;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await processKnowledgeJob(embedding);
+      const ready =
+        await sql`SELECT id FROM knowledge_sources WHERE id IN ${sql(items.map((i) => i.source_id))} AND status='ready'`;
+      if (ready.length === 2) break;
+    }
+    const sources =
+      await sql`SELECT status,source_url FROM knowledge_sources WHERE id IN ${sql(items.map((i) => i.source_id))}`;
+    assert.ok(
+      sources.every(
+        (s) =>
+          s.status === "ready" &&
+          s.source_url.includes(
+            kind === "teams" ? "teams.microsoft.com" : "app.slack.com",
+          ),
+      ),
+    );
+    job = await queue(cid);
+    await processConnectorSync(factory);
+    assert.equal((await run(job)).counts.unchanged, 2);
+    f.state.text = "Refunds now within 60 days.";
+    job = await queue(cid);
+    await processConnectorSync(factory);
+    assert.equal((await run(job)).counts.updated, 1);
+    f.state.denied = true;
+    job = await queue(cid);
+    await processConnectorSync(factory);
+    assert.equal((await run(job)).error_code, "CONNECTOR_ACCESS_DENIED");
+    assert.equal(
+      (
+        await sql`SELECT id FROM knowledge_sources WHERE id IN ${sql(items.map((i) => i.source_id))} AND status='deleted'`
+      ).length,
+      0,
+    );
+    f.state.denied = false;
+    f.state.visible = false;
+    job = await queue(cid);
+    await processConnectorSync(factory);
+    assert.equal((await run(job)).counts.removed, 2);
+    assert.equal(
+      (await call("DELETE", base + "/connectors/" + cid)).statusCode,
+      200,
+    );
+  });
+}

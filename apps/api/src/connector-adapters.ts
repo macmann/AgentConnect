@@ -9,7 +9,32 @@ import {
   validateEndpoint,
   ProviderError,
 } from "@agentconnect/provider-sdk";
-import { s3Selection, s3Credential } from "@agentconnect/schemas/connectors";
+import {
+  s3Selection,
+  s3Credential,
+  googleDriveSelection,
+  googleDriveCredential,
+  oneDriveSelection,
+  oneDriveCredential,
+  sharePointSelection,
+  teamsSelection,
+  slackSelection,
+  slackCredential,
+} from "@agentconnect/schemas/connectors";
+import {
+  createGoogleDriveAdapter,
+  googleDriveEndpoints,
+} from "./google-drive-adapter.js";
+import {
+  createOneDriveAdapter,
+  oneDriveEndpoints,
+} from "./onedrive-adapter.js";
+import { createSharePointAdapter } from "./sharepoint.js";
+import {
+  createTeamsAdapter,
+  createSlackAdapter,
+} from "./messaging-adapters.js";
+import { createPrivateKey } from "node:crypto";
 import { sql } from "./db.js";
 import { decrypt } from "./security.js";
 import { config } from "./config.js";
@@ -22,7 +47,7 @@ export class ConnectorError extends Error {
 export interface RemoteDocument {
   key: string;
   fingerprint: string;
-  size: number;
+  size?: number;
   filename: string;
   url: string;
   etag?: string;
@@ -63,29 +88,105 @@ export async function connectorCredentials(
     ConnectorRow,
     "secret_id" | "workspace_id" | "organization_id"
   >,
+  kind = "s3",
 ) {
   const [s] =
     await sql`SELECT name,ciphertext FROM secrets WHERE id=${connector.secret_id} AND workspace_id=${connector.workspace_id} AND organization_id=${connector.organization_id}`;
   if (!s) throw new ConnectorError("CONNECTOR_CREDENTIAL_UNAVAILABLE");
   try {
-    return s3Credential.parse(
-      JSON.parse(
-        decrypt(
-          s.ciphertext,
-          `${connector.organization_id}:${connector.workspace_id}:${s.name}`,
-        ),
+    const value = JSON.parse(
+      decrypt(
+        s.ciphertext,
+        `${connector.organization_id}:${connector.workspace_id}:${s.name}`,
       ),
     );
+    if (kind === "google-drive") {
+      const credential = googleDriveCredential.parse(value);
+      const key = createPrivateKey(credential.private_key);
+      if (
+        key.asymmetricKeyType !== "rsa" ||
+        (key.asymmetricKeyDetails?.modulusLength ?? 0) < 2048
+      )
+        throw new Error("Invalid signing key");
+      return credential;
+    }
+    if (kind === "slack") return slackCredential.parse(value);
+    if (kind === "onedrive" || kind === "sharepoint" || kind === "teams")
+      return oneDriveCredential.parse(value);
+    return s3Credential.parse(value);
   } catch {
     throw new ConnectorError("CONNECTOR_CREDENTIAL_INVALID");
   }
 }
+export function validateConnectorSelection(kind: string, selection: unknown) {
+  if (kind === "slack") {
+    slackSelection.parse(selection);
+    validateConnectorEndpoint("https://slack.com/api");
+  } else if (kind === "teams") {
+    teamsSelection.parse(selection);
+    for (const endpoint of oneDriveEndpoints)
+      validateConnectorEndpoint(endpoint);
+  } else if (kind === "google-drive") {
+    googleDriveSelection.parse(selection);
+    for (const endpoint of googleDriveEndpoints)
+      validateConnectorEndpoint(endpoint);
+  } else if (kind === "onedrive" || kind === "sharepoint") {
+    if (kind === "sharepoint") sharePointSelection.parse(selection);
+    else oneDriveSelection.parse(selection);
+    for (const endpoint of oneDriveEndpoints)
+      validateConnectorEndpoint(endpoint);
+  } else if (kind === "s3")
+    validateConnectorEndpoint(s3Selection.parse(selection).endpoint);
+  else throw new ConnectorError("CONNECTOR_UNSUPPORTED");
+}
 export const createSourceAdapter: AdapterFactory = async (connector) => {
+  if (connector.kind === "teams" || connector.kind === "slack") {
+    validateConnectorSelection(connector.kind, connector.selection);
+    const credential = await connectorCredentials(connector, connector.kind);
+    return connector.kind === "teams"
+      ? createTeamsAdapter(
+          teamsSelection.parse(connector.selection),
+          oneDriveCredential.parse(credential),
+        )
+      : createSlackAdapter(
+          slackSelection.parse(connector.selection),
+          slackCredential.parse(credential),
+        );
+  }
+  if (connector.kind === "sharepoint") {
+    validateConnectorSelection(connector.kind, connector.selection);
+    return createSharePointAdapter(
+      sharePointSelection.parse(connector.selection),
+      oneDriveCredential.parse(
+        await connectorCredentials(connector, connector.kind),
+      ),
+    );
+  }
+  if (connector.kind === "onedrive") {
+    validateConnectorSelection(connector.kind, connector.selection);
+    const credential = oneDriveCredential.parse(
+      await connectorCredentials(connector, connector.kind),
+    );
+    return createOneDriveAdapter(
+      oneDriveSelection.parse(connector.selection),
+      credential,
+    );
+  }
+  if (connector.kind === "google-drive") {
+    validateConnectorSelection(connector.kind, connector.selection);
+    const credential = googleDriveCredential.parse(
+      await connectorCredentials(connector, connector.kind),
+    );
+    return createGoogleDriveAdapter(
+      googleDriveSelection.parse(connector.selection),
+      credential,
+    );
+  }
   if (connector.kind !== "s3")
     throw new ConnectorError("CONNECTOR_UNSUPPORTED");
   const selection = s3Selection.parse(connector.selection);
   validateConnectorEndpoint(selection.endpoint);
-  const credentials = await connectorCredentials(connector);
+  const credentials = s3Credential.parse(await connectorCredentials(connector));
   const transport = safeHttpTransport(
     hosts(config.CONNECTOR_ALLOWED_HOSTS),
     hosts(config.CONNECTOR_PRIVATE_HOSTS),

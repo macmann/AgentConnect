@@ -125,7 +125,7 @@ See channels-voice.md for the supported initial slice and integration prerequisi
 
 See quality.md for capabilities, semantics and the explicit initial release limits.
 
-## Phase 9 — Enterprise connectors (initial S3 release)
+## Phase 9 — Enterprise connectors (document sources, Teams and Slack)
 
 - [x] Tenant-scoped connector registry, encrypted selected credentials, administrative configuration and builder sync permissions.
 - [x] Source adapter abstraction and signed read-only S3 adapter with separate endpoint grants.
@@ -133,14 +133,30 @@ See quality.md for capabilities, semantics and the explicit initial release limi
 - [x] Durable leased manual/scheduled sync, cancellation, permission rechecks, bounded crash recovery and safe status/errors.
 - [x] Remote removal reconciliation restricted to managed sources, provenance and existing parser/embedding integration.
 - [x] Connector setup/status/history UI with prerequisite links, pause/resume and disconnect retaining knowledge.
-- [ ] Google Drive, OneDrive, SharePoint, Salesforce, Zendesk, Zoho, Teams and Slack adapters.
-- [ ] OAuth/role renewal, source ACL mirroring, large-source change feeds, retention and live AWS/IAM acceptance.
+- [x] Google Drive folder adapter with service-account token refresh, recursive bounded inventory, native document exports and metadata/checksum validation.
+- [x] OneDrive for Business adapter with Entra application token renewal, bounded recursive Graph inventory, approved credential-free download redirects and metadata/checksum guards.
+- [x] SharePoint site/library/folder discovery, administrator-only credential-scoped API, explicit folder selection and site-bound document sync through the shared Graph client.
+- [x] Teams standard-channel messages/replies and Slack selected-channel messages/replies as read-only knowledge sources.
+- Deferred by user: Salesforce, Zendesk and Zoho adapters. These are outside the current release plan and can be scheduled later.
+- [ ] Interactive user OAuth/role renewal, source ACL mirroring, large-source change feeds, retention and live AWS/IAM acceptance.
 
 See connectors.md for setup, permissions and the initial release's sync semantics.
 
+## Phase 10 — Hardening (initial deployment slice)
+
+- [x] Bounded concurrent readiness, shared probes and sanitized dependency failures.
+- [x] Readiness verifies required release migrations and actual pgvector extension version.
+- [x] Read-only deployment preflight with explicit production environment, database privilege and default-credential checks.
+- [x] Executable local readiness concurrency smoke and deployment/recovery runbook.
+- [ ] Independent penetration testing, expanded tenant-isolation assessment and realistic agent/workflow load tests.
+- [ ] Production HA/failover, measured backup/restore RPO/RTO, comprehensive data retention, release automation and on-premise packaging.
+- [ ] Performance targets, accessibility review and live provider/SMTP acceptance.
+
+See hardening.md for checks, operational limits and remaining production acceptance.
+
 ## Subsequent phases
 
-Complete the remaining connector adapters progressively, then follow product-spec.md phase 10 for hardening. Complete a compiling, tested, usable slice before starting the next.
+Proceed to product-spec.md Phase 10 hardening after Teams and Slack validation. Complete a compiling, tested, usable slice before starting the next.
 
 ## Risks and dependencies
 
