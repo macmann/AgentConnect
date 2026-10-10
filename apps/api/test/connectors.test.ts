@@ -21,6 +21,11 @@ import {
   type AdapterFactory,
   type ConnectorRow,
 } from "../src/connector-adapters.js";
+import { createOneDriveAdapter } from "../src/onedrive-adapter.js";
+import {
+  oneDriveCredential,
+  oneDriveSelection,
+} from "@agentconnect/schemas/connectors";
 import { createGoogleDriveAdapter } from "../src/google-drive-adapter.js";
 import {
   googleDriveCredential,
@@ -680,6 +685,151 @@ test("Google Drive registration validates provider credentials and native export
   job = await queue(cid);
   await processConnectorSync(factory);
   assert.equal((await run(job)).counts.unchanged, 1);
+  visible = false;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.removed, 1);
+  assert.equal(
+    (await call("DELETE", base + "/connectors/" + cid)).statusCode,
+    200,
+  );
+});
+
+test("OneDrive credentials, endpoint grants, durable ingestion and removal use the existing tenant sync pipeline", async () => {
+  const credential = {
+    tenantId: randomUUID(),
+    clientId: randomUUID(),
+    clientSecret: "fixture-secret",
+  };
+  assert.equal(
+    (
+      await call("POST", base + "/secrets", {
+        name: "ONEDRIVE_APP",
+        value: JSON.stringify(credential),
+      })
+    ).statusCode,
+    201,
+  );
+  const sid = (await call("GET", base + "/secrets"))
+    .json()
+    .find((s: { name: string }) => s.name === "ONEDRIVE_APP").id;
+  const input = {
+    name: "OneDrive policies",
+    kind: "onedrive",
+    knowledgeBaseId: kbId,
+    secretId: sid,
+    selection: {
+      driveId: "b!drive",
+      folderId: "folder",
+      recursive: true,
+      maxObjects: 10,
+    },
+  };
+  config.CONNECTOR_ALLOWED_HOSTS = "graph.microsoft.com";
+  assert.equal(
+    (await call("POST", base + "/connectors", input)).statusCode,
+    400,
+  );
+  config.CONNECTOR_ALLOWED_HOSTS =
+    "graph.microsoft.com,login.microsoftonline.com";
+  assert.equal(
+    (await call("POST", base + "/connectors", input, "analyst")).statusCode,
+    403,
+  );
+  await call("PUT", base + "/secrets/" + sid, {
+    value: JSON.stringify({ ...credential, tenantId: "common" }),
+  });
+  assert.equal(
+    (await call("POST", base + "/connectors", input)).statusCode,
+    409,
+  );
+  await call("PUT", base + "/secrets/" + sid, {
+    value: JSON.stringify(credential),
+  });
+  const created = await call("POST", base + "/connectors", input);
+  assert.equal(created.statusCode, 201, created.body);
+  const cid = created.json().id;
+  assert.ok(
+    !(await call("GET", base + "/connectors")).body.includes("fixture-secret"),
+  );
+  let visible = true,
+    denied = false;
+  const bytes = Buffer.from("OneDrive refunds within 120 days.");
+  const item = {
+    id: "policy",
+    name: "OneDrive policy.txt",
+    size: bytes.length,
+    eTag: '"etag-1"',
+    lastModifiedDateTime: "2026-10-10T00:00:00Z",
+    webUrl: "https://fixture-my.sharepoint.com/policy.txt",
+    parentReference: { driveId: "b!drive", id: "folder" },
+    file: {},
+  };
+  const factory: AdapterFactory = async (c) =>
+    createOneDriveAdapter(
+      oneDriveSelection.parse(c.selection),
+      oneDriveCredential.parse(await connectorCredentials(c, c.kind)),
+      async (raw) => {
+        const u = new URL(raw);
+        const value =
+          u.hostname === "login.microsoftonline.com"
+            ? {
+                access_token: "fixture",
+                token_type: "Bearer",
+                expires_in: 3600,
+              }
+            : u.pathname.endsWith("/drives/b!drive")
+              ? { id: "b!drive", driveType: "business" }
+              : u.pathname.endsWith("/items/folder")
+                ? { ...item, id: "folder", file: undefined, folder: {} }
+                : u.pathname.endsWith("/children")
+                  ? { value: visible ? [item] : [] }
+                  : u.pathname.endsWith("/content")
+                    ? bytes
+                    : item;
+        return {
+          status:
+            denied && u.hostname !== "login.microsoftonline.com" ? 403 : 200,
+          headers: {},
+          body: (async function* () {
+            yield Buffer.isBuffer(value)
+              ? value
+              : Buffer.from(JSON.stringify(value));
+          })(),
+          close: async () => {},
+        };
+      },
+    );
+  let job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).status, "completed");
+  assert.equal((await run(job)).counts.imported, 1);
+  const [mapped] =
+    await sql`SELECT source_id FROM connector_items WHERE connector_id=${cid}`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await processKnowledgeJob(embedding);
+    const [state] =
+      await sql`SELECT status FROM knowledge_sources WHERE id=${mapped!.source_id}`;
+    if (state!.status === "ready") break;
+  }
+  const [source] =
+    await sql`SELECT status,source_url FROM knowledge_sources WHERE id=${mapped!.source_id}`;
+  assert.equal(source!.status, "ready");
+  assert.equal(source!.source_url, item.webUrl);
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.unchanged, 1);
+  denied = true;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).error_code, "CONNECTOR_ACCESS_DENIED");
+  assert.equal(
+    (
+      await sql`SELECT status FROM knowledge_sources WHERE id=${mapped!.source_id}`
+    )[0]!.status,
+    "ready",
+  );
+  denied = false;
   visible = false;
   job = await queue(cid);
   await processConnectorSync(factory);

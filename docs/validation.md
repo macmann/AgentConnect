@@ -166,3 +166,12 @@ The API previously masked sanitized model-test 502 messages as Internal server e
 - Browser connector suite: **2 passed**. S3 worker ingestion/incremental sync/configuration/pause/disconnect remains covered; Google Drive setup verifies sharing instructions, provider-specific fields, saved folder/recursive selection, immutable source settings, pause and disconnect. Google Drive browser setup does not call a live Google API.
 - Lint, typecheck and builds passed across all eight packages. PostgreSQL, Redis, storage and Temporal readiness checks passed and the web returned HTTP 200.
 - Google responses are explicit protocol fixtures; no Google credentials are configured. Live service-account, shared-drive and export acceptance remains pending. Per-user source ACL mirroring and interactive OAuth remain outside this slice.
+
+## Phase 9 — OneDrive for Business connector extension
+
+- Built on the existing Google Drive/S3 changes without pulling from main; this slice is on `feat/onedrive-connectors`.
+- Migration 0013 applied successfully and repeat migration execution was a no-op.
+- Backend suite: **156 passed, 0 failed**. The 17 OneDrive adapter tests cover form-encoded tenant application credentials, token reuse/renewal, recursive bounds, skipped remote shortcuts, personal-drive rejection, lost folder access, pagination loops/foreign endpoints, file races, checksums, download size limits, denied redirects, Graph credential isolation and refusal of additional redirects. Integration coverage validates encrypted provider credentials, endpoint grants, durable ingestion/readiness, unchanged files, permission failure preserving knowledge and managed-only removal.
+- Browser connector suite: **3 passed**. Existing S3 worker and Google Drive setup lifecycles pass; OneDrive setup verifies provider instructions, required drive/folder IDs, saved recursive/schedule settings, immutable source selection, pause and disconnect. No OneDrive browser page errors.
+- Lint, typecheck and builds passed across eight packages. API readiness reported PostgreSQL, Redis, storage and Temporal ready; the web returned HTTP 200.
+- Microsoft responses are explicit protocol fixtures, not live Microsoft access. No Microsoft credentials are configured, and current cloud egress does not grant the Microsoft integration endpoints. Live Entra consent, business-drive reads, tenant download hosts and production acceptance remain pending. Personal/delegated sign-in, sovereign clouds, delta feeds and per-user ACL mirroring are outside this initial slice.

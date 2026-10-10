@@ -348,3 +348,123 @@ test("Google Drive setup explains sharing, saves selected provider and locks sou
     page.getByText("No enterprise sources yet", { exact: true }),
   ).toBeVisible();
 });
+
+test("OneDrive setup requires drive and folder IDs, saves application credential and preserves source selection", async ({
+  page,
+  context,
+}) => {
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  const base = `http://localhost:4000/workspaces/${workspace}`,
+    headers = { origin: "http://localhost:3000" };
+  const saved = await context.request.post(base + "/secrets", {
+    headers,
+    data: {
+      name: "ONEDRIVE_APP",
+      value: JSON.stringify({
+        tenantId: randomUUID(),
+        clientId: randomUUID(),
+        clientSecret: "fixture-app-secret",
+      }),
+    },
+  });
+  expect(saved.ok(), await saved.text()).toBe(true);
+  const secrets = await (await context.request.get(base + "/secrets")).json(),
+    bases = await (await context.request.get(base + "/knowledge-bases")).json();
+  await page.goto("/");
+  await page.getByRole("button", { name: "Connectors", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Add connector", exact: true })
+    .click();
+  await page
+    .getByLabel("Connector provider", { exact: true })
+    .selectOption("onedrive");
+  await expect(
+    page.getByText(
+      /Microsoft Graph application permissions and administrator consent/,
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Google Drive folder ID", { exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("S3 endpoint", { exact: true })).toHaveCount(0);
+  await page
+    .getByLabel("Connector name", { exact: true })
+    .fill("OneDrive policies");
+  await page
+    .getByLabel("Connector knowledge base", { exact: true })
+    .selectOption(bases[0].id);
+  await page
+    .getByLabel("Source workspace credential", { exact: true })
+    .selectOption(secrets.find((s) => s.name === "ONEDRIVE_APP").id);
+  await page
+    .getByLabel("OneDrive folder item ID", { exact: true })
+    .fill("fixture-folder");
+  await expect(
+    page.getByRole("button", { name: "Save connector", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByLabel("OneDrive drive ID", { exact: true })
+    .fill("b!fixture-drive");
+  await page.getByLabel("Refresh schedule", { exact: true }).selectOption("60");
+  await page
+    .getByRole("button", { name: "Save connector", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "Connector saved. Run Sync now to verify access and import files.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  const connectors = await (
+    await context.request.get(base + "/connectors")
+  ).json();
+  expect(connectors[0].kind).toBe("onedrive");
+  expect(connectors[0].selection).toEqual({
+    driveId: "b!fixture-drive",
+    folderId: "fixture-folder",
+    recursive: true,
+    maxObjects: 100,
+  });
+  expect(connectors[0].schedule_minutes).toBe(60);
+  await page
+    .getByRole("button", { name: "Edit connector", exact: true })
+    .click();
+  await expect(
+    page.getByLabel("Connector provider", { exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByLabel("OneDrive drive ID", { exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByLabel("OneDrive folder item ID", { exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByLabel("Include subfolders", { exact: true }),
+  ).toBeChecked();
+  await page
+    .getByRole("button", { name: "Save connector", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Pause connector", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Sync now", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Disconnect connector", exact: true })
+    .click();
+  await expect(
+    page.getByText("No enterprise sources yet", { exact: true }),
+  ).toBeVisible();
+  expect(errors).toEqual([]);
+});

@@ -26,6 +26,21 @@ export const googleDriveCredential = z.object({
   client_email: z.email().max(320),
   private_key: z.string().min(100).max(20000),
 });
+export const oneDriveSelection = z
+  .object({
+    driveId: z.string().regex(/^[a-zA-Z0-9!_-]{1,200}$/),
+    folderId: z.string().regex(/^[a-zA-Z0-9!_-]{1,200}$/),
+    recursive: z.boolean().default(true),
+    maxObjects: z.number().int().min(1).max(1000).default(100),
+  })
+  .strict();
+export const oneDriveCredential = z
+  .object({
+    tenantId: z.uuid(),
+    clientId: z.uuid(),
+    clientSecret: z.string().min(1).max(10000),
+  })
+  .strict();
 const connectorCommon = {
   name: z.string().trim().min(1).max(100),
   knowledgeBaseId: z.uuid(),
@@ -45,6 +60,13 @@ export const connectorInput = z.discriminatedUnion("kind", [
       ...connectorCommon,
       kind: z.literal("google-drive"),
       selection: googleDriveSelection,
+    })
+    .strict(),
+  z
+    .object({
+      ...connectorCommon,
+      kind: z.literal("onedrive"),
+      selection: oneDriveSelection,
     })
     .strict(),
 ]);

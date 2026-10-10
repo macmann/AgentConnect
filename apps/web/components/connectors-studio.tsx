@@ -7,7 +7,7 @@ import { Button } from "./button";
 type Connector = {
   id: string;
   name: string;
-  kind: "s3" | "google-drive";
+  kind: "s3" | "google-drive" | "onedrive";
   knowledge_name: string;
   knowledge_base_id: string;
   secret_id: string;
@@ -23,6 +23,7 @@ type Connector = {
     bucket?: string;
     prefix?: string;
     folderId?: string;
+    driveId?: string;
     recursive?: boolean;
     maxObjects: number;
   };
@@ -69,8 +70,9 @@ export function ConnectorsStudio({
   const [selected, setSelected] = useState(""),
     [editing, setEditing] = useState(false),
     [name, setName] = useState(""),
-    [kind, setKind] = useState<"s3" | "google-drive">("s3"),
+    [kind, setKind] = useState<"s3" | "google-drive" | "onedrive">("s3"),
     [folderId, setFolderId] = useState(""),
+    [driveId, setDriveId] = useState(""),
     [recursive, setRecursive] = useState(true),
     [kb, setKb] = useState(""),
     [secret, setSecret] = useState(""),
@@ -112,6 +114,7 @@ export function ConnectorsStudio({
     setName(c?.name ?? "");
     setKind(c?.kind ?? "s3");
     setFolderId(c?.selection.folderId ?? "");
+    setDriveId(c?.selection.driveId ?? "");
     setRecursive(c?.selection.recursive ?? true);
     setKb(c?.knowledge_base_id ?? "");
     setSecret(c?.secret_id ?? "");
@@ -139,8 +142,8 @@ export function ConnectorsStudio({
           <div>
             <h3>Enterprise sources</h3>
             <p>
-              Sync approved S3 files or Google Drive folders into a knowledge
-              base.
+              Sync approved S3, Google Drive or OneDrive folders into a
+              knowledge base.
             </p>
           </div>
           {canManage && <Button onClick={() => edit()}>Add connector</Button>}
@@ -165,7 +168,7 @@ export function ConnectorsStudio({
               <h4>No enterprise sources yet</h4>
               <p>
                 Create a knowledge base and save a source credential, then
-                connect an S3 prefix or Google Drive folder.
+                connect an S3 prefix, Google Drive or OneDrive folder.
               </p>
               <div className="button-row">
                 <Button onClick={() => onNavigate("Knowledge")}>
@@ -195,7 +198,7 @@ export function ConnectorsStudio({
                 {c.knowledge_name} ·{" "}
                 {c.kind === "s3"
                   ? `${c.selection.bucket}/${c.selection.prefix}`
-                  : `Google Drive folder ${c.selection.folderId}`}{" "}
+                  : `${c.kind === "onedrive" ? "OneDrive" : "Google Drive"} folder ${c.selection.folderId}`}{" "}
                 · {c.enabled ? (c.status ?? "Not synced") : "Paused"}
               </span>
             </button>
@@ -212,11 +215,14 @@ export function ConnectorsStudio({
                   disabled={!!connector}
                   value={kind}
                   onChange={(e) =>
-                    setKind(e.target.value as "s3" | "google-drive")
+                    setKind(
+                      e.target.value as "s3" | "google-drive" | "onedrive",
+                    )
                   }
                 >
                   <option value="s3">S3 / S3-compatible</option>
                   <option value="google-drive">Google Drive</option>
+                  <option value="onedrive">OneDrive for Business</option>
                 </select>
               </label>
               <label>
@@ -267,7 +273,9 @@ export function ConnectorsStudio({
               <p>
                 {kind === "s3"
                   ? "Save a JSON secret with accessKeyId, secretAccessKey and optional sessionToken. Grant only ListBucket and GetObject for the selected prefix."
-                  : "Enable Google Drive API in your Google Cloud project. Save the service-account JSON key in Secrets, then share this folder with its client_email as Viewer. Tokens refresh automatically; no user impersonation is used."}{" "}
+                  : kind === "onedrive"
+                    ? "Register a Microsoft Entra application with read-only Microsoft Graph application permissions and administrator consent. Save a JSON secret with tenantId, clientId and clientSecret. Access tokens renew automatically. Personal OneDrive accounts need a future delegated sign-in flow."
+                    : "Enable Google Drive API in your Google Cloud project. Save the service-account JSON key in Secrets, then share this folder with its client_email as Viewer. Tokens refresh automatically; no user impersonation is used."}{" "}
                 Values remain encrypted on the server.
               </p>
               <Button onClick={() => onNavigate("Secrets")}>
@@ -326,14 +334,36 @@ export function ConnectorsStudio({
                 </>
               ) : (
                 <>
+                  {kind === "onedrive" && (
+                    <label>
+                      OneDrive drive ID
+                      <input
+                        aria-label="OneDrive drive ID"
+                        value={driveId}
+                        disabled={!!connector}
+                        onChange={(e) => setDriveId(e.target.value)}
+                        placeholder="Microsoft Graph drive ID"
+                      />
+                    </label>
+                  )}
                   <label>
-                    Google Drive folder ID
+                    {kind === "onedrive"
+                      ? "OneDrive folder item ID"
+                      : "Google Drive folder ID"}
                     <input
-                      aria-label="Google Drive folder ID"
+                      aria-label={
+                        kind === "onedrive"
+                          ? "OneDrive folder item ID"
+                          : "Google Drive folder ID"
+                      }
                       value={folderId}
                       disabled={!!connector}
                       onChange={(e) => setFolderId(e.target.value)}
-                      placeholder="ID from drive.google.com/drive/folders/…"
+                      placeholder={
+                        kind === "onedrive"
+                          ? "Microsoft Graph folder item ID"
+                          : "ID from drive.google.com/drive/folders/…"
+                      }
                     />
                   </label>
                   <label>
@@ -347,10 +377,9 @@ export function ConnectorsStudio({
                     Include subfolders
                   </label>
                   <p>
-                    Approve www.googleapis.com and oauth2.googleapis.com in
-                    CONNECTOR_ALLOWED_HOSTS on both API and worker. Folder and
-                    target knowledge base are fixed after creation. Google Docs,
-                    Sheets and Slides are exported; shortcuts are skipped.
+                    {kind === "onedrive"
+                      ? "Approve graph.microsoft.com, login.microsoftonline.com and the exact tenant download host (for example yourtenant-my.sharepoint.com) in CONNECTOR_ALLOWED_HOSTS on API and worker. Use IDs returned by Microsoft Graph, rather than a sharing URL. OneDrive shortcuts are skipped; drive, folder and target knowledge base are fixed after creation."
+                      : "Approve www.googleapis.com and oauth2.googleapis.com in CONNECTOR_ALLOWED_HOSTS on both API and worker. Folder and target knowledge base are fixed after creation. Google Docs, Sheets and Slides are exported; shortcuts are skipped."}{" "}
                     Imported files inherit knowledge base access, so choose a
                     folder whose documents can be shared with that audience.
                   </p>
@@ -391,7 +420,9 @@ export function ConnectorsStudio({
                   !name.trim() ||
                   !kb ||
                   !secret ||
-                  (kind === "s3" ? !bucket : !folderId)
+                  (kind === "s3"
+                    ? !bucket
+                    : !folderId || (kind === "onedrive" && !driveId))
                 }
                 onClick={() =>
                   void action(async () => {
@@ -426,7 +457,14 @@ export function ConnectorsStudio({
                                   prefix,
                                   maxObjects: limit,
                                 }
-                              : { folderId, recursive, maxObjects: limit },
+                              : kind === "onedrive"
+                                ? {
+                                    driveId,
+                                    folderId,
+                                    recursive,
+                                    maxObjects: limit,
+                                  }
+                                : { folderId, recursive, maxObjects: limit },
                           scheduleMinutes: schedule ? Number(schedule) : null,
                         },
                       );
@@ -572,16 +610,23 @@ export function ConnectorsStudio({
                     {s.error_code === "CONNECTOR_SOURCE_LIMIT"
                       ? " — Choose a narrower source or increase the configured listing limit."
                       : s.error_code === "CONNECTOR_ACCESS_DENIED"
-                        ? connector.kind === "google-drive"
-                          ? " — Check the service-account key, enable Drive API, and share the selected folder with client_email as Viewer."
-                          : " — Check the selected credential, bucket/prefix permissions and region."
+                        ? connector.kind === "onedrive"
+                          ? " — Check the Entra credential, Microsoft Graph read permissions, administrator consent and access to the selected drive."
+                          : connector.kind === "google-drive"
+                            ? " — Check the service-account key, enable Drive API, and share the selected folder with client_email as Viewer."
+                            : " — Check the selected credential, bucket/prefix permissions and region."
                         : s.error_code === "CONNECTOR_FOLDER_UNAVAILABLE"
-                          ? " — Check the folder ID, trash status and service-account sharing."
-                          : s.error_code === "CONNECTOR_INCOMPLETE_LISTING"
-                            ? " — Google returned an incomplete search. Retry; existing knowledge was retained."
-                            : s.error_code === "CONNECTOR_OBJECT_CHANGED"
-                              ? " — A file changed during download. Retry the sync."
-                              : ""}
+                          ? " — Check the folder ID and source-account access."
+                          : s.error_code ===
+                              "CONNECTOR_DOWNLOAD_ENDPOINT_NOT_ALLOWED"
+                            ? " — Approve the exact Microsoft tenant download host in CONNECTOR_ALLOWED_HOSTS on API and worker."
+                            : s.error_code === "CONNECTOR_DRIVE_UNSUPPORTED"
+                              ? " — Use a OneDrive for Business or document-library drive ID. Personal accounts require delegated sign-in."
+                              : s.error_code === "CONNECTOR_INCOMPLETE_LISTING"
+                                ? " — Google returned an incomplete search. Retry; existing knowledge was retained."
+                                : s.error_code === "CONNECTOR_OBJECT_CHANGED"
+                                  ? " — A file changed during download. Retry the sync."
+                                  : ""}
                   </p>
                 )}
                 {canSync && ["queued", "running"].includes(s.status) && (

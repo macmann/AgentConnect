@@ -14,11 +14,17 @@ import {
   s3Credential,
   googleDriveSelection,
   googleDriveCredential,
+  oneDriveSelection,
+  oneDriveCredential,
 } from "@agentconnect/schemas/connectors";
 import {
   createGoogleDriveAdapter,
   googleDriveEndpoints,
 } from "./google-drive-adapter.js";
+import {
+  createOneDriveAdapter,
+  oneDriveEndpoints,
+} from "./onedrive-adapter.js";
 import { createPrivateKey } from "node:crypto";
 import { sql } from "./db.js";
 import { decrypt } from "./security.js";
@@ -95,6 +101,7 @@ export async function connectorCredentials(
         throw new Error("Invalid signing key");
       return credential;
     }
+    if (kind === "onedrive") return oneDriveCredential.parse(value);
     return s3Credential.parse(value);
   } catch {
     throw new ConnectorError("CONNECTOR_CREDENTIAL_INVALID");
@@ -105,11 +112,25 @@ export function validateConnectorSelection(kind: string, selection: unknown) {
     googleDriveSelection.parse(selection);
     for (const endpoint of googleDriveEndpoints)
       validateConnectorEndpoint(endpoint);
+  } else if (kind === "onedrive") {
+    oneDriveSelection.parse(selection);
+    for (const endpoint of oneDriveEndpoints)
+      validateConnectorEndpoint(endpoint);
   } else if (kind === "s3")
     validateConnectorEndpoint(s3Selection.parse(selection).endpoint);
   else throw new ConnectorError("CONNECTOR_UNSUPPORTED");
 }
 export const createSourceAdapter: AdapterFactory = async (connector) => {
+  if (connector.kind === "onedrive") {
+    validateConnectorSelection(connector.kind, connector.selection);
+    const credential = oneDriveCredential.parse(
+      await connectorCredentials(connector, connector.kind),
+    );
+    return createOneDriveAdapter(
+      oneDriveSelection.parse(connector.selection),
+      credential,
+    );
+  }
   if (connector.kind === "google-drive") {
     validateConnectorSelection(connector.kind, connector.selection);
     const credential = googleDriveCredential.parse(

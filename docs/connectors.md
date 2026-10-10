@@ -1,8 +1,8 @@
-# Enterprise connectors — S3 and Google Drive
+# Enterprise connectors — S3, Google Drive and OneDrive
 
-Phase 9 starts with a reusable source adapter (`list`, conditional `read`, `close`) and a durable sync pipeline. Adapters read S3/S3-compatible buckets and Google Drive folders into existing knowledge bases. OneDrive, SharePoint, CRM, support and messaging adapters remain subsequent implementations.
+Phase 9 starts with a reusable source adapter (`list`, conditional `read`, `close`) and a durable sync pipeline. Adapters read S3/S3-compatible buckets, Google Drive and OneDrive for Business folders into existing knowledge bases. SharePoint site/library discovery, CRM, support and messaging adapters remain subsequent implementations.
 
-Run `pnpm db:migrate` for migrations 0011 and 0012 and restart API, worker and web. Open **Connectors** in a workspace. Administrators register/change connections; builders can sync approved connections. Operators and analysts can inspect status. Sync requires current knowledge-management permission as well as connector-sync permission.
+Run `pnpm db:migrate` for migrations 0011–0013 and restart API, worker and web. Open **Connectors** in a workspace. Administrators register/change connections; builders can sync approved connections. Operators and analysts can inspect status. Sync requires current knowledge-management permission as well as connector-sync permission.
 
 ## Configure S3
 
@@ -46,6 +46,33 @@ Google Docs export as TXT, Sheets as XLSX and Slides as PPTX. Other supported up
 A complete paginated folder traversal precedes imports. Duplicate entries, repeated page tokens, incomplete searches, malformed metadata and exceeded inventory limits fail without applying removals. The selected folder must still exist and be readable at the end of inventory. Fingerprints include file ID, version, modification time, name, type, size, checksum and parents. Binary downloads validate size and MD5; exports validate metadata before and after download. Changes during download fail the sync. Citations retain `https://drive.google.com/file/d/FILE_ID/view` origins.
 
 Drive traversal is a bounded full scan, not a provider-wide transactional snapshot or change feed. Only files visible to the selected service account are inventoried. Files moved out, trashed or no longer visible may be removed from managed retrieval after a complete successful scan. Per-user Google ACLs are not mirrored: select a folder whose content is appropriate for the destination knowledge base audience. A loss of folder access fails rather than treating the folder as empty.
+
+## Configure OneDrive for Business
+
+1. Register an application in the Microsoft Entra tenant that owns the drive. Grant read-only Microsoft Graph **application** permissions, such as `Files.Read.All`, with administrator consent. Where your organization supports narrower selected-resource application permissions, grant access only to the intended resource. No write permissions are needed. This release uses app-only credentials; personal Microsoft accounts and interactive delegated sign-in are not supported.
+2. Save an encrypted workspace JSON secret:
+
+   ```json
+   {
+     "tenantId": "YOUR_DIRECTORY_TENANT_GUID",
+     "clientId": "YOUR_APPLICATION_CLIENT_GUID",
+     "clientSecret": "YOUR_CLIENT_SECRET_VALUE"
+   }
+   ```
+
+   Use the client secret **value**, not its secret ID. Tenant and application IDs must be GUIDs; `common`, `organizations` and credential-supplied endpoint URLs are not accepted. Renew the application secret before expiry through Secrets. Each new sync reads the current credential.
+
+3. Approve `graph.microsoft.com,login.microsoftonline.com` and the **exact download host** in `CONNECTOR_ALLOWED_HOSTS` on both API and worker, preserving existing hosts. OneDrive for Business commonly redirects to `YOUR_TENANT-my.sharepoint.com`; document libraries may use `YOUR_TENANT.sharepoint.com`. Approve the actual host used by your tenant, not a wildcard. The cloud outbound policy must also allow these destinations. Public HTTPS is required for download redirects; private-host exceptions cannot authorize them.
+4. Obtain the drive and folder item IDs through authorized Microsoft Graph requests. For example, `GET /v1.0/users/USER_OBJECT_ID/drive?$select=id` identifies a user's provisioned business drive; `GET /v1.0/drives/DRIVE_ID/root?$select=id` identifies its root folder, and `GET /v1.0/drives/DRIVE_ID/items/FOLDER_ITEM_ID/children` lists descendants. These are Graph IDs, not browser sharing URLs or the literal word `root`. This release also accepts existing document-library drive IDs; SharePoint site/library discovery is a subsequent UI extension.
+5. In **Connectors → Add connector**, select **OneDrive for Business**, the knowledge base, application secret, drive ID and folder item ID. Choose recursive or direct-child inventory and a manual/scheduled refresh. Drive, folder, recursive selection and destination knowledge base stay fixed after creation. Run **Sync now** and then check source readiness in Knowledge.
+
+Tokens are obtained at the fixed tenant-specific Microsoft login endpoint using `client_credentials` and `https://graph.microsoft.com/.default`. The app's consented permissions determine access; the adapter uses only Graph GET requests and token exchange POST requests. Tokens are held in memory and renewed before expiry.
+
+Inventory walks bounded, complete child pages and refuses pagination outside the selected Graph drive/folder endpoint. It counts folders, shortcuts and unsupported entries against the limit; remote-item shortcuts are never followed. A failed page, access loss, duplicate item, invalid parent, looping next link or exceeded limit prevents remote removal reconciliation. Each successful scan can reconcile files that have moved out or become invisible to the application. Graph child listings are not a transactional snapshot or delta/change feed.
+
+Files download as their original supported formats. The Graph content request may return a signed redirect: the adapter validates its host, makes a separate request **without Graph authorization**, and refuses further redirects. Signed download URLs are never saved as source URLs, fingerprint fields or error messages. File size, available SHA-256/SHA-1 checksums and metadata before/after download guard changed content. Retrieval citations use the stable `webUrl` supplied by Graph.
+
+Imported documents inherit the selected knowledge base's access settings. Per-user OneDrive/SharePoint ACLs are not mirrored. Choose a source folder appropriate for that knowledge audience. Pausing, cancellation, schedules, incremental fingerprints, managed-only removal and disconnect retention use the same durable pipeline as S3 and Google Drive. Live Entra consent, tenant download hosts, sovereign clouds and production Microsoft access require separate acceptance; this release uses public-cloud Microsoft endpoints only.
 
 ## Sync semantics
 

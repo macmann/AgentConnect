@@ -182,9 +182,9 @@ export function connectorHttpError(error: unknown) {
     return new HttpError(
       error.code === "CONNECTOR_ENDPOINT_NOT_ALLOWED" ? 400 : 409,
       error.code === "CONNECTOR_ENDPOINT_NOT_ALLOWED"
-        ? "Connector endpoint is not approved. Google Drive requires www.googleapis.com and oauth2.googleapis.com. Add its exact host to CONNECTOR_ALLOWED_HOSTS in the API and worker environment, preserving existing hosts, then restart both services. Trusted private endpoints require CONNECTOR_PRIVATE_HOSTS."
+        ? "Connector endpoint is not approved. Google Drive requires www.googleapis.com and oauth2.googleapis.com; OneDrive requires graph.microsoft.com and login.microsoftonline.com. Add its exact host to CONNECTOR_ALLOWED_HOSTS in the API and worker environment, preserving existing hosts, then restart both services. Trusted private endpoints require CONNECTOR_PRIVATE_HOSTS."
         : error.code === "CONNECTOR_CREDENTIAL_INVALID"
-          ? "Credential JSON must match the provider: S3 needs accessKeyId and secretAccessKey; Google Drive needs service-account client_email and an RSA private_key."
+          ? "Credential JSON must match the provider: S3 needs accessKeyId and secretAccessKey; Google Drive needs service-account client_email and an RSA private_key; OneDrive needs tenantId, clientId and clientSecret."
           : error.code,
     );
   return null;
