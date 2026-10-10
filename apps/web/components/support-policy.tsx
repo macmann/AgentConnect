@@ -315,6 +315,57 @@ export function SupportPolicy({
                 Enable private operator copilot
               </label>
               <label>
+                <input
+                  type="checkbox"
+                  checked={value.returnToAIEnabled}
+                  onChange={(e) =>
+                    update("returnToAIEnabled", e.target.checked)
+                  }
+                />{" "}
+                Return resolved conversations to AI
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={value.includeHumanMessagesInAIContext}
+                  onChange={(e) =>
+                    update("includeHumanMessagesInAIContext", e.target.checked)
+                  }
+                />{" "}
+                Include customer-visible support messages in AI continuation
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={value.generateResolutionSummary}
+                  onChange={(e) =>
+                    update("generateResolutionSummary", e.target.checked)
+                  }
+                />{" "}
+                Allow reviewed AI resolution suggestions
+              </label>
+              <label>
+                Resolution suggestion model
+                <select
+                  aria-label="Resolution suggestion model"
+                  value={value.resolutionModelId ?? ""}
+                  onChange={(e) =>
+                    update("resolutionModelId", e.target.value || null)
+                  }
+                >
+                  <option value="">Use conversation model</option>
+                  {targets.data?.models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  Suggestions use the copilot output budget and require operator
+                  review. Resolution always has a deterministic fallback.
+                </small>
+              </label>
+              <label>
                 Copilot model
                 <select
                   aria-label="Copilot model"

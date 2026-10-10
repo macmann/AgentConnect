@@ -18,6 +18,7 @@ export function HandoffPanel({
     canRequest: boolean;
     offer: { id: string; reason_code: string } | null;
   } | null>(null);
+  const [mode, setMode] = useState("ai");
   const [status, setStatus] = useState("none"),
     [events, setEvents] = useState<
       { id: string; kind: string; content: string }[]
@@ -41,8 +42,12 @@ export function HandoffPanel({
           setAccess(d.access);
           setError("");
           setStatus(d.status);
+          setMode(d.conversationMode ?? "ai");
           setEvents(d.events);
-          onStatus(["pending", "active"].includes(d.status));
+          onStatus(
+            ["pending", "active"].includes(d.status) ||
+              d.conversationMode === "returning_to_ai",
+          );
         }
       } catch (e) {
         if (active) setError((e as Error).message);
@@ -87,7 +92,13 @@ export function HandoffPanel({
     }
   }
   const open = ["pending", "active"].includes(status);
-  if (!open && access?.entryMode === "disabled" && !error) return null;
+  if (
+    !open &&
+    mode !== "returning_to_ai" &&
+    access?.entryMode === "disabled" &&
+    !error
+  )
+    return null;
   return (
     <section className="handoff-panel">
       <h4>Human support</h4>
@@ -127,13 +138,15 @@ export function HandoffPanel({
       ) : (
         <>
           <p>
-            {status === "resolved"
-              ? "Support resolved this request. You can chat with the agent again."
-              : access?.offer
-                ? "We haven’t been able to resolve this yet. Would you like to connect with a support specialist?"
-                : access?.canRequest
-                  ? "A support specialist can help. Response time depends on workspace staffing."
-                  : "You can ask the agent for a support specialist if you need more help."}
+            {mode === "returning_to_ai"
+              ? "Support resolved this request. AI chat is paused until support restores it."
+              : status === "resolved"
+                ? "Support resolved this request. You can chat with the agent again. The AI has the approved resolution and can continue helping."
+                : access?.offer
+                  ? "We haven’t been able to resolve this yet. Would you like to connect with a support specialist?"
+                  : access?.canRequest
+                    ? "A support specialist can help. Response time depends on workspace staffing."
+                    : "You can ask the agent for a support specialist if you need more help."}
           </p>
           {access?.canRequest && (
             <Button

@@ -19,6 +19,9 @@ type Helpers = Pick<
   typeof import("../app.js"),
   "actor" | "audit" | "id" | "params" | "workspaceAccess"
 >;
+import { effectivePolicy } from "./policy.js";
+import { agentConfig } from "@agentconnect/schemas/agents";
+import { restoreAI } from "./continuation.js";
 import { sql } from "../db.js";
 import { listCases } from "./queries.js";
 import { registerOperatorRoutes } from "./operator-routes.js";
@@ -37,6 +40,8 @@ import {
   sendSupportMessage,
   readCase,
   type SupportActor,
+  assertController,
+  appendEvent,
 } from "./cases.js";
 const pageRows = (rows: Record<string, unknown>[], limit: number) => {
   const items = rows.slice(0, limit),
@@ -253,7 +258,39 @@ export async function registerSupportRoutes(
       return pageRows(rows, q.limit);
     },
   );
-  const actions = ["claim", "assign", "status", "resolve", "messages"] as const;
+  app.get(
+    base + "/cases/:caseId/resolution/options",
+    routeOptions("Read approved continuation options for an assigned case"),
+    async (r) => {
+      const { w, a } = await context(r, "support:resolve");
+      return sql.begin(async (tx) => {
+        const s = await lockCase(tx, id(params(r).caseId), w.id);
+        assertController(s, a);
+        const [c] =
+          await tx`SELECT * FROM conversations WHERE id=${s.conversation_id} AND workspace_id=${w.id}`;
+        const policy = await effectivePolicy(tx, c as never),
+          cfg = agentConfig.parse(c!.config_snapshot);
+        const tools = cfg.tools.toolIds.length
+          ? await tx`SELECT id,name FROM tools WHERE id=ANY(${cfg.tools.toolIds}::uuid[]) AND workspace_id=${w.id} AND organization_id=${w.organization_id} ORDER BY name`
+          : [];
+        return {
+          tools,
+          returnToAIEnabled: policy.policy.returnToAIEnabled,
+          summaryEnabled:
+            policy.policy.generateResolutionSummary &&
+            policy.policy.copilotEnabled,
+        };
+      });
+    },
+  );
+  const actions = [
+    "claim",
+    "assign",
+    "status",
+    "resolve",
+    "messages",
+    "resume",
+  ] as const;
   for (const action of actions) {
     app.post(
       base + "/cases/:caseId/" + action,
@@ -301,15 +338,33 @@ export async function registerSupportRoutes(
               (input as { status: typeof s.status }).status,
               a,
             );
-          else if (action === "resolve") {
-            const resolution = input as {
-              summary: string;
-              code: string;
-              finalResponse?: string;
-            };
+          else if (action === "resume") {
+            assertController(s, a);
+            if (!(await restoreAI(tx, s)))
+              throw new HttpError(
+                409,
+                "Enable return to AI in Handoff policy first",
+              );
+            await appendEvent(tx, s, "ai.resumed", a, {
+              caseId: s.id,
+              contextVersion: 1,
+            });
+          } else if (action === "resolve") {
+            const resolution = input as import("zod").infer<
+              typeof supportResolution
+            >;
             if (resolution.finalResponse && s.status !== "resolved")
               await sendSupportMessage(tx, s, a, resolution.finalResponse);
-            await resolveCase(tx, s, a, resolution.summary, resolution.code);
+            await resolveCase(
+              tx,
+              s,
+              a,
+              resolution.summary,
+              resolution.code,
+              false,
+              resolution.resume,
+              resolution.finalResponse,
+            );
           } else
             await sendSupportMessage(
               tx,

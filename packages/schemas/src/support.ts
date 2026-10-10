@@ -162,7 +162,45 @@ export const supportAssignment = z.strictObject({
   operatorId: z.uuid(),
   queueId: z.uuid().nullable().optional(),
 });
+export const resumeFacts = z
+  .strictObject({
+    issue: z.string().trim().max(500).default(""),
+    resolution: z.string().trim().max(2000).default(""),
+    actionsCompleted: z
+      .array(z.string().trim().min(1).max(300))
+      .max(20)
+      .default([]),
+    references: z
+      .record(
+        z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/),
+        z.string().trim().min(1).max(200),
+      )
+      .default({})
+      .refine((v) => Object.keys(v).length <= 20, "Too many references"),
+    expectedNextStep: z.string().trim().max(1000).default(""),
+    doNotRepeat: z.array(z.string().trim().min(1).max(300)).max(20).default([]),
+    doNotRepeatToolIds: uniqueIds.default([]),
+  })
+  .refine(
+    (v) => utf8Size(v) <= 8000,
+    "Approved resolution context is too large",
+  );
+// Shared schema runs in browser and server without depending on Node's Buffer.
+function utf8Size(value: unknown) {
+  return new TextEncoder().encode(JSON.stringify(value)).length;
+}
+export const aiResumeContext = z.strictObject({
+  schemaVersion: z.literal(1),
+  caseId: z.uuid(),
+  facts: resumeFacts,
+  approvedBy: z.uuid().nullable(),
+  approvedAt: z.iso.datetime(),
+  origin: z.enum(["operator", "deterministic_fallback"]),
+});
+export type ResumeFacts = z.infer<typeof resumeFacts>;
+export type AIResumeContext = z.infer<typeof aiResumeContext>;
 export const supportResolution = z.strictObject({
+  resume: resumeFacts.optional(),
   finalResponse: z.string().trim().max(4000).optional(),
   code: z
     .string()
@@ -236,6 +274,8 @@ export type SupportQueue = {
 };
 export type SupportOperator = { id: string; name: string; created_at: string };
 export type SupportCaseView = {
+  ai_resume_case_id: string | null;
+  resume_context: Partial<AIResumeContext>;
   triage_status: string;
   triage_result: Record<string, unknown>;
   handoff_brief: Partial<TriageResult> & {
@@ -326,6 +366,10 @@ export const handoffPolicy = z.strictObject({
   defaultPriority: supportPriority.default("normal"),
   aiTriageEnabled: z.boolean().default(true),
   generateHandoffSummary: z.boolean().default(true),
+  returnToAIEnabled: z.boolean().default(true),
+  includeHumanMessagesInAIContext: z.boolean().default(true),
+  generateResolutionSummary: z.boolean().default(false),
+  resolutionModelId: z.uuid().nullable().default(null),
   copilotEnabled: z.boolean().default(true),
   copilotModelId: z.uuid().nullable().default(null),
   copilotMaxOutputTokens: z.number().int().min(256).max(8192).default(2048),
@@ -381,10 +425,11 @@ export const handoffDecision = z.strictObject({
 });
 
 export const copilotInput = z.strictObject({
-  kind: z.enum(["reply", "summary", "next_action", "knowledge"]),
+  kind: z.enum(["reply", "summary", "next_action", "knowledge", "resolution"]),
   regenerate: z.boolean().default(false),
 });
 export const copilotResult = z.strictObject({
+  resolution: resumeFacts.nullable().default(null),
   reply: z.string().max(4000),
   summary: z.string().max(2000),
   sentiment: z.enum(["neutral", "positive", "frustrated", "unknown"]),

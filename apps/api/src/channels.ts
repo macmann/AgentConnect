@@ -136,6 +136,7 @@ export async function registerChannelRoutes(app: FastifyInstance) {
       const { c } = await conversationAccess(r, publicRoute);
       return {
         status: c.handoff_status,
+        conversationMode: c.conversation_mode,
         access: await sql.begin((tx) => customerHandoffState(tx, c as never)),
         events: (
           await sql`SELECT id,kind,content,created_at FROM handoff_events WHERE conversation_id=${c.id} ORDER BY created_at DESC,id DESC LIMIT 500`

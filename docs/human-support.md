@@ -11,12 +11,12 @@ The [implementation specification](human-support-spec.md) is the next product ro
 | C     | Operator profiles, presence, skills, languages, capacity and routing                         | Implemented; validation recorded in validation.md |
 | D     | Escalation policy, AI triage and handoff brief                                               | Implemented; validation recorded in validation.md |
 | E     | Private operator copilot                                                                     | Implemented; validation recorded in validation.md |
-| F     | Structured resolution, AI continuation and flagship AI → human → AI test                     | Planned                                           |
+| F     | Structured resolution, AI continuation and flagship AI → human → AI test                     | Implemented; validation recorded in validation.md |
 | G     | SLA, business hours, notifications, supervision and analytics                                | Planned                                           |
 
 ## Phase A architecture
 
-A conversation remains the customer journey. Each escalation creates a support case on that conversation; later escalations create additional cases. PostgreSQL enforces at most one open case per conversation. `conversation_mode` is the authoritative controller: `ai`, `waiting_human`, `human` or `returning_to_ai`. The last mode is reserved for the controlled continuation work in Phase F.
+A conversation remains the customer journey. Each escalation creates a support case on that conversation; later escalations create additional cases. PostgreSQL enforces at most one open case per conversation. `conversation_mode` is the authoritative controller: `ai`, `waiting_human`, `human` or `returning_to_ai`. The last mode pauses chat during controlled continuation or when return to AI is disabled by policy.
 
 The case service locks the conversation before its case. AI run creation, support actions and retention use that same conversation lock. A running AI response prevents support activation, and every mode other than `ai` blocks new autonomous responses. No model service is called to create, claim, reply to or resolve a case.
 
@@ -36,7 +36,7 @@ Normal lifecycle: requested → triaging → queued → assigned → active → 
 
 An active case can wait for the customer or an external party, then become active again or resolve. Returning an active/assigned case to queued removes its assignee. Requested/triaging/queued/assigned cases may be cancelled. A resolved case may reopen if no other open case exists; a closed case requires a new escalation. Closing an old case never changes a newer case's controller. Invalid transitions return 409.
 
-Resolving an active case stores its code, summary and initial resume-context record and returns the same conversation to AI control. Rich validated resolution context, support-message inclusion in the model prompt and no-repeat guarantees are **Phase F work**. Phase A does not yet make the model aware of the specialist's actions.
+Resolving an active case stores its code, summary and initial resume-context record and returns the same conversation to AI control. Phase F validates separate approved facts and incorporates permitted public specialist messages in subsequent AI turns.
 
 ## API usage
 
@@ -110,7 +110,7 @@ The unified, paginated timeline includes persisted AI/customer messages, operato
 
 Assignment requires supervisor access. The teammate selector lists eligible existing workspace users by display name, without exposing their email addresses or claiming they are online. Staff with `support:operator:view` can use the same bounded roster to filter cases. An operator accepts an assigned case before replying. Claim directly accepts an unassigned queued case. Reply, note and resolution controls require the assigned operator or a supervisor; analysts can inspect context but cannot write.
 
-The composer separates **Customer reply** from **Internal note**. Notes are persisted in `support_notes`, referenced by append-only events and audited without copying their content. They never enter public handoff responses, normal message history or AI prompts. Changing case/filter or returning to the inbox prompts before discarding a composer draft. Resolution uses a confirmation dialog with required private summary, resolution code and optional final customer reply. The final reply and resolution commit in one transaction, and historical human replies remain visible to customers after resolution. The customer can continue AI chat on the same conversation; specialist-aware AI continuation remains Phase F.
+The composer separates **Customer reply** from **Internal note**. Notes are persisted in `support_notes`, referenced by append-only events and audited without copying their content. They never enter public handoff responses, normal message history or AI prompts. Changing case/filter or returning to the inbox prompts before discarding a composer draft. Resolution uses a confirmation dialog with required private summary, resolution code and optional final customer reply. The final reply and resolution commit in one transaction, and historical human replies remain visible to customers after resolution. The customer can continue AI chat on the same conversation; specialist-aware AI continuation is available in Phase F.
 
 Additional API resources under `/workspaces/:workspaceId/support`:
 
@@ -158,7 +158,7 @@ Additional APIs under `/workspaces/:workspaceId/support`:
 | GET              | `/cases/:caseId/routing`                  | Current deterministic recommendations; no assignment                                        |
 | POST             | `/cases/:caseId/route`                    | Supervisor applies the best currently eligible match                                        |
 
-Phase D now adds validated AI triage and language/skill suggestions. Automatic acceptance timeouts, fallback queues and capacity overrides are not implemented; unmatched requests remain queued. Phase E adds the private copilot below; structured AI continuation and SLA/notifications remain later phases. Deployment automation and additional monitoring remain paused.
+Phase D now adds validated AI triage and language/skill suggestions. Automatic acceptance timeouts, fallback queues and capacity overrides are not implemented; unmatched requests remain queued. Phase E adds the private copilot below; Phase F adds structured AI continuation below; SLA/notifications remain Phase G. Deployment automation and additional monitoring remain paused.
 
 ## Phase D escalation policy and AI handoff
 
@@ -182,7 +182,7 @@ AI output never assigns users. Recognized workspace skill names and inferred lan
 
 Automatic routing waits for pending/running triage; manual claim and customer messaging remain available. Validated completion releases routing immediately. Invalid JSON, unsupported fields, missing credentials, provider failure or context limits preserve the default queue and raw transcript. Lease recovery handles at most 25 expired jobs per iteration. Jobs use a 60-second lease; expired running jobs fail rather than automatically repeating model charges. The worker can process subsequent jobs after a failure. No model call holds conversation/case locks. Concurrent workers and stale lease results cannot overwrite another job's result.
 
-The private case context displays **AI handoff brief**, provenance and a reminder to verify model suggestions against the conversation. Operators can request a bounded manual refresh; pending/running requests are deduplicated and the endpoint permits five requests per minute. Analysts can read the brief and policies but cannot refresh or change configuration. Briefs and triage metadata are never copied to guest handoff events or customer chat prompts. Phase E adds relevant knowledge suggestions and operator copilot actions below; richer post-resolution AI context remains Phase F.
+The private case context displays **AI handoff brief**, provenance and a reminder to verify model suggestions against the conversation. Operators can request a bounded manual refresh; pending/running requests are deduplicated and the endpoint permits five requests per minute. Analysts can read the brief and policies but cannot refresh or change configuration. Briefs and triage metadata are never copied to guest handoff events or customer chat prompts. Phase E adds relevant knowledge suggestions and operator copilot actions below; approved post-resolution AI context is described below.
 
 ### Phase D API
 
@@ -198,7 +198,7 @@ Resources below use `/workspaces/:workspaceId/support` and existing sessions/RBA
 
 Customer handoff GET responses now include `access: {entryMode,canRequest,offer}`. Existing authenticated/guest-token handoff POST routes accept `request` to confirm an offer or use Always available, and `dismiss` to keep trying with AI. They retain existing deployment, token, origin and conversation-owner checks. Public callers cannot supply queues, policies, priorities, operator IDs or triage content.
 
-Phase E adds the private operator copilot below. Structured resolution and AI continuation remain Phase F, and SLA/notifications/analytics remain Phase G. Deployment automation and additional monitoring remain paused.
+Phase E adds the private operator copilot below. Structured resolution and AI continuation are available in Phase F; SLA/notifications/analytics remain Phase G. Deployment automation and additional monitoring remain paused.
 
 ## Phase E private operator copilot
 
@@ -212,4 +212,20 @@ Private results, citations and usage are stored in `support_copilot`, with a ten
 
 API: `GET` / `POST /workspaces/:workspaceId/support/cases/:caseId/copilot`. POST accepts `{kind: "reply" | "summary" | "knowledge" | "next_action", regenerate?: boolean}` and permits five requests per minute. Results are staff-only and never added to public handoff events, customer prompts or widget responses. General audit/events record identifiers and safe codes, not generated text. Usage purposes include `copilot_reply`, `copilot_summary`, `copilot_knowledge` and `copilot_next_action`; these private records are separate from main-chat dashboard totals. Summaries are cached/stored; there is no new background worker for copilot.
 
-Apply migration **0021** and restart API/worker after updating. No additional environment variables are required. Structured human-to-AI continuity remains Phase F, with SLA/notifications/analytics in Phase G. Deployment automation and additional monitoring remain paused.
+Apply migration **0021** and restart API/worker after updating. No additional environment variables are required. Phase F adds structured human-to-AI continuity below; SLA/notifications/analytics remain Phase G. Deployment automation and additional monitoring remain paused.
+
+## Phase F: approved human-to-AI continuation
+
+Resolution separates the required **private resolution summary** from facts explicitly approved for customer-facing AI. Operators can share the issue, resolution, completed actions, reference IDs, expected next step and actions not to repeat. The resolution dialog also lists attached tools that the AI must not run again. Approval, the optional final customer reply, case resolution and conversation control transition commit together.
+
+When sharing is off, resolution still succeeds without an AI provider: it records the customer-visible final reply (if supplied) or a generic closure. Private summaries and notes are never inferred into approved facts. Existing private legacy resume records remain private and are not backfilled as approvals.
+
+Enable **reviewed resolution proposals** together with the operator copilot in support policy to request optional AI suggestions in the resolution dialog. A dedicated workspace resolution model is optional; the copilot/pinned conversation model is the fallback. Operators must review proposals before confirming. Unavailable or invalid suggestions do not prevent manual resolution. Suggestions cannot select blocked tool IDs automatically.
+
+**Return to AI** is enabled by default. Disabling it resolves the case but leaves the same conversation in `returning_to_ai`, with customer chat paused. After enabling it, an authorized case controller uses **Resume AI**. A stale case cannot resume a conversation controlled by a newer intervention. Reopening a case restores human control and clears its approval.
+
+Subsequent AI turns retain existing AI history and add up to three approved resolutions and twelve public support messages, bounded to 12,000 UTF-8 bytes. Public support-message inclusion can be disabled independently. Internal notes, private resolution summaries and private copilot suggestions are excluded. Each approval is bounded to 8,000 bytes and validated against the workspace and pinned agent attachments. The customer sees a subtle return notice and continues on the same conversation.
+
+Explicitly blocked tool IDs are excluded before planning and execution across approved resolved cases. Natural-language instructions such as “do not verify identity again” guide the model; wording compliance depends on the provider. Approved context is presented as untrusted factual data, not authority to override runtime instructions.
+
+Apply migration **0022** with `pnpm db:migrate` and restart API/worker. No new environment variables or services are required. Next: Phase G operational maturity. Deployment automation and additional monitoring remain paused.

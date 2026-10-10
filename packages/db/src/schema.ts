@@ -136,6 +136,7 @@ export const deployments = pgTable("deployments", {
 });
 
 export const conversations = pgTable("conversations", {
+  aiResumeCaseId: uuid("ai_resume_case_id"),
   channel: text("channel").notNull().default("hosted"),
   widgetOrigin: text("widget_origin"),
   handoffStatus: text("handoff_status").notNull().default("none"),

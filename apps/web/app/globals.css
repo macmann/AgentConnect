@@ -3698,3 +3698,33 @@ footer {
   margin: 0;
   border-top: 1px solid var(--line);
 }
+
+.support-resolution-editor {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper, #fff);
+  display: grid;
+  gap: 12px;
+}
+.support-resolution-fields {
+  border: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.support-resolution-toggle {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+}
+.support-resolution-toggle input {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.support-resolution-editor p,
+.support-resolution-editor small {
+  overflow-wrap: anywhere;
+}

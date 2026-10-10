@@ -1,3 +1,4 @@
+import { approveResolution, restoreAI } from "./continuation.js";
 import { randomUUID } from "node:crypto";
 import type { TransactionSql } from "postgres";
 import {
@@ -5,6 +6,7 @@ import {
   controlForCase,
   isOpenCase,
   type SupportCaseStatus,
+  type ResumeFacts,
 } from "@agentconnect/schemas/support";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
 import { reserveOperator, lockSupportCapacity } from "./operator-capacity.js";
@@ -152,12 +154,13 @@ async function setStatus(
       throw new HttpError(409, "Conversation already has an open support case");
   }
   const control = controlForCase(to);
+  const mode = to === "resolved" ? "returning_to_ai" : control.mode;
   await tx`UPDATE support_cases SET status=${to},updated_at=now(),resolved_at=CASE WHEN ${to}='resolved' THEN now() WHEN ${to}='active' AND status='resolved' THEN NULL ELSE resolved_at END,closed_at=CASE WHEN ${to}='closed' THEN now() ELSE closed_at END WHERE id=${s.id}`;
   // Closing an old resolved case must not overwrite a newer case's control.
   const [c] =
     await tx`SELECT active_support_case_id FROM conversations WHERE id=${s.conversation_id}`;
   if (isOpenCase(to) || c?.active_support_case_id === s.id)
-    await tx`UPDATE conversations SET conversation_mode=${control.mode},handoff_status=${control.legacy},active_support_case_id=${isOpenCase(to) ? s.id : null} WHERE id=${s.conversation_id}`;
+    await tx`UPDATE conversations SET conversation_mode=${mode},handoff_status=${control.legacy},active_support_case_id=${isOpenCase(to) ? s.id : null} WHERE id=${s.conversation_id}`;
   await appendEvent(tx, s, event, actor, { from: s.status, to });
   s.status = to;
 }
@@ -262,6 +265,9 @@ export async function transitionCase(
   }
   await setStatus(tx, s, to, actor, "case.status_changed");
   if (to === "active" && s.assigned_operator_id) {
+    await tx`UPDATE conversations SET ai_resume_case_id=NULL WHERE id=${s.conversation_id} AND ai_resume_case_id=${s.id}`;
+    if (s.status === "active")
+      await tx`UPDATE support_cases SET resume_context='{}' WHERE id=${s.id}`;
     await tx`UPDATE support_cases SET accepted_at=now() WHERE id=${s.id}`;
     await legacyEvent(tx, s, "claimed", actor);
   }
@@ -275,6 +281,8 @@ export async function resolveCase(
   summary: string,
   code: string,
   legacy = false,
+  approvedFacts?: ResumeFacts,
+  finalResponse?: string,
 ) {
   assertController(s, actor);
   if (!legacy && s.status === "resolved") return;
@@ -283,8 +291,21 @@ export async function resolveCase(
     await claimCase(tx, s, actor);
   if (!["active", "waiting_customer", "waiting_external"].includes(s.status))
     throw new HttpError(409, "Support case must be active before resolution");
-  await tx`UPDATE support_cases SET resolution_code=${code},resolution_summary=${summary},resume_context=${tx.json({ summary, code })} WHERE id=${s.id}`;
+  const approved = await approveResolution(
+    tx,
+    s,
+    actor,
+    approvedFacts,
+    finalResponse,
+  );
+  await tx`UPDATE support_cases SET resolution_code=${code},resolution_summary=${summary},resume_context=${tx.json(approved)} WHERE id=${s.id}`;
   await setStatus(tx, s, "resolved", actor, "case.resolved");
+  await tx`UPDATE conversations SET ai_resume_case_id=${s.id} WHERE id=${s.conversation_id}`;
+  const resumed = await restoreAI(tx, s);
+  await appendEvent(tx, s, resumed ? "ai.resumed" : "ai.resume_paused", actor, {
+    caseId: s.id,
+    contextVersion: 1,
+  });
   await legacyEvent(tx, s, "resolved", actor);
 }
 export async function sendSupportMessage(
