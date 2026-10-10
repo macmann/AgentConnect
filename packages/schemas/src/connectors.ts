@@ -41,6 +41,46 @@ export const oneDriveCredential = z
     clientSecret: z.string().min(1).max(10000),
   })
   .strict();
+export const sharePointSiteId = z
+  .string()
+  .regex(/^[a-z0-9-]+\.sharepoint\.com,[a-fA-F0-9-]{36},[a-fA-F0-9-]{36}$/)
+  .max(300);
+export const sharePointSiteUrl = z
+  .url()
+  .max(1000)
+  .refine((value) => {
+    const u = new URL(value);
+    return (
+      u.protocol === "https:" &&
+      /^[a-z0-9-]+\.sharepoint\.com$/.test(u.hostname) &&
+      !u.username &&
+      !u.password &&
+      !u.port &&
+      !u.search &&
+      !u.hash
+    );
+  }, "Use a public-cloud SharePoint site URL without query parameters or fragments");
+export const sharePointSelection = oneDriveSelection.extend({
+  siteId: sharePointSiteId,
+});
+export const sharePointDiscoveryInput = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("site"),
+      secretId: z.uuid(),
+      siteUrl: sharePointSiteUrl,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("folders"),
+      secretId: z.uuid(),
+      siteId: sharePointSiteId,
+      driveId: oneDriveSelection.shape.driveId,
+      folderId: oneDriveSelection.shape.folderId.optional(),
+    })
+    .strict(),
+]);
 const connectorCommon = {
   name: z.string().trim().min(1).max(100),
   knowledgeBaseId: z.uuid(),
@@ -67,6 +107,13 @@ export const connectorInput = z.discriminatedUnion("kind", [
       ...connectorCommon,
       kind: z.literal("onedrive"),
       selection: oneDriveSelection,
+    })
+    .strict(),
+  z
+    .object({
+      ...connectorCommon,
+      kind: z.literal("sharepoint"),
+      selection: sharePointSelection,
     })
     .strict(),
 ]);

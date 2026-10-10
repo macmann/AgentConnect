@@ -7,7 +7,7 @@ import { Button } from "./button";
 type Connector = {
   id: string;
   name: string;
-  kind: "s3" | "google-drive" | "onedrive";
+  kind: "s3" | "google-drive" | "onedrive" | "sharepoint";
   knowledge_name: string;
   knowledge_base_id: string;
   secret_id: string;
@@ -24,10 +24,14 @@ type Connector = {
     prefix?: string;
     folderId?: string;
     driveId?: string;
+    siteId?: string;
     recursive?: boolean;
     maxObjects: number;
   };
 };
+type Site = { id: string; displayName: string; webUrl: string };
+type Library = { id: string; name: string; webUrl: string };
+type Folder = { id: string; name: string; webUrl: string };
 type Sync = {
   id: string;
   status: string;
@@ -70,9 +74,18 @@ export function ConnectorsStudio({
   const [selected, setSelected] = useState(""),
     [editing, setEditing] = useState(false),
     [name, setName] = useState(""),
-    [kind, setKind] = useState<"s3" | "google-drive" | "onedrive">("s3"),
+    [kind, setKind] = useState<
+      "s3" | "google-drive" | "onedrive" | "sharepoint"
+    >("s3"),
     [folderId, setFolderId] = useState(""),
     [driveId, setDriveId] = useState(""),
+    [siteId, setSiteId] = useState(""),
+    [siteUrl, setSiteUrl] = useState(""),
+    [site, setSite] = useState<Site | null>(null),
+    [libraries, setLibraries] = useState<Library[]>([]),
+    [folders, setFolders] = useState<Folder[]>([]),
+    [breadcrumbs, setBreadcrumbs] = useState<Folder[]>([]),
+    [folderConfirmed, setFolderConfirmed] = useState(false),
     [recursive, setRecursive] = useState(true),
     [kb, setKb] = useState(""),
     [secret, setSecret] = useState(""),
@@ -108,11 +121,56 @@ export function ConnectorsStudio({
       setBusy(false);
     }
   }
+  function resetDiscovery() {
+    setSite(null);
+    setSiteId("");
+    setLibraries([]);
+    setFolders([]);
+    setBreadcrumbs([]);
+    setFolderConfirmed(false);
+    if (kind === "sharepoint" && !connector) {
+      setDriveId("");
+      setFolderId("");
+    }
+  }
+  async function browseFolder(
+    libraryId: string,
+    folder?: Folder,
+    trail?: Folder[],
+  ) {
+    setFolderConfirmed(false);
+    await action(async () => {
+      const result = await requestJson<{ folder: Folder; folders: Folder[] }>(
+        base + "/connectors/sharepoint/discover",
+        "POST",
+        {
+          action: "folders",
+          secretId: secret,
+          siteId,
+          driveId: libraryId,
+          ...(folder ? { folderId: folder.id } : {}),
+        },
+      );
+      setFolderId(result.folder.id);
+      setFolders(result.folders);
+      setBreadcrumbs(
+        trail ? [...trail.slice(0, -1), result.folder] : [result.folder],
+      );
+      setNotice("Browse to a folder, then choose Use this folder.");
+    });
+  }
   function edit(c?: Connector) {
     setSelected(c?.id ?? "");
     setEditing(true);
     setName(c?.name ?? "");
     setKind(c?.kind ?? "s3");
+    setSiteId(c?.selection.siteId ?? "");
+    setSiteUrl("");
+    setSite(null);
+    setLibraries([]);
+    setFolders([]);
+    setBreadcrumbs([]);
+    setFolderConfirmed(!!c);
     setFolderId(c?.selection.folderId ?? "");
     setDriveId(c?.selection.driveId ?? "");
     setRecursive(c?.selection.recursive ?? true);
@@ -142,11 +200,15 @@ export function ConnectorsStudio({
           <div>
             <h3>Enterprise sources</h3>
             <p>
-              Sync approved S3, Google Drive or OneDrive folders into a
-              knowledge base.
+              Sync approved S3, Google Drive, OneDrive or SharePoint documents
+              into a knowledge base.
             </p>
           </div>
-          {canManage && <Button onClick={() => edit()}>Add connector</Button>}
+          {canManage && (
+            <Button disabled={busy} onClick={() => edit()}>
+              Add connector
+            </Button>
+          )}
         </div>
         <div className="studio-form">
           {error && (
@@ -185,6 +247,7 @@ export function ConnectorsStudio({
           {connectors.data?.map((c) => (
             <button
               className="connector-choice"
+              disabled={busy}
               key={c.id}
               onClick={() => {
                 setSelected(c.id);
@@ -198,7 +261,7 @@ export function ConnectorsStudio({
                 {c.knowledge_name} ·{" "}
                 {c.kind === "s3"
                   ? `${c.selection.bucket}/${c.selection.prefix}`
-                  : `${c.kind === "onedrive" ? "OneDrive" : "Google Drive"} folder ${c.selection.folderId}`}{" "}
+                  : `${c.kind === "sharepoint" ? "SharePoint" : c.kind === "onedrive" ? "OneDrive" : "Google Drive"} folder ${c.selection.folderId}`}{" "}
                 · {c.enabled ? (c.status ?? "Not synced") : "Paused"}
               </span>
             </button>
@@ -212,17 +275,19 @@ export function ConnectorsStudio({
                 Provider
                 <select
                   aria-label="Connector provider"
-                  disabled={!!connector}
+                  disabled={!!connector || busy}
                   value={kind}
-                  onChange={(e) =>
-                    setKind(
-                      e.target.value as "s3" | "google-drive" | "onedrive",
-                    )
-                  }
+                  onChange={(e) => {
+                    resetDiscovery();
+                    setDriveId("");
+                    setFolderId("");
+                    setKind(e.target.value as Connector["kind"]);
+                  }}
                 >
                   <option value="s3">S3 / S3-compatible</option>
                   <option value="google-drive">Google Drive</option>
                   <option value="onedrive">OneDrive for Business</option>
+                  <option value="sharepoint">SharePoint</option>
                 </select>
               </label>
               <label>
@@ -260,7 +325,11 @@ export function ConnectorsStudio({
                 <select
                   aria-label="Source workspace credential"
                   value={secret}
-                  onChange={(e) => setSecret(e.target.value)}
+                  disabled={busy}
+                  onChange={(e) => {
+                    setSecret(e.target.value);
+                    if (!connector && kind === "sharepoint") resetDiscovery();
+                  }}
                 >
                   <option value="">Select JSON credential</option>
                   {secrets.data?.map((s) => (
@@ -273,7 +342,7 @@ export function ConnectorsStudio({
               <p>
                 {kind === "s3"
                   ? "Save a JSON secret with accessKeyId, secretAccessKey and optional sessionToken. Grant only ListBucket and GetObject for the selected prefix."
-                  : kind === "onedrive"
+                  : kind === "onedrive" || kind === "sharepoint"
                     ? "Register a Microsoft Entra application with read-only Microsoft Graph application permissions and administrator consent. Save a JSON secret with tenantId, clientId and clientSecret. Access tokens renew automatically. Personal OneDrive accounts need a future delegated sign-in flow."
                     : "Enable Google Drive API in your Google Cloud project. Save the service-account JSON key in Secrets, then share this folder with its client_email as Viewer. Tokens refresh automatically; no user impersonation is used."}{" "}
                 Values remain encrypted on the server.
@@ -330,6 +399,191 @@ export function ConnectorsStudio({
                     selects the whole bucket. Source location and knowledge base
                     are fixed after creation; create another connector to change
                     them.
+                  </p>
+                </>
+              ) : kind === "sharepoint" ? (
+                <>
+                  {connector ? (
+                    <>
+                      <label>
+                        SharePoint site ID
+                        <input
+                          aria-label="SharePoint site ID"
+                          value={siteId}
+                          disabled
+                        />
+                      </label>
+                      <label>
+                        SharePoint library ID
+                        <input
+                          aria-label="SharePoint library ID"
+                          value={driveId}
+                          disabled
+                        />
+                      </label>
+                      <label>
+                        SharePoint folder ID
+                        <input
+                          aria-label="SharePoint folder ID"
+                          value={folderId}
+                          disabled
+                        />
+                      </label>
+                    </>
+                  ) : (
+                    <>
+                      <label>
+                        SharePoint site URL
+                        <input
+                          aria-label="SharePoint site URL"
+                          value={siteUrl}
+                          disabled={busy}
+                          placeholder="https://yourtenant.sharepoint.com/sites/Support"
+                          onChange={(e) => {
+                            setSiteUrl(e.target.value);
+                            resetDiscovery();
+                          }}
+                        />
+                      </label>
+                      <Button
+                        disabled={busy || !secret || !siteUrl.trim()}
+                        onClick={() =>
+                          void action(async () => {
+                            const result = await requestJson<{
+                              site: Site;
+                              libraries: Library[];
+                            }>(
+                              base + "/connectors/sharepoint/discover",
+                              "POST",
+                              { action: "site", secretId: secret, siteUrl },
+                            );
+                            setSite(result.site);
+                            setSiteId(result.site.id);
+                            setLibraries(result.libraries);
+                            setDriveId("");
+                            setFolderId("");
+                            setFolders([]);
+                            setBreadcrumbs([]);
+                            setFolderConfirmed(false);
+                            setNotice(
+                              result.libraries.length
+                                ? "Choose a document library."
+                                : "No document libraries are visible. Ask your Microsoft administrator to check application access to this site.",
+                            );
+                          })
+                        }
+                      >
+                        Find site
+                      </Button>
+                      {site && (
+                        <>
+                          <p>Site: {site.displayName}</p>
+                          <label>
+                            Document library
+                            <select
+                              aria-label="SharePoint document library"
+                              value={driveId}
+                              disabled={busy}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                setDriveId(value);
+                                setFolderId("");
+                                setFolders([]);
+                                setBreadcrumbs([]);
+                                setFolderConfirmed(false);
+                                if (value) void browseFolder(value);
+                              }}
+                            >
+                              <option value="">
+                                Choose a document library
+                              </option>
+                              {libraries.map((library) => (
+                                <option key={library.id} value={library.id}>
+                                  {library.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </>
+                      )}
+                      {breadcrumbs.length > 0 && (
+                        <>
+                          <nav
+                            aria-label="SharePoint folder path"
+                            className="button-row"
+                          >
+                            {breadcrumbs.map((folder, index) => (
+                              <Button
+                                key={folder.id}
+                                disabled={busy}
+                                onClick={() =>
+                                  void browseFolder(
+                                    driveId,
+                                    folder,
+                                    breadcrumbs.slice(0, index + 1),
+                                  )
+                                }
+                              >
+                                {folder.name}
+                              </Button>
+                            ))}
+                          </nav>
+                          <p>Current folder: {breadcrumbs.at(-1)?.name}</p>
+                          <div className="button-row">
+                            {folders.map((folder) => (
+                              <Button
+                                key={folder.id}
+                                disabled={busy}
+                                onClick={() =>
+                                  void browseFolder(driveId, folder, [
+                                    ...breadcrumbs,
+                                    folder,
+                                  ])
+                                }
+                              >
+                                Open {folder.name}
+                              </Button>
+                            ))}
+                          </div>
+                          {folders.length === 0 && (
+                            <p>
+                              No subfolders. You can select this folder to sync
+                              its supported files.
+                            </p>
+                          )}
+                          <Button
+                            disabled={busy || folderConfirmed}
+                            onClick={() => {
+                              setFolderConfirmed(true);
+                              setNotice(
+                                `Selected folder: ${breadcrumbs.at(-1)?.name}. Save the connector to enable sync.`,
+                              );
+                            }}
+                          >
+                            Use this folder
+                          </Button>
+                        </>
+                      )}
+                    </>
+                  )}
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="Include subfolders"
+                      checked={recursive}
+                      disabled={!!connector || busy}
+                      onChange={(e) => setRecursive(e.target.checked)}
+                    />{" "}
+                    Include subfolders
+                  </label>
+                  <p>
+                    Use a SharePoint site URL, not a file sharing URL. Grant the
+                    Entra application read access to that site; Sites.Selected
+                    requires a separate site read grant. Approve
+                    graph.microsoft.com, login.microsoftonline.com and your
+                    exact SharePoint download host in CONNECTOR_ALLOWED_HOSTS on
+                    API and worker. Imported content inherits knowledge base
+                    access. Site, library and folder stay fixed after creation.
                   </p>
                 </>
               ) : (
@@ -422,7 +676,10 @@ export function ConnectorsStudio({
                   !secret ||
                   (kind === "s3"
                     ? !bucket
-                    : !folderId || (kind === "onedrive" && !driveId))
+                    : !folderId ||
+                      ((kind === "onedrive" || kind === "sharepoint") &&
+                        !driveId)) ||
+                  (kind === "sharepoint" && (!siteId || !folderConfirmed))
                 }
                 onClick={() =>
                   void action(async () => {
@@ -457,14 +714,22 @@ export function ConnectorsStudio({
                                   prefix,
                                   maxObjects: limit,
                                 }
-                              : kind === "onedrive"
+                              : kind === "sharepoint"
                                 ? {
+                                    siteId,
                                     driveId,
                                     folderId,
                                     recursive,
                                     maxObjects: limit,
                                   }
-                                : { folderId, recursive, maxObjects: limit },
+                                : kind === "onedrive"
+                                  ? {
+                                      driveId,
+                                      folderId,
+                                      recursive,
+                                      maxObjects: limit,
+                                    }
+                                  : { folderId, recursive, maxObjects: limit },
                           scheduleMinutes: schedule ? Number(schedule) : null,
                         },
                       );
@@ -610,7 +875,8 @@ export function ConnectorsStudio({
                     {s.error_code === "CONNECTOR_SOURCE_LIMIT"
                       ? " — Choose a narrower source or increase the configured listing limit."
                       : s.error_code === "CONNECTOR_ACCESS_DENIED"
-                        ? connector.kind === "onedrive"
+                        ? connector.kind === "onedrive" ||
+                          connector.kind === "sharepoint"
                           ? " — Check the Entra credential, Microsoft Graph read permissions, administrator consent and access to the selected drive."
                           : connector.kind === "google-drive"
                             ? " — Check the service-account key, enable Drive API, and share the selected folder with client_email as Viewer."

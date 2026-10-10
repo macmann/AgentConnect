@@ -21,6 +21,12 @@ import {
   type AdapterFactory,
   type ConnectorRow,
 } from "../src/connector-adapters.js";
+import {
+  createSharePointClient,
+  createSharePointAdapter,
+} from "../src/sharepoint.js";
+import { createSharePointFixture } from "./sharepoint-fixture.js";
+import { sharePointSelection } from "@agentconnect/schemas/connectors";
 import { createOneDriveAdapter } from "../src/onedrive-adapter.js";
 import {
   oneDriveCredential,
@@ -59,12 +65,17 @@ let kbId = "",
   secretId = "",
   connectorId = "",
   sourceId = "";
+const sharePointFixture = createSharePointFixture();
 const embedding = () => ({
     async embed(texts: string[]) {
       return texts.map(() => [1, 0.3, 0.2]);
     },
   }),
-  app = await buildApp({ embeddingFactory: embedding });
+  app = await buildApp({
+    embeddingFactory: embedding,
+    sharePointClientFactory: (credential) =>
+      createSharePointClient(credential, sharePointFixture.transport),
+  });
 const base = `/workspaces/${workspace}`;
 async function call(
   method: "GET" | "POST" | "PUT" | "DELETE",
@@ -831,6 +842,151 @@ test("OneDrive credentials, endpoint grants, durable ingestion and removal use t
   );
   denied = false;
   visible = false;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.removed, 1);
+  assert.equal(
+    (await call("DELETE", base + "/connectors/" + cid)).statusCode,
+    200,
+  );
+});
+
+test("SharePoint discovery is administrator-only and decrypts only the selected workspace secret", async () => {
+  const credential = {
+    tenantId: randomUUID(),
+    clientId: randomUUID(),
+    clientSecret: "sharepoint-selected-secret",
+  };
+  assert.equal(
+    (
+      await call("POST", base + "/secrets", {
+        name: "SHAREPOINT_APP",
+        value: JSON.stringify(credential),
+      })
+    ).statusCode,
+    201,
+  );
+  const sid = (await call("GET", base + "/secrets"))
+    .json()
+    .find((s: { name: string }) => s.name === "SHAREPOINT_APP").id;
+  const input = {
+      action: "site",
+      secretId: sid,
+      siteUrl: sharePointFixture.site.webUrl,
+    },
+    endpoint = base + "/connectors/sharepoint/discover";
+  config.CONNECTOR_ALLOWED_HOSTS =
+    "graph.microsoft.com,login.microsoftonline.com";
+  for (const role of ["analyst", "builder", "outsider"])
+    assert.equal((await call("POST", endpoint, input, role)).statusCode, 403);
+  assert.equal(sharePointFixture.requests.length, 0);
+  assert.equal(
+    (await call("POST", endpoint, { ...input, secretId: randomUUID() }))
+      .statusCode,
+    409,
+  );
+  assert.equal(sharePointFixture.requests.length, 0);
+  assert.equal(
+    (
+      await call("POST", endpoint, {
+        ...input,
+        siteUrl: "https://unapproved.example/sites/Support",
+      })
+    ).statusCode,
+    400,
+  );
+  const resolved = await call("POST", endpoint, input);
+  assert.equal(resolved.statusCode, 200, resolved.body);
+  assert.equal(resolved.json().site.id, sharePointFixture.site.id);
+  assert.equal(resolved.json().libraries[0].id, sharePointFixture.library.id);
+  assert.ok(!resolved.body.includes(credential.clientSecret));
+  const auth = sharePointFixture.requests.find((r) => r.method === "POST")!;
+  assert.equal(
+    new URLSearchParams(auth.form).get("client_secret"),
+    credential.clientSecret,
+  );
+  const root = await call("POST", endpoint, {
+    action: "folders",
+    secretId: sid,
+    siteId: sharePointFixture.site.id,
+    driveId: sharePointFixture.library.id,
+  });
+  assert.equal(root.statusCode, 200, root.body);
+  assert.equal(root.json().folder.id, sharePointFixture.root.id);
+  assert.equal(root.json().folders[0].id, sharePointFixture.policies.id);
+  const foreign = await call("POST", endpoint, {
+    action: "folders",
+    secretId: sid,
+    siteId: sharePointFixture.site.id,
+    driveId: "foreign",
+  });
+  assert.equal(foreign.statusCode, 409);
+});
+test("SharePoint site-bound registry sync ingests documents and preserves sources when library access changes", async () => {
+  const sid = (await call("GET", base + "/secrets"))
+    .json()
+    .find((s: { name: string }) => s.name === "SHAREPOINT_APP").id;
+  const selection = {
+    siteId: sharePointFixture.site.id,
+    driveId: sharePointFixture.library.id,
+    folderId: sharePointFixture.policies.id,
+    recursive: true,
+    maxObjects: 10,
+  };
+  const created = await call("POST", base + "/connectors", {
+    name: "SharePoint policies",
+    kind: "sharepoint",
+    knowledgeBaseId: kbId,
+    secretId: sid,
+    selection,
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  const cid = created.json().id;
+  const factory: AdapterFactory = async (c) =>
+    createSharePointAdapter(
+      sharePointSelection.parse(c.selection),
+      oneDriveCredential.parse(await connectorCredentials(c, c.kind)),
+      sharePointFixture.transport,
+    );
+  let job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).status, "completed");
+  assert.equal((await run(job)).counts.imported, 1);
+  const [mapped] =
+    await sql`SELECT source_id FROM connector_items WHERE connector_id=${cid}`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await processKnowledgeJob(embedding);
+    const [state] =
+      await sql`SELECT status FROM knowledge_sources WHERE id=${mapped!.source_id}`;
+    if (state!.status === "ready") break;
+  }
+  const [source] =
+    await sql`SELECT status,source_url FROM knowledge_sources WHERE id=${mapped!.source_id}`;
+  assert.equal(source!.status, "ready");
+  assert.equal(
+    source!.source_url,
+    sharePointFixture.policies.webUrl + "/policy.txt",
+  );
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.unchanged, 1);
+  sharePointFixture.state.linked = false;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).error_code, "CONNECTOR_LIBRARY_UNAVAILABLE");
+  assert.equal(
+    (
+      await sql`SELECT status FROM knowledge_sources WHERE id=${mapped!.source_id}`
+    )[0]!.status,
+    "ready",
+  );
+  sharePointFixture.state.linked = true;
+  sharePointFixture.state.content = "SharePoint refunds within 60 days.";
+  sharePointFixture.state.version++;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).counts.updated, 1);
+  sharePointFixture.state.visible = false;
   job = await queue(cid);
   await processConnectorSync(factory);
   assert.equal((await run(job)).counts.removed, 1);

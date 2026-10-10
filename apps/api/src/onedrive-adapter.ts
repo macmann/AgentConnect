@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   safeHttpTransport,
-  ProviderError,
   validateEndpoint,
 } from "@agentconnect/provider-sdk";
 import {
@@ -16,10 +15,14 @@ import {
 } from "./connector-adapters.js";
 import { config } from "./config.js";
 import { hosts } from "./knowledge-core.js";
-export const oneDriveEndpoints = [
-  "https://graph.microsoft.com/v1.0",
-  "https://login.microsoftonline.com",
-];
+import {
+  createMicrosoftGraphClient,
+  consumeGraphResponse,
+  safeGraphOperation,
+  microsoftGraphEndpoints,
+  type MicrosoftGraphClient,
+} from "./microsoft-graph-client.js";
+export const oneDriveEndpoints = microsoftGraphEndpoints;
 const safeWebUrl = z
   .url()
   .max(2000)
@@ -83,17 +86,12 @@ export function createOneDriveAdapter(
   selection: z.infer<typeof oneDriveSelection>,
   credential: z.infer<typeof oneDriveCredential>,
   transport?: ReturnType<typeof safeHttpTransport>,
+  sharedClient?: MicrosoftGraphClient,
 ): SourceAdapter {
-  const requestTransport =
-    transport ??
-    safeHttpTransport(
-      hosts(config.CONNECTOR_ALLOWED_HOSTS),
-      hosts(config.CONNECTOR_PRIVATE_HOSTS),
-    );
+  const graph =
+    sharedClient ?? createMicrosoftGraphClient(credential, transport);
   const downloadTransport =
     transport ?? safeHttpTransport(hosts(config.CONNECTOR_ALLOWED_HOSTS), []);
-  let token = "",
-    expiresAt = 0;
   const listed = new Map<string, Item>();
   const drivePath = `/drives/${selection.driveId}`;
   const graphUrl = (path: string, query: Record<string, string> = {}) =>
@@ -101,86 +99,9 @@ export function createOneDriveAdapter(
     drivePath +
     path +
     (Object.keys(query).length ? "?" + new URLSearchParams(query) : "");
-  function statusError(status: number): never {
-    throw new ConnectorError(
-      status === 401 || status === 403
-        ? "CONNECTOR_ACCESS_DENIED"
-        : status === 404
-          ? "CONNECTOR_NOT_FOUND"
-          : status === 412
-            ? "CONNECTOR_OBJECT_CHANGED"
-            : status === 429
-              ? "CONNECTOR_RATE_LIMITED"
-              : "CONNECTOR_PROVIDER_ERROR",
-    );
-  }
-  async function consume(
-    response: Awaited<ReturnType<typeof requestTransport>>,
-    signal: AbortSignal,
-  ) {
-    if (response.status < 200 || response.status >= 300)
-      statusError(response.status);
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for await (const chunk of response.body) {
-      signal.throwIfAborted();
-      size += chunk.byteLength;
-      if (size > 10000000) throw new ConnectorError("CONNECTOR_OBJECT_LIMIT");
-      chunks.push(chunk);
-    }
-    return Buffer.concat(chunks);
-  }
-  async function json(
-    url: string,
-    signal: AbortSignal,
-    form?: string,
-  ): Promise<unknown> {
-    const response = await requestTransport(
-      url,
-      form === undefined
-        ? { authorization: `Bearer ${token}` }
-        : { "content-type": "application/x-www-form-urlencoded" },
-      form ?? null,
-      signal,
-      form === undefined ? "GET" : "POST",
-    );
-    try {
-      try {
-        return JSON.parse((await consume(response, signal)).toString("utf8"));
-      } catch (e) {
-        if (e instanceof SyntaxError)
-          throw new ConnectorError("CONNECTOR_INVALID_LISTING");
-        throw e;
-      }
-    } finally {
-      await response.close();
-    }
-  }
-  async function authenticate(signal: AbortSignal) {
-    if (token && expiresAt > Date.now() + 60000) return;
-    const result = z
-      .object({
-        access_token: z.string().min(1).max(30000),
-        expires_in: z.number().int().min(1).max(86400),
-        token_type: z.literal("Bearer"),
-      })
-      .parse(
-        await json(
-          `${oneDriveEndpoints[1]}/${credential.tenantId}/oauth2/v2.0/token`,
-          signal,
-          new URLSearchParams({
-            client_id: credential.clientId,
-            client_secret: credential.clientSecret,
-            scope: "https://graph.microsoft.com/.default",
-            grant_type: "client_credentials",
-          }).toString(),
-        ),
-      );
-    token = result.access_token;
-    expiresAt = Date.now() + result.expires_in * 1000;
-  }
+  const consume = consumeGraphResponse;
+  const json = (url: string, signal: AbortSignal) => graph.json(url, signal);
   async function metadata(id: string, signal: AbortSignal) {
-    await authenticate(signal);
     const item = itemSchema.parse(
       await json(graphUrl(`/items/${id}`, { $select: fields }), signal),
     );
@@ -209,13 +130,10 @@ export function createOneDriveAdapter(
     return u.toString();
   }
   async function download(item: Item, signal: AbortSignal) {
-    await authenticate(signal);
-    const response = await requestTransport(
+    const response = await graph.get(
       graphUrl(`/items/${item.id}/content`),
-      { authorization: `Bearer ${token}`, "if-match": item.eTag! },
-      null,
       signal,
-      "GET",
+      { "if-match": item.eTag! },
     );
     let location: string | undefined;
     try {
@@ -257,27 +175,10 @@ export function createOneDriveAdapter(
       await result.close();
     }
   }
-  async function safe<T>(fn: () => Promise<T>): Promise<T> {
-    try {
-      return await fn();
-    } catch (e) {
-      if (e instanceof ConnectorError) throw e;
-      if (e instanceof ProviderError)
-        throw new ConnectorError(
-          e.code === "CANCELLED"
-            ? "CONNECTOR_CANCELLED"
-            : "CONNECTOR_NETWORK_ERROR",
-        );
-      if (e instanceof z.ZodError || e instanceof TypeError)
-        throw new ConnectorError("CONNECTOR_INVALID_LISTING");
-      throw new ConnectorError("CONNECTOR_PROVIDER_ERROR");
-    }
-  }
   return {
     list(signal) {
-      return safe(async () => {
+      return safeGraphOperation(async () => {
         listed.clear();
-        await authenticate(signal);
         const drive = z
           .object({
             id: z.string(),
@@ -305,7 +206,6 @@ export function createOneDriveAdapter(
             if (pages.has(pageUrl) || pages.size >= 1000)
               throw new ConnectorError("CONNECTOR_INVALID_LISTING");
             pages.add(pageUrl);
-            await authenticate(signal);
             const page = z
               .object({
                 value: z.array(itemSchema).max(1000),
@@ -350,10 +250,10 @@ export function createOneDriveAdapter(
         if (!finalRoot.folder)
           throw new ConnectorError("CONNECTOR_FOLDER_UNAVAILABLE");
         return docs;
-      });
+      }, signal);
     },
     read(document, signal) {
-      return safe(async () => {
+      return safeGraphOperation(async () => {
         const original = listed.get(document.key);
         if (!original || document.fingerprint !== fingerprint(original))
           throw new ConnectorError("CONNECTOR_OBJECT_CHANGED");
@@ -385,11 +285,10 @@ export function createOneDriveAdapter(
         )
           throw new ConnectorError("CONNECTOR_OBJECT_CHANGED");
         return bytes;
-      });
+      }, signal);
     },
     close() {
-      token = "";
-      expiresAt = 0;
+      graph.close();
       listed.clear();
     },
   };

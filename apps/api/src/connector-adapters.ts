@@ -16,6 +16,7 @@ import {
   googleDriveCredential,
   oneDriveSelection,
   oneDriveCredential,
+  sharePointSelection,
 } from "@agentconnect/schemas/connectors";
 import {
   createGoogleDriveAdapter,
@@ -25,6 +26,7 @@ import {
   createOneDriveAdapter,
   oneDriveEndpoints,
 } from "./onedrive-adapter.js";
+import { createSharePointAdapter } from "./sharepoint.js";
 import { createPrivateKey } from "node:crypto";
 import { sql } from "./db.js";
 import { decrypt } from "./security.js";
@@ -101,7 +103,8 @@ export async function connectorCredentials(
         throw new Error("Invalid signing key");
       return credential;
     }
-    if (kind === "onedrive") return oneDriveCredential.parse(value);
+    if (kind === "onedrive" || kind === "sharepoint")
+      return oneDriveCredential.parse(value);
     return s3Credential.parse(value);
   } catch {
     throw new ConnectorError("CONNECTOR_CREDENTIAL_INVALID");
@@ -112,8 +115,9 @@ export function validateConnectorSelection(kind: string, selection: unknown) {
     googleDriveSelection.parse(selection);
     for (const endpoint of googleDriveEndpoints)
       validateConnectorEndpoint(endpoint);
-  } else if (kind === "onedrive") {
-    oneDriveSelection.parse(selection);
+  } else if (kind === "onedrive" || kind === "sharepoint") {
+    if (kind === "sharepoint") sharePointSelection.parse(selection);
+    else oneDriveSelection.parse(selection);
     for (const endpoint of oneDriveEndpoints)
       validateConnectorEndpoint(endpoint);
   } else if (kind === "s3")
@@ -121,6 +125,15 @@ export function validateConnectorSelection(kind: string, selection: unknown) {
   else throw new ConnectorError("CONNECTOR_UNSUPPORTED");
 }
 export const createSourceAdapter: AdapterFactory = async (connector) => {
+  if (connector.kind === "sharepoint") {
+    validateConnectorSelection(connector.kind, connector.selection);
+    return createSharePointAdapter(
+      sharePointSelection.parse(connector.selection),
+      oneDriveCredential.parse(
+        await connectorCredentials(connector, connector.kind),
+      ),
+    );
+  }
   if (connector.kind === "onedrive") {
     validateConnectorSelection(connector.kind, connector.selection);
     const credential = oneDriveCredential.parse(

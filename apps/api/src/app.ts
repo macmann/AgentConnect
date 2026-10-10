@@ -146,6 +146,7 @@ export async function buildApp(
   options: {
     providerFactory?: import("@agentconnect/provider-sdk").ProviderFactory;
     embeddingFactory?: import("@agentconnect/provider-sdk/embeddings").EmbeddingFactory;
+    sharePointClientFactory?: import("./sharepoint.js").SharePointClientFactory;
   } = {},
 ) {
   class QuietLogs extends LogController {
@@ -705,7 +706,7 @@ export async function buildApp(
   await registerGenerativeRoutes(app);
   await registerChannelRoutes(app);
   await registerQualityRoutes(app);
-  await registerConnectorRoutes(app);
+  await registerConnectorRoutes(app, options.sharePointClientFactory);
   await registerAgentRoutes(
     app,
     options.providerFactory,

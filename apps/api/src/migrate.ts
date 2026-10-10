@@ -18,6 +18,7 @@ try {
       "0011",
       "0012",
       "0013",
+      "0014",
     ]) {
       const done =
         await tx`SELECT version FROM schema_migrations WHERE version=${version}`;
@@ -47,7 +48,9 @@ try {
                                 ? "0011_connectors.sql"
                                 : version === "0012"
                                   ? "0012_google_drive_connectors.sql"
-                                  : "0013_onedrive_connectors.sql";
+                                  : version === "0013"
+                                    ? "0013_onedrive_connectors.sql"
+                                    : "0014_sharepoint_connectors.sql";
         await tx.unsafe(
           await readFile(
             new URL(`../../../packages/db/migrations/${file}`, import.meta.url),

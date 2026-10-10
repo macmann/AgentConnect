@@ -3,15 +3,23 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   connectorInput,
   connectorUpdate,
+  sharePointDiscoveryInput,
+  oneDriveCredential,
 } from "@agentconnect/schemas/connectors";
 import { actor, workspaceAccess, id, params, audit } from "./app.js";
 import { sql } from "./db.js";
 import { HttpError } from "./http-error.js";
+import { oneDriveEndpoints } from "./onedrive-adapter.js";
 import {
   ConnectorError,
   validateConnectorSelection,
+  validateConnectorEndpoint,
   connectorCredentials,
 } from "./connector-adapters.js";
+import {
+  createSharePointClient,
+  type SharePointClientFactory,
+} from "./sharepoint.js";
 async function access(
   r: FastifyRequest,
   cap: "connector:read" | "connector:manage" | "connector:sync",
@@ -20,7 +28,48 @@ async function access(
     w = await workspaceAccess(u.id, id(params(r).workspaceId), cap);
   return { u, w };
 }
-export async function registerConnectorRoutes(app: FastifyInstance) {
+export async function registerConnectorRoutes(
+  app: FastifyInstance,
+  sharePointFactory: SharePointClientFactory = createSharePointClient,
+) {
+  app.post(
+    "/workspaces/:workspaceId/connectors/sharepoint/discover",
+    { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } },
+    async (r) => {
+      const { w } = await access(r, "connector:manage");
+      const d = sharePointDiscoveryInput.parse(r.body);
+      for (const endpoint of oneDriveEndpoints)
+        validateConnectorEndpoint(endpoint);
+      const credential = oneDriveCredential.parse(
+        await connectorCredentials(
+          {
+            secret_id: d.secretId,
+            workspace_id: w.id,
+            organization_id: w.organization_id,
+          },
+          "sharepoint",
+        ),
+      );
+      const client = sharePointFactory(credential);
+      const controller = new AbortController();
+      const aborted = () => controller.abort();
+      r.raw.once("aborted", aborted);
+      const signal = AbortSignal.any([
+        controller.signal,
+        AbortSignal.timeout(60000),
+      ]);
+      try {
+        if (d.action === "site") {
+          const site = await client.resolveSite(d.siteUrl, signal);
+          return { site, libraries: await client.libraries(site.id, signal) };
+        }
+        return await client.folders(d.siteId, d.driveId, d.folderId, signal);
+      } finally {
+        r.raw.removeListener("aborted", aborted);
+        client.close();
+      }
+    },
+  );
   app.get("/workspaces/:workspaceId/connectors", async (r) => {
     const { w } = await access(r, "connector:read");
     return sql`SELECT c.id,c.name,c.kind,c.knowledge_base_id,c.secret_id,c.selection,c.enabled,c.revision,c.schedule_minutes,c.next_sync_at,c.created_at,k.name AS knowledge_name,latest.status,latest.counts,latest.error_code,latest.finished_at FROM enterprise_connectors c JOIN knowledge_bases k ON k.id=c.knowledge_base_id LEFT JOIN LATERAL(SELECT status,counts,error_code,finished_at FROM connector_syncs WHERE connector_id=c.id ORDER BY created_at DESC,id DESC LIMIT 1) latest ON true WHERE c.workspace_id=${w.id} AND c.archived_at IS NULL ORDER BY c.created_at DESC`;
@@ -182,9 +231,9 @@ export function connectorHttpError(error: unknown) {
     return new HttpError(
       error.code === "CONNECTOR_ENDPOINT_NOT_ALLOWED" ? 400 : 409,
       error.code === "CONNECTOR_ENDPOINT_NOT_ALLOWED"
-        ? "Connector endpoint is not approved. Google Drive requires www.googleapis.com and oauth2.googleapis.com; OneDrive requires graph.microsoft.com and login.microsoftonline.com. Add its exact host to CONNECTOR_ALLOWED_HOSTS in the API and worker environment, preserving existing hosts, then restart both services. Trusted private endpoints require CONNECTOR_PRIVATE_HOSTS."
+        ? "Connector endpoint is not approved. Google Drive requires www.googleapis.com and oauth2.googleapis.com; OneDrive and SharePoint require graph.microsoft.com and login.microsoftonline.com. Add its exact host to CONNECTOR_ALLOWED_HOSTS in the API and worker environment, preserving existing hosts, then restart both services. Trusted private endpoints require CONNECTOR_PRIVATE_HOSTS."
         : error.code === "CONNECTOR_CREDENTIAL_INVALID"
-          ? "Credential JSON must match the provider: S3 needs accessKeyId and secretAccessKey; Google Drive needs service-account client_email and an RSA private_key; OneDrive needs tenantId, clientId and clientSecret."
+          ? "Credential JSON must match the provider: S3 needs accessKeyId and secretAccessKey; Google Drive needs service-account client_email and an RSA private_key; OneDrive/SharePoint need tenantId, clientId and clientSecret."
           : error.code,
     );
   return null;
