@@ -50,7 +50,7 @@ const fixture = createServer(async (req, res) => {
 test.beforeAll(async () => {
   // Browser scenarios share an IP and the real API limiter. Preserve the policy
   // and start this integration flow with room for its normal UI requests.
-  const health = await fetch("http://localhost:4000/health/live", {
+  const health = await fetch("http://localhost:4000/auth/me", {
     signal: AbortSignal.timeout(5000),
   });
   const remaining = Number(
@@ -165,7 +165,7 @@ test("register, test, attach and trace a read-only tool in playground and hosted
   await page.getByLabel("Agent name").fill("Weather assistant");
   await page
     .getByRole("checkbox", {
-      name: "Weather lookup · Public access",
+      name: "Weather lookup · Public chat enabled",
       exact: true,
     })
     .check();

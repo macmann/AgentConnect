@@ -2,7 +2,7 @@
 import { RetentionStudio } from "./retention-studio";
 import { ConnectorsStudio } from "./connectors-studio";
 import { QualityStudio } from "./quality-studio";
-import { useEffect, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   QueryClient,
   QueryClientProvider,
@@ -24,6 +24,14 @@ import {
   Layers,
   LayoutDashboard,
   LogOut,
+  Menu,
+  Cable,
+  Wrench,
+  MessagesSquare,
+  Radio,
+  ChartNoAxesColumn,
+  ListChecks,
+  ClipboardList,
   Plus,
   Search,
   ShieldCheck,
@@ -31,7 +39,6 @@ import {
   Users,
   Workflow,
   X,
-  Activity,
   BookOpen,
 } from "lucide-react";
 import { Button } from "./button";
@@ -42,22 +49,7 @@ import { WorkflowStudio } from "./workflow-studio";
 import { ToolStudio } from "./tool-studio";
 import { KnowledgeStudio } from "./knowledge-studio";
 import { AgentStudio, Models, Conversations } from "./agent-studio";
-const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-async function api<T>(
-  path: string,
-  method = "GET",
-  body?: unknown,
-): Promise<T> {
-  const response = await fetch(base + path, {
-    method,
-    credentials: "include",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error ?? "Request failed");
-  return data as T;
-}
+import { ApiError, requestJson as api } from "./agent-client";
 type User = {
   id: string;
   name: string;
@@ -74,6 +66,32 @@ type Workspace = {
 type Member = { id: string; name: string; email: string; role: string };
 type Secret = { id: string; name: string; created_at: string };
 type Audit = { id: string; action: string; created_at: string };
+const navigationGroups: Record<string, string> = {
+  Overview: "Workspace",
+  Agents: "Build",
+  Conversations: "Monitor",
+  Members: "Manage",
+};
+const pageDescriptions: Record<string, string> = {
+  Overview: "Your workspace, team and next steps in one place.",
+  Workspaces: "Choose a workspace or create a shared space for your team.",
+  Agents:
+    "Configure assistants, connect knowledge and tools, then test and publish.",
+  Models: "Manage model providers, credentials and connection settings.",
+  Knowledge: "Add sources and build knowledge bases for grounded answers.",
+  Tools: "Register approved tools your agents can use.",
+  Workflows: "Build and test workflows that coordinate your agents.",
+  Connectors: "Connect external services and manage synchronized sources.",
+  Conversations: "Review conversations, answers and execution details.",
+  Operations: "Monitor activity, usage and workspace health.",
+  "Collected data": "Review information collected through your agents.",
+  Channels: "Publish your agents to the channels your users visit.",
+  Quality: "Evaluate answers and compare performance over time.",
+  Members: "Manage workspace membership and access permissions.",
+  Secrets: "Store and rotate encrypted credentials for models and connectors.",
+  Retention: "Control how long workspace data is kept and preview cleanup.",
+  "Audit log": "Review a record of changes made in this workspace.",
+};
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
 });
@@ -139,7 +157,7 @@ function Auth({ onDone }: { onDone: () => void }) {
         <div className="auth-feature">
           <Layers /> One workspace. Endless possibilities.
         </div>
-        <small>PHASE 0 · FOUNDATION</small>
+        <small>YOUR AI WORKSPACE</small>
       </div>
       <div className="auth-form">
         <div className="eyebrow">WELCOME TO AGENTCONNECT</div>
@@ -207,13 +225,26 @@ function Auth({ onDone }: { onDone: () => void }) {
         </form>
         <button
           className="text-button"
-          onClick={() => setMode(mode === "register" ? "login" : "register")}
+          onClick={() => {
+            setMode(mode === "register" ? "login" : "register");
+            setError("");
+            setNotice("");
+            form.clearErrors();
+          }}
         >
           {mode === "register"
             ? "Already have an account? Sign in"
             : "New here? Create an account"}
         </button>
-        <button className="text-button" onClick={() => setMode("reset")}>
+        <button
+          className="text-button"
+          onClick={() => {
+            setMode("reset");
+            setError("");
+            setNotice("");
+            form.clearErrors();
+          }}
+        >
           Forgot password?
         </button>
         <p className="fine">Your data stays in your organization. Always.</p>
@@ -234,7 +265,40 @@ function Studio() {
   });
   const [orgId, setOrgId] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
-  const [view, setView] = useState("Overview");
+  const [view, setViewState] = useState("Overview");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const dialogOpener = useRef<HTMLElement | null>(null);
+  function setView(destination: string) {
+    setViewState(destination);
+    setMenuOpen(false);
+    setError("");
+    setNotice("");
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    params.set("view", destination);
+    params.delete("action");
+    params.delete("token");
+    window.history.pushState({}, "", `#${params}`);
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
+  useEffect(() => {
+    const restore = () => {
+      const params = new URLSearchParams(window.location.hash.slice(1));
+      const destination = params.get("view") ?? "Overview";
+      setViewState(destination in pageDescriptions ? destination : "Overview");
+      setOrgId(params.get("organization") ?? "");
+      setWorkspaceId(params.get("workspace") ?? "");
+      setError("");
+      setNotice("");
+      setMenuOpen(false);
+    };
+    restore();
+    window.addEventListener("popstate", restore);
+    window.addEventListener("hashchange", restore);
+    return () => {
+      window.removeEventListener("popstate", restore);
+      window.removeEventListener("hashchange", restore);
+    };
+  }, []);
   const [dialog, setDialog] = useState<
     "organization" | "workspace" | "invite" | "secret" | null
   >(null);
@@ -261,7 +325,8 @@ function Studio() {
     window.addEventListener("hashchange", captureAction);
     return () => window.removeEventListener("hashchange", captureAction);
   }, []);
-  const currentOrgId = orgId || orgs.data?.[0]?.id || "";
+  const currentOrgId =
+    orgs.data?.find((o) => o.id === orgId)?.id || orgs.data?.[0]?.id || "";
   const org = orgs.data?.find((o) => o.id === currentOrgId);
   const workspaces = useQuery({
     queryKey: ["workspaces", currentOrgId],
@@ -272,6 +337,24 @@ function Studio() {
   const currentWorkspace =
     workspaces.data?.find((w) => w.id === workspaceId) || workspaces.data?.[0];
   const wid = currentWorkspace?.id;
+  function selectWorkspace(id: string) {
+    setWorkspaceId(id);
+    setError("");
+    setNotice("");
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    params.set("view", view);
+    params.set("organization", currentOrgId);
+    params.set("workspace", id);
+    window.history.pushState({}, "", `#${params}`);
+  }
+  function selectOrganization(id: string) {
+    setOrgId(id);
+    setWorkspaceId("");
+    setError("");
+    setNotice("");
+    const params = new URLSearchParams({ view, organization: id });
+    window.history.pushState({}, "", `#${params}`);
+  }
   const members = useQuery({
     queryKey: ["members", wid],
     queryFn: () => api<Member[]>(`/workspaces/${wid}/members`),
@@ -314,16 +397,21 @@ function Studio() {
     const f = new FormData(e.currentTarget);
     const name = String(f.get("name") ?? "");
     if (dialog === "organization")
-      await mutate(
-        () => api("/organizations", "POST", { name }),
-        "Organization created",
-      );
+      await mutate(async () => {
+        const created = await api<Organization>("/organizations", "POST", {
+          name,
+        });
+        selectOrganization(created.id);
+      }, "Organization created");
     if (dialog === "workspace")
-      await mutate(
-        () =>
-          api(`/organizations/${currentOrgId}/workspaces`, "POST", { name }),
-        "Workspace created",
-      );
+      await mutate(async () => {
+        const created = await api<Workspace>(
+          `/organizations/${currentOrgId}/workspaces`,
+          "POST",
+          { name },
+        );
+        selectWorkspace(created.id);
+      }, "Workspace created");
     if (dialog === "invite")
       await mutate(
         () =>
@@ -398,6 +486,19 @@ function Studio() {
   );
   if (user.isPending)
     return <main className="loading">Connecting to your workspace…</main>;
+  if (
+    !user.data &&
+    user.error &&
+    !(user.error instanceof ApiError && user.error.status === 401)
+  )
+    return (
+      <main className="connection-state">
+        <Boxes size={36} />
+        <h1>Unable to connect</h1>
+        <p role="alert">{user.error.message}</p>
+        <Button onClick={() => user.refetch()}>Try again</Button>
+      </main>
+    );
   if (!user.data)
     return (
       <>
@@ -408,60 +509,61 @@ function Studio() {
   const filtered = (workspaces.data ?? []).filter((w) =>
     w.name.toLowerCase().includes(search.toLowerCase()),
   );
-  return (
-    <div className="shell">
-      <aside className="sidebar">
-        <a className="brand" href="/">
-          <div className="brand-icon">
-            <Boxes size={21} />
-          </div>
-          AgentConnect
-        </a>
-        <div className="org-picker">
-          <div className="org-avatar">{(org?.name ?? "W").slice(0, 1)}</div>
-          <label>
-            <span>Organization</span>
-            <select
-              aria-label="Organization"
-              value={currentOrgId}
-              onChange={(e) => {
-                setOrgId(e.target.value);
-                setWorkspaceId("");
-              }}
-            >
-              {!org && <option value="">Create an organization</option>}
-              {orgs.data?.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <ChevronDown size={14} />
+  const navigation = (
+    <div className="sidebar-body">
+      <a className="brand" href="/">
+        <div className="brand-icon">
+          <Boxes size={21} />
         </div>
-        <div className="nav-label">WORKSPACE</div>
-        <nav>
-          {[
-            { label: "Overview", icon: LayoutDashboard },
-            { label: "Workspaces", icon: FolderKanban },
-            { label: "Agents", icon: Sparkles },
-            { label: "Models", icon: Boxes },
-            { label: "Knowledge", icon: BookOpen },
-            { label: "Connectors", icon: Boxes },
-            { label: "Tools", icon: Boxes },
-            { label: "Workflows", icon: Workflow },
-            { label: "Conversations", icon: Activity },
-            { label: "Operations", icon: Activity },
-            { label: "Collected data", icon: Layers },
-            { label: "Channels", icon: Activity },
-            { label: "Quality", icon: Activity },
-            { label: "Members", icon: Users },
-            { label: "Secrets", icon: KeyRound },
-            { label: "Retention", icon: ShieldCheck },
-            { label: "Audit log", icon: Activity },
-          ].map(({ label, icon: Icon }) => (
+        AgentConnect
+      </a>
+      <div className="org-picker">
+        <div className="org-avatar">{(org?.name ?? "W").slice(0, 1)}</div>
+        <label>
+          <span>Organization</span>
+          <select
+            aria-label="Organization"
+            value={currentOrgId}
+            onChange={(e) => {
+              selectOrganization(e.target.value);
+            }}
+          >
+            {!org && <option value="">Create an organization</option>}
+            {orgs.data?.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <ChevronDown size={14} />
+      </div>
+      <nav aria-label="Workspace navigation">
+        {[
+          { label: "Overview", icon: LayoutDashboard },
+          { label: "Workspaces", icon: FolderKanban },
+          { label: "Agents", icon: Sparkles },
+          { label: "Models", icon: Boxes },
+          { label: "Knowledge", icon: BookOpen },
+          { label: "Connectors", icon: Cable },
+          { label: "Tools", icon: Wrench },
+          { label: "Workflows", icon: Workflow },
+          { label: "Conversations", icon: MessagesSquare },
+          { label: "Operations", icon: ChartNoAxesColumn },
+          { label: "Collected data", icon: Layers },
+          { label: "Channels", icon: Radio },
+          { label: "Quality", icon: ListChecks },
+          { label: "Members", icon: Users },
+          { label: "Secrets", icon: KeyRound },
+          { label: "Retention", icon: ShieldCheck },
+          { label: "Audit log", icon: ClipboardList },
+        ].map(({ label, icon: Icon }) => (
+          <Fragment key={label}>
+            {navigationGroups[label] && (
+              <div className="nav-label">{navigationGroups[label]}</div>
+            )}
             <button
-              key={label}
+              aria-current={view === label ? "page" : undefined}
               className={view === label ? "active" : ""}
               onClick={() => {
                 setView(label);
@@ -470,51 +572,118 @@ function Studio() {
             >
               <Icon size={18} />
               {label}
-              {label === "Overview" && <span className="nav-dot" />}
             </button>
-          ))}
-        </nav>
-        <div className="nav-label roadmap-label">BUILD ROADMAP</div>
-        <div className="future">
-          <Workflow size={17} /> Workflows <span>Phase 4</span>
-        </div>
-        <div className="sidebar-bottom">
-          <div className="foundation-note">
-            <ShieldCheck size={19} />
-            <strong>A secure place to start</strong>
-            <p>
-              Your foundation is ready for the next generation of AI agents.
-            </p>
-            <span>Foundation release · 0.1</span>
+          </Fragment>
+        ))}
+      </nav>
+      <div className="sidebar-bottom">
+        <button
+          className="profile"
+          aria-label="Sign out"
+          title="Sign out"
+          disabled={busy}
+          onClick={() =>
+            mutate(async () => {
+              await api("/auth/logout", "POST");
+              cache.clear();
+              setViewState("Overview");
+              setOrgId("");
+              setWorkspaceId("");
+              window.history.replaceState({}, "", window.location.pathname);
+            }, "Signed out")
+          }
+        >
+          <div className="avatar">{user.data.name.slice(0, 1)}</div>
+          <div>
+            <strong>{user.data.name}</strong>
+            <small>{user.data.email}</small>
           </div>
-          <button
-            className="profile"
-            onClick={() =>
-              mutate(() => api("/auth/logout", "POST"), "Signed out")
-            }
+          <LogOut size={16} />
+        </button>
+      </div>
+    </div>
+  );
+  return (
+    <div className="shell">
+      <a
+        className="skip-link"
+        href="#workspace-content"
+        onClick={(event) => {
+          event.preventDefault();
+          document.getElementById("workspace-content")?.focus();
+          window.scrollTo({ top: 0, behavior: "instant" });
+        }}
+      >
+        Skip to content
+      </a>
+      <aside className="sidebar">{navigation}</aside>
+      <Dialog.Root open={menuOpen} onOpenChange={setMenuOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay navigation-overlay" />
+          <Dialog.Content
+            className="navigation-drawer"
+            id="mobile-navigation"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              document
+                .querySelector<HTMLButtonElement>(".mobile-menu")
+                ?.focus();
+            }}
           >
-            <div className="avatar">{user.data.name.slice(0, 1)}</div>
-            <div>
-              <strong>{user.data.name}</strong>
-              <small>{user.data.email}</small>
-            </div>
-            <LogOut size={16} />
-          </button>
-        </div>
-      </aside>
+            <Dialog.Title className="sr-only">
+              Workspace navigation
+            </Dialog.Title>
+            <Dialog.Description className="sr-only">
+              Choose an organization or page.
+            </Dialog.Description>
+            <Dialog.Close
+              className="dialog-close"
+              aria-label="Close navigation"
+            >
+              <X size={20} />
+            </Dialog.Close>
+            {navigation}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
       <div className="main">
-        <header>
+        <header className="workspace-header">
+          <button
+            className="mobile-menu button secondary"
+            aria-label="Open navigation"
+            aria-expanded={menuOpen}
+            aria-controls="mobile-navigation"
+            onClick={() => setMenuOpen(true)}
+          >
+            <Menu size={20} />
+          </button>
+          <label className="workspace-switcher">
+            <span>Workspace</span>
+            <select
+              aria-label="Current workspace"
+              value={wid ?? ""}
+              onChange={(e) => selectWorkspace(e.target.value)}
+            >
+              {!wid && <option value="">No workspace selected</option>}
+              {workspaces.data?.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="breadcrumb">
             Workspace <ChevronRight size={14} />
             <strong>{view}</strong>
           </div>
           <div className="header-right">
-            <span className="environment-dot" /> Development{" "}
+            <span className="environment-dot" />{" "}
+            {currentWorkspace?.role.replaceAll("_", " ") ?? "Account"}{" "}
             <span className="divider" />
             <span className="avatar small">{user.data.name.slice(0, 1)}</span>
           </div>
         </header>
-        <main className="content">
+        <main className="content" id="workspace-content" tabIndex={-1}>
           {tokenPanel}
           {!user.data.verified && user.data.verificationRequired !== false && (
             <div className="verify-banner">
@@ -543,22 +712,23 @@ function Studio() {
                   ? `Good to see you, ${user.data.name.split(" ")[0]}.`
                   : view}
               </h1>
-              <p className="muted">
-                {view === "Overview"
-                  ? "A clear view of your workspace. A strong foundation for what comes next."
-                  : view === "Operations"
-                    ? "Monitor usage, review answers and manage workspace access."
-                    : "Manage your organization with clear permissions and a complete audit trail."}
-              </p>
+              <p className="muted">{pageDescriptions[view]}</p>
             </div>
-            <Button
-              onClick={() =>
-                setDialog(currentOrgId ? "workspace" : "organization")
-              }
-            >
-              <Plus size={17} />
-              {currentOrgId ? "New workspace" : "Create organization"}
-            </Button>
+            {["Overview", "Workspaces"].includes(view) &&
+              (!currentOrgId ||
+                !currentWorkspace ||
+                ["owner", "org_admin"].includes(
+                  currentWorkspace?.role ?? "",
+                )) && (
+                <Button
+                  onClick={() =>
+                    setDialog(currentOrgId ? "workspace" : "organization")
+                  }
+                >
+                  <Plus size={17} />
+                  {currentOrgId ? "New workspace" : "Create organization"}
+                </Button>
+              )}
           </div>
           {error && (
             <div role="alert" className="error-banner">
@@ -668,23 +838,27 @@ function Studio() {
                     <span /> BUILT FOR WHAT’S NEXT
                   </span>
                   <h2>
-                    Your AI journey starts
+                    Build useful agents.
                     <br />
-                    with the right foundation.
+                    Bring your knowledge to work.
                   </h2>
                   <p>
-                    Bring your team together. Organize your work.
+                    Connect a model, add your knowledge and tools,
                     <br />
-                    Keep every connection secure.
+                    then test an assistant before publishing.
                   </p>
                   <Button
                     onClick={() =>
-                      setDialog(currentOrgId ? "workspace" : "organization")
+                      wid
+                        ? setView("Agents")
+                        : setDialog(currentOrgId ? "workspace" : "organization")
                     }
                   >
-                    {currentOrgId
-                      ? "Create a workspace"
-                      : "Create your organization"}
+                    {wid
+                      ? "Explore your agents"
+                      : currentOrgId
+                        ? "Create a workspace"
+                        : "Create your organization"}
                     <ArrowUpRight size={16} />
                   </Button>
                 </div>
@@ -776,7 +950,7 @@ function Studio() {
                     <button
                       className={`workspace-card ${wid === w.id ? "selected" : ""}`}
                       key={w.id}
-                      onClick={() => setWorkspaceId(w.id)}
+                      onClick={() => selectWorkspace(w.id)}
                     >
                       <div className="workspace-icon">
                         <FolderKanban size={23} />
@@ -865,11 +1039,23 @@ function Studio() {
                   </tbody>
                 </table>
               </div>
-              {!members.data?.length && (
-                <p className="empty">
-                  Choose or create a workspace to manage members.
+              {members.isFetching && (
+                <p className="empty" role="status">
+                  Loading members…
                 </p>
               )}
+              {members.error && (
+                <p className="error-banner" role="alert">
+                  {members.error.message}
+                </p>
+              )}
+              {!members.isFetching &&
+                !members.error &&
+                !members.data?.length && (
+                  <p className="empty">
+                    Choose or create a workspace to manage members.
+                  </p>
+                )}
             </section>
           )}
           {view === "Secrets" && (
@@ -951,12 +1137,24 @@ function Studio() {
                       ))}
                     </tbody>
                   </table>
-                  {!secrets.data?.length && (
-                    <p className="empty">
-                      No secrets yet. Add a credential when an integration needs
-                      it.
+                  {secrets.isFetching && (
+                    <p className="empty" role="status">
+                      Loading secrets…
                     </p>
                   )}
+                  {secrets.error && (
+                    <p className="error-banner" role="alert">
+                      {secrets.error.message}
+                    </p>
+                  )}
+                  {!secrets.isFetching &&
+                    !secrets.error &&
+                    !secrets.data?.length && (
+                      <p className="empty">
+                        No secrets yet. Add a credential when an integration
+                        needs it.
+                      </p>
+                    )}
                 </div>
               ) : (
                 <p className="empty">
@@ -999,7 +1197,12 @@ function Studio() {
                   </tbody>
                 </table>
                 {audit.error && <p className="error">{audit.error.message}</p>}
-                {!audit.data?.length && (
+                {audit.isFetching && (
+                  <p className="empty" role="status">
+                    Loading audit activity…
+                  </p>
+                )}
+                {!audit.isFetching && !audit.error && !audit.data?.length && (
                   <p className="empty">
                     No visible events. Workspace creation and changes will
                     appear here.
@@ -1011,20 +1214,31 @@ function Studio() {
           {view === "Overview" && (
             <div className="bottom-grid">
               <section className="panel next-panel">
-                <span className="eyebrow">THE NEXT CHAPTER</span>
+                <span className="eyebrow">BUILD YOUR WORKSPACE</span>
                 <h3>From a workspace to an AI workforce.</h3>
                 <p>
-                  Knowledge retrieval and visual orchestration are planned in
-                  the phased product roadmap.
+                  Connect your sources in Knowledge, attach them to an agent,
+                  then coordinate multiple agents in Workflows.
                 </p>
-                <div className="phase-row">
-                  <span className="phase complete">
-                    <Check size={13} /> Foundation
-                  </span>
-                  <ChevronRight size={13} />
-                  <span className="phase">Agent MVP</span>
-                  <ChevronRight size={13} />
-                  <span className="phase">Knowledge</span>
+                <div className="quick-links">
+                  <Button
+                    className="secondary"
+                    onClick={() => setView("Models")}
+                  >
+                    Manage models <ArrowUpRight size={14} />
+                  </Button>
+                  <Button
+                    className="secondary"
+                    onClick={() => setView("Knowledge")}
+                  >
+                    Add knowledge <ArrowUpRight size={14} />
+                  </Button>
+                  <Button
+                    className="secondary"
+                    onClick={() => setView("Workflows")}
+                  >
+                    Build a workflow <ArrowUpRight size={14} />
+                  </Button>
                 </div>
               </section>
               <section className="panel security-panel">
@@ -1051,7 +1265,7 @@ function Studio() {
               <span className="muted">/ Enterprise AI, connected.</span>
             </span>
             <span>
-              <span className="status-dot" /> Foundation release
+              <span className="status-dot" /> Workspace console
             </span>
           </footer>
         </main>
@@ -1067,7 +1281,16 @@ function Studio() {
       >
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
-          <Dialog.Content className="dialog-content">
+          <Dialog.Content
+            className="dialog-content"
+            onOpenAutoFocus={() => {
+              dialogOpener.current = document.activeElement as HTMLElement;
+            }}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              dialogOpener.current?.focus();
+            }}
+          >
             <Dialog.Title>
               {dialog === "organization"
                 ? "Create organization"

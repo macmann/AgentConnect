@@ -343,7 +343,7 @@ function OperatorThread({
         action,
         content: action === "reply" ? text : "",
       });
-      setText("");
+      if (action === "reply") setText("");
       await cache.invalidateQueries({
         queryKey: ["handoff-thread", conversationId],
       });

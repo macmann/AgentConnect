@@ -482,7 +482,9 @@ export function Models({
                     {m.provider}
                     <small className="block muted">{m.model_id}</small>
                   </td>
-                  <td>{m.context_window.toLocaleString()}</td>
+                  <td className="numeric">
+                    {m.context_window.toLocaleString()}
+                  </td>
                   <td>
                     {canManage && (
                       <>
@@ -545,7 +547,7 @@ export function AgentStudio({
 }: {
   workspaceId: string;
   role: string;
-  onNavigate: (destination: "Knowledge" | "Tools") => void;
+  onNavigate: (destination: "Knowledge" | "Tools" | "Models") => void;
 }) {
   const cache = useQueryClient();
   const canBuild = [
@@ -690,6 +692,11 @@ export function AgentStudio({
             <button
               className="text-button"
               onClick={() => {
+                if (
+                  (dirty || !draft.id) &&
+                  !window.confirm("Discard unsaved agent changes?")
+                )
+                  return;
                 setDraft(null);
                 setError("");
                 setNotice("");
@@ -741,7 +748,14 @@ export function AgentStudio({
           ) : !models.data?.length ? (
             <p className="notice" role="status">
               To enable Create agent, register a model in Models for this
-              workspace.
+              workspace.{" "}
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => onNavigate("Models")}
+              >
+                Register a model
+              </button>
             </p>
           ) : null)}
         {!draft &&
@@ -1251,7 +1265,7 @@ export function AgentStudio({
                         <option value="structured">Structured</option>
                       </select>
                       <small>
-                        Knowledge and database tools are added in later phases.
+                        Choose how this agent organizes and answers questions.
                       </small>
                     </label>
                   </div>

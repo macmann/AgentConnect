@@ -88,6 +88,7 @@ export function AgentAttachments({
                   >
                     <input
                       type="checkbox"
+                      aria-label={`${item.name} · ${item.public_access ? "Public chat enabled" : "Workspace only"}`}
                       checked={selected.includes(item.id)}
                       onChange={(e) => onToggle(item.id, e.target.checked)}
                     />
