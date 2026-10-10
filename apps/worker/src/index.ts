@@ -1,3 +1,4 @@
+import { processSupportRouting } from "@agentconnect/api/support";
 import {
   processRetentionCleanup,
   processRetentionObjectDeletion,
@@ -43,6 +44,7 @@ async function loop(
   }
 }
 await Promise.all([
+  loop(processSupportRouting, 3000, "Support routing"),
   loop(processRetentionCleanup, 5000, "Workspace retention cleanup"),
   loop(processRetentionObjectDeletion, 1000, "Retention object deletion"),
   loop(processConnectorSync, 3000, "Enterprise connector sync"),

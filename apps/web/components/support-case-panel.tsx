@@ -1,4 +1,5 @@
 "use client";
+import { SupportRoutingPanel } from "./support-routing-panel";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
   useInfiniteQuery,
@@ -427,6 +428,12 @@ export function SupportCasePanel({
               </small>
             </div>
           )}
+          <SupportRoutingPanel
+            s={s}
+            base={base}
+            workspaceId={workspaceId}
+            role={role}
+          />
           <div className="support-case-actions">
             {s.status === "queued" && permitted(role, "support:claim") && (
               <Button

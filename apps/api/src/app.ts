@@ -177,7 +177,7 @@ export async function buildApp(
             : false
           : config.WEB_ORIGIN,
         credentials: !widget,
-        methods: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"],
+        methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: ["content-type", "authorization"],
       };
     },

@@ -3403,3 +3403,165 @@ footer {
   border: 0;
   background: transparent;
 }
+.support-section-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.support-presence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px 20px;
+}
+.support-presence > div {
+  flex: 1 1 220px;
+}
+.support-presence p,
+.support-presence small {
+  font-size: 12px;
+  color: #64756c;
+}
+.support-presence > small {
+  flex: 1 1 230px;
+}
+.support-presence label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.support-presence select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+}
+.support-team {
+  display: grid;
+  gap: 20px;
+}
+.support-team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  padding: 20px;
+}
+.support-operator-card {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-width: 0;
+}
+.support-operator-card p {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  color: #63736a;
+}
+.support-operator-card button {
+  margin-top: auto;
+}
+.support-skill-list {
+  padding: 20px;
+  display: grid;
+  gap: 12px;
+}
+.support-skill-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.support-skill-list small {
+  display: block;
+  margin-top: 6px;
+  color: #63736a;
+}
+.support-config-dialog {
+  max-width: 720px;
+}
+.support-config-dialog fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.support-config-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.support-config-dialog label.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+}
+.support-config-dialog h3 {
+  margin: 20px 0 12px;
+}
+.support-skill-picker,
+.support-weight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+.support-member-picker {
+  display: grid;
+  gap: 8px;
+}
+.support-member-picker > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.support-member-picker > div > label:first-child {
+  flex: 1 1 160px;
+}
+.support-member-picker input[type="number"] {
+  width: 80px;
+}
+.support-routing-result {
+  padding: 16px;
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  display: grid;
+  gap: 10px;
+}
+.support-routing-result p {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.support-routing-result small {
+  display: block;
+}
+@media (max-width: 600px) {
+  .support-team .panel-header {
+    align-items: start;
+  }
+  .support-skill-picker,
+  .support-weight-grid {
+    grid-template-columns: 1fr;
+  }
+  .support-presence > small {
+    flex-basis: 100%;
+  }
+  .support-team-grid {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+}

@@ -47,7 +47,9 @@ try {
                                           ? "0016_retention.sql"
                                           : version === "0017"
                                             ? "0017_support.sql"
-                                            : "0018_support_console.sql";
+                                            : version === "0018"
+                                              ? "0018_support_console.sql"
+                                              : "0019_support_routing.sql";
         await tx.unsafe(
           await readFile(
             new URL(`../../../packages/db/migrations/${file}`, import.meta.url),

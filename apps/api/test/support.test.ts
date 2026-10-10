@@ -125,7 +125,7 @@ test("Domain state transitions and cursors are validated", () => {
     false,
   );
 });
-test("Queue configuration is admin scoped and automated routing is explicitly deferred", async () => {
+test("Queue configuration is admin scoped and routing modes are explicit", async () => {
   assert.equal(
     (await call("POST", base + "/queues", { name: "General" }, "operator"))
       .statusCode,
@@ -142,7 +142,7 @@ test("Queue configuration is admin scoped and automated routing is explicitly de
     (
       await call("POST", base + "/queues", {
         name: "Hybrid",
-        routingStrategy: "hybrid",
+        routingStrategy: "invalid_strategy",
       })
     ).statusCode,
     400,

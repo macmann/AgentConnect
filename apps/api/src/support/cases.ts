@@ -7,6 +7,7 @@ import {
   type SupportCaseStatus,
 } from "@agentconnect/schemas/support";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
+import { reserveOperator, lockSupportCapacity } from "./operator-capacity.js";
 import { caseDetail } from "./queries.js";
 import { HttpError } from "../http-error.js";
 export type SupportCase = {
@@ -21,7 +22,7 @@ export type SupportCase = {
 };
 export type SupportActor = {
   id: string | null;
-  type: "customer" | "operator" | "supervisor";
+  type: "customer" | "operator" | "supervisor" | "system";
   supervise?: boolean;
 };
 export async function appendEvent(
@@ -107,6 +108,11 @@ export async function createCase(
     if (input.legacy) throw new HttpError(409, "Support request already open");
     return { supportCase: open, created: false };
   }
+  if (!input.queueId) {
+    const [defaultQueue] =
+      await tx`SELECT id FROM support_queues WHERE workspace_id=${c.workspace_id} AND organization_id=${c.organization_id} AND enabled AND is_default`;
+    input.queueId = defaultQueue?.id ?? null;
+  }
   if (input.queueId) {
     const [queue] =
       await tx`SELECT id FROM support_queues WHERE id=${input.queueId} AND workspace_id=${c.workspace_id} AND organization_id=${c.organization_id} AND enabled FOR SHARE`;
@@ -166,6 +172,8 @@ export async function claimCase(
     return;
   if (s.status !== "queued")
     throw new HttpError(409, "Support case is not available to claim");
+  await eligibleOperator(tx, actor.id, s.workspace_id, s.organization_id);
+  await reserveOperator(tx, actor.id, s.workspace_id, s.id);
   await tx`UPDATE support_cases SET assigned_operator_id=${actor.id},assigned_at=now(),accepted_at=now() WHERE id=${s.id}`;
   s.assigned_operator_id = actor.id;
   await setStatus(tx, s, "active", actor, "case.claimed");
@@ -199,6 +207,7 @@ export async function assignCase(
   queueId?: string | null,
 ) {
   if (!actor.supervise) throw new HttpError(403, "Supervisor access required");
+  await lockSupportCapacity(tx, s.workspace_id);
   await eligibleOperator(tx, operatorId, s.workspace_id, s.organization_id);
   if (
     s.status === "assigned" &&
@@ -213,7 +222,10 @@ export async function assignCase(
       await tx`SELECT id FROM support_queues WHERE id=${queueId} AND workspace_id=${s.workspace_id} AND organization_id=${s.organization_id} AND enabled FOR SHARE`;
     if (!queue) throw new HttpError(404, "Enabled support queue unavailable");
   }
+  await reserveOperator(tx, operatorId, s.workspace_id, s.id);
   await tx`UPDATE support_cases SET queue_id=${queueId === undefined ? s.queue_id : queueId},assigned_operator_id=${operatorId},assigned_at=now() WHERE id=${s.id}`;
+  s.assigned_operator_id = operatorId;
+  if (queueId !== undefined) s.queue_id = queueId;
   await setStatus(tx, s, "assigned", actor, "case.assigned");
 }
 export async function transitionCase(
@@ -239,6 +251,15 @@ export async function transitionCase(
       "Use the dedicated claim, assign or resolve action",
     );
   if (to === s.status) return;
+  if (to === "active" && s.status === "resolved" && s.assigned_operator_id) {
+    await eligibleOperator(
+      tx,
+      s.assigned_operator_id,
+      s.workspace_id,
+      s.organization_id,
+    );
+    await reserveOperator(tx, s.assigned_operator_id, s.workspace_id, s.id);
+  }
   await setStatus(tx, s, to, actor, "case.status_changed");
   if (to === "active" && s.assigned_operator_id) {
     await tx`UPDATE support_cases SET accepted_at=now() WHERE id=${s.id}`;

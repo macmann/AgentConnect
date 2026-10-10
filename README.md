@@ -27,12 +27,12 @@ Run `pnpm recovery:drill` for the isolated local database/object/secret recovery
 
 Workspace administrators can configure retention, preview eligible data and track cleanup under **Retention**. See [workspace retention](docs/retention.md) for scope and worker behavior; migration 0016 is required.
 
-
 ## Human support enrichment
 
 The next product roadmap is [Human Support, Intelligent Handoff and AI Copilot](docs/human-support.md), delivered in phases A–G. Phase A adds durable cases, manual queues and exclusive assignments while keeping existing channel clients compatible. Apply migration 0017. Deployment automation and additional monitoring are paused.
 
-
 ## Human Support console
 
 Apply migration 0018, then open **Human Support** to filter cases, assign/claim, inspect a unified timeline, add private notes and resolve back to AI. See [the support guide](docs/human-support.md).
+
+Human Support Phase C adds optional operator profiles, fresh presence, reserved capacity, skills/languages, queue membership and deterministic routing. Run `pnpm db:migrate` (migration **0019**) and restart API/worker. Configure profiles and queues under **Human Support → Operators & routing**; operators must choose Available before automatic assignment. See [human-support.md](docs/human-support.md) for strategies, recommendations, capacity and compatibility limits.

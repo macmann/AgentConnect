@@ -700,12 +700,23 @@ export const supportQueues = pgTable("support_queues", {
   enabled: boolean("enabled").notNull().default(true),
   priority: text("priority").notNull().default("normal"),
   routingStrategy: text("routing_strategy").notNull().default("manual"),
+  assignmentMode: text("assignment_mode").notNull().default("manual"),
+  isDefault: boolean("is_default").notNull().default(false),
+  routingConfig: jsonb("routing_config").notNull().default({}),
   createdAt: created(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
 });
 export const supportCases = pgTable("support_cases", {
+  routingNextAttemptAt: timestamp("routing_next_attempt_at", {
+    withTimezone: true,
+  })
+    .notNull()
+    .defaultNow(),
+  routingStrategy: text("routing_strategy"),
+  routingScore: doublePrecision("routing_score"),
+  routingExplanation: jsonb("routing_explanation").notNull().default({}),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
   workspaceId: uuid("workspace_id").notNull(),
@@ -756,5 +767,53 @@ export const supportNotes = pgTable("support_notes", {
   supportCaseId: uuid("support_case_id").notNull(),
   authorId: uuid("author_id").notNull(),
   content: text("content").notNull(),
+  createdAt: created(),
+});
+
+export const operatorProfiles = pgTable("operator_profiles", {
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  userId: uuid("user_id").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  manualAvailability: boolean("manual_availability").notNull().default(true),
+  capacityLimit: integer("capacity_limit").notNull().default(5),
+  priorityWeight: integer("priority_weight").notNull().default(1),
+  timezone: text("timezone").notNull().default("UTC"),
+  languages: jsonb("languages").notNull().default([]),
+  presenceStatus: text("presence_status").notNull().default("offline"),
+  presenceExpiresAt: timestamp("presence_expires_at", { withTimezone: true }),
+  lastAssignedAt: timestamp("last_assigned_at", { withTimezone: true }),
+  createdAt: created(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const supportSkills = pgTable("support_skills", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: created(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const operatorSkills = pgTable("operator_skills", {
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  userId: uuid("user_id").notNull(),
+  skillId: uuid("skill_id").notNull(),
+  proficiency: integer("proficiency").notNull(),
+});
+export const supportQueueMembers = pgTable("support_queue_members", {
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  queueId: uuid("queue_id").notNull(),
+  userId: uuid("user_id").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  priorityWeight: integer("priority_weight").notNull().default(1),
+  lastAssignedAt: timestamp("last_assigned_at", { withTimezone: true }),
   createdAt: created(),
 });

@@ -8,7 +8,7 @@ The [implementation specification](human-support-spec.md) is the next product ro
 | ----- | -------------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | A     | Cases, events, queues, conversation control, migration, permissions, basic APIs              | Implemented; validation recorded in validation.md |
 | B     | Dedicated Human Support console, filters, unified timeline, internal notes, operator actions | Implemented; validation recorded in validation.md |
-| C     | Operator profiles, presence, skills, languages, capacity and routing                         | Planned                                           |
+| C     | Operator profiles, presence, skills, languages, capacity and routing                         | Implemented; validation recorded in validation.md |
 | D     | Escalation policy, AI triage and handoff brief                                               | Planned                                           |
 | E     | Private operator copilot                                                                     | Planned                                           |
 | F     | Structured resolution, AI continuation and flagship AI → human → AI test                     | Planned                                           |
@@ -24,7 +24,7 @@ Events are durable and cannot be updated. Tenant-consistent composite foreign ke
 
 ## Migration and compatibility
 
-Run `pnpm db:migrate` to apply **0017 and 0018**, then restart API and worker. No additional credentials are needed. Migration 0017 preserves `handoff_events` and copies their IDs, content, actors and timestamps into the support timeline. Every legacy non-`none` handoff becomes a historical case: pending → queued, active → active, resolved → resolved. Legacy threads lack reliable case boundaries, so a migrated thread is represented by one case; new escalations have separate case IDs.
+Run `pnpm db:migrate` to apply **0017–0019**, then restart API and worker. No additional credentials are needed. Migration 0017 preserves `handoff_events` and copies their IDs, content, actors and timestamps into the support timeline. Every legacy non-`none` handoff becomes a historical case: pending → queued, active → active, resolved → resolved. Legacy threads lack reliable case boundaries, so a migrated thread is represented by one case; new escalations have separate case IDs.
 
 Widget, hosted-chat, playground and Channels inbox endpoints still work. Their legacy status/event fields are maintained by the same case service, rather than a second state machine. Duplicate legacy requests/claims keep returning 409 as existing clients expect. The new case API returns the existing open case for duplicate escalation and supports an optional UUID `idempotencyKey` for exact request retries. Reusing a key for a different conversation returns 409.
 
@@ -98,7 +98,7 @@ Case/queue/event list responses contain `{items,nextCursor}`. Pass both `before`
 
 Run `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. Dedicated API tests cover duplicate escalation, claim and reply/resolve races, exclusive assignment, tenant boundaries, state validation, event immutability, controller exclusion, multiple cases and retention protection. The isolated migration test checks pre-upgrade pending/active/resolved data and conversation-deletion cascades. Existing channel API/browser tests exercise compatibility.
 
-For manual testing, start a customer chat and request human support, then open the workspace’s Human Support section. The existing Channels inbox remains compatible. Open **Human Support** for the dedicated staff console. Administrators can create manual queues, assign queued cases and choose their queue. Operators claim cases or accept cases assigned to them, reply to customers, save private notes, change waiting status and resolve. There is no operator profile, automatic routing, policy-controlled offer, copilot, SLA or staffing notification yet. Queue configuration rejects automated strategies until Phase C rather than pretending to route. Phase A retains the legacy explicit request button; Phase D will introduce AI-controlled escalation defaults. The full enrichment feature is complete only after the A–G acceptance flow passes.
+For manual testing, start a customer chat and request human support, then open the workspace’s Human Support section. The existing Channels inbox remains compatible. Open **Human Support** for the dedicated staff console. Administrators can create manual queues, assign queued cases and choose their queue. Operators claim cases or accept cases assigned to them, reply to customers, save private notes, change waiting status and resolve. Phase C adds profiles and deterministic routing through Operators & routing, as described below. Policy-controlled offers, AI triage, the private copilot, SLA and staffing notifications remain later phases. Phase A retains the legacy explicit request button; Phase D will introduce AI-controlled escalation defaults. The full enrichment feature is complete only after the A–G acceptance flow passes.
 
 ## Phase B console
 
@@ -124,3 +124,38 @@ Additional API resources under `/workspaces/:workspaceId/support`:
 Case list filters additionally support `scope=all|open|waiting|active|mine|unassigned`, `priority`, `channel` and `search`. Assignment accepts optional `queueId` (UUID or null); a new queue must be enabled and in the same tenant. Resolve accepts optional `finalResponse`; private summary and note content never appear in public responses.
 
 Browser validation and representative screenshots are recorded in `docs/validation.md` and `docs/support-console/`. Full operator profiles/routing, policy, copilot, structured continuation and SLA/analytics remain Phases C–G. Deployment automation and additional monitoring remain paused.
+
+## Phase C operators and routing
+
+Apply migration **0019** with `pnpm db:migrate`, then restart API and worker. In Human Support → **Operators & routing**, create reusable skills, add support profiles for existing eligible workspace members, and configure queue members and routing. Profiles include enablement, manual availability, capacity, priority weight, IANA timezone, language codes and skill proficiency (1–5). Administrators manage configuration; operators set only their own presence; analysts can inspect configuration and recommendations without changing them.
+
+A profile starts offline. Operators choose Available, Busy, Away, Do Not Disturb or Offline in **My availability**. While Human Support is open and visible, non-offline presence is renewed every 20 seconds; the server expires it after 90 seconds without renewal. Availability is scoped to the workspace and never inferred from a login. Disabled profiles and disabled manual availability prevent new assignments, without interrupting existing cases. A timezone is profile metadata; business-hours enforcement belongs to Phase G.
+
+Automatic candidates must have a currently eligible workspace role, an enabled profile, enabled membership in that queue, fresh Available presence and spare capacity. Assigned, active, waiting-customer and waiting-external cases all reserve capacity. Required skills and required languages are hard constraints. Disabling a skill immediately removes it from routing eligibility. Existing manual operators without an optional profile remain compatible; once a profile is configured, manual claims, supervisor assignments and reopening a resolved case enforce its availability and capacity too. Manual selection does not require an automatic skill/language match or Available presence. Capacity cannot be overridden in this release.
+
+Queue settings and membership save in one transaction. The optional default queue receives new escalations without an explicit queue, including widget/hosted/playground requests; old open cases are not moved. Disabling a default queue leaves new requests unqueued for manual handling rather than silently selecting another queue. Queue members may have their own priority weight and enablement.
+
+- **Manual:** no background assignment.
+- **Round robin:** select the eligible member least recently assigned in this queue, with a stable ID tie-break. Membership edits preserve fairness timestamps.
+- **Least loaded:** maximize the free-capacity ratio, with queue fairness as the tie-break.
+- **Skill based:** rank required/preferred skill coverage plus normalized proficiency; required skills/language still filter eligibility.
+- **Hybrid:** sum normalized skill, language, capacity, proficiency, priority, fairness and conversation-continuity factors multiplied by administrator-configured weights. Fairness reaches 1 after one hour without a queue assignment. Continuity considers the previous resolved specialist on the same conversation and never overrides eligibility or capacity.
+
+Assignment modes are Manual, Recommend and Automatic. Recommend leaves the case queued; **Check routing match** shows current candidates and a supervisor can choose **Assign best match**. Automatic uses the same deterministic service in the worker, polling the durable PostgreSQL backlog every three seconds in batches of 25. Cases without a match stay queued and retry after 15 seconds; retry ordering prevents an unavailable head of the backlog from starving later requests. No AI model is used for Phase C routing. Automatic assignments still require operator acceptance before customer replies.
+
+Conversation/case locks precede a workspace-scoped transaction advisory lock for capacity reservations. Manual and background assignments share it, preventing over-allocation across different conversations and multiple workers. Repeated processing cannot reassign an already assigned case. Routing strategy, score, policy snapshot, chosen operator, factors and load at assignment are stored on the case and in an append-only `routing.assigned` event. The console displays the recorded factors without exposing internal notes to customers. Human configuration/actions also appear in general audit logs; system routing history is recorded in support events without inventing a system user identity.
+
+Additional APIs under `/workspaces/:workspaceId/support`:
+
+| Method           | Resource                                  | Behavior                                                                                    |
+| ---------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------- |
+| GET              | `/profiles`, `/operators/:userId/profile` | Paginated configured profiles or a single eligible profile, workload and effective presence |
+| PUT              | `/operators/:userId/profile`              | Supervisor replaces validated profile and skills                                            |
+| POST             | `/operators/:userId/presence`             | Eligible operator renews their own presence                                                 |
+| GET / POST / PUT | `/skills`, `/skills/:skillId`             | List/create/update or disable reusable skills                                               |
+| GET / PUT        | `/queues/:queueId/members`                | Read/replace bounded queue membership while preserving fairness                             |
+| PATCH            | `/queues/:queueId`                        | Update routing policy and optionally membership atomically                                  |
+| GET              | `/cases/:caseId/routing`                  | Current deterministic recommendations; no assignment                                        |
+| POST             | `/cases/:caseId/route`                    | Supervisor applies the best currently eligible match                                        |
+
+AI triage and language/skill inference are Phase D. Automatic acceptance timeouts, fallback queues and capacity overrides are not implemented; unmatched requests remain queued. The private copilot, structured AI continuation and SLA/notifications remain later phases. Deployment automation and additional monitoring remain paused.
