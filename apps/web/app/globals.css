@@ -2152,3 +2152,46 @@ form small {
 .channels-layout small {
   line-height: 1.5;
 }
+
+.quality-layout {
+  display: grid;
+  gap: 24px;
+}
+.quality-layout .studio-form label {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.quality-layout input,
+.quality-layout select,
+.quality-layout textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border, #d5ded9);
+  border-radius: 8px;
+  background: white;
+  color: #182c27;
+}
+.quality-layout pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  background: #f5f8f6;
+}
+.quality-run {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid #d5ded9;
+  background: white;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.quality-case {
+  border-top: 1px solid #d5ded9;
+  padding: 20px 0;
+}

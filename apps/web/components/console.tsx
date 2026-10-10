@@ -1,4 +1,5 @@
 "use client";
+import { QualityStudio } from "./quality-studio";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   QueryClient,
@@ -450,6 +451,7 @@ function Studio() {
             { label: "Operations", icon: Activity },
             { label: "Collected data", icon: Layers },
             { label: "Channels", icon: Activity },
+            { label: "Quality", icon: Activity },
             { label: "Members", icon: Users },
             { label: "Secrets", icon: KeyRound },
             { label: "Audit log", icon: Activity },
@@ -572,6 +574,7 @@ function Studio() {
             "Operations",
             "Collected data",
             "Channels",
+            "Quality",
             "Knowledge",
             "Tools",
             "Workflows",
@@ -584,6 +587,13 @@ function Studio() {
                 key={wid}
                 workspaceId={wid}
                 role={currentWorkspace?.role ?? "viewer"}
+              />
+            ) : view === "Quality" ? (
+              <QualityStudio
+                key={wid}
+                workspaceId={wid}
+                role={currentWorkspace?.role ?? "viewer"}
+                onNavigate={setView}
               />
             ) : view === "Channels" ? (
               <ChannelsStudio

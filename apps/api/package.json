@@ -58,6 +58,7 @@
     "./config": "./src/config.ts",
     "./ingestion": "./src/ingestion.ts",
     "./workflows": "./src/workflow-runtime.ts",
-    "./webhooks": "./src/webhooks.ts"
+    "./webhooks": "./src/webhooks.ts",
+    "./quality": "./src/quality-worker.ts"
   }
 }

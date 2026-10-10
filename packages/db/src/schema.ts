@@ -8,6 +8,7 @@ import {
   numeric,
   boolean,
   customType,
+  doublePrecision,
 } from "drizzle-orm/pg-core";
 const created = () =>
   timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -527,4 +528,64 @@ export const handoffEvents = pgTable("handoff_events", {
   content: text("content").notNull(),
   actorId: uuid("actor_id"),
   createdAt: created(),
+});
+
+export const evaluationDatasets = pgTable("evaluation_datasets", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  examples: jsonb("examples").notNull(),
+  revision: integer("revision").notNull(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  createdAt: created(),
+});
+export const evaluationRuns = pgTable("evaluation_runs", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  agentId: uuid("agent_id").notNull(),
+  datasetId: uuid("dataset_id").notNull(),
+  requestedBy: uuid("requested_by").notNull(),
+  agentRevision: integer("agent_revision").notNull(),
+  datasetRevision: integer("dataset_revision").notNull(),
+  configSnapshot: jsonb("config_snapshot").notNull(),
+  modelSnapshot: jsonb("model_snapshot").notNull(),
+  examplesSnapshot: jsonb("examples_snapshot").notNull(),
+  evaluator: jsonb("evaluator").notNull(),
+  judgeSnapshot: jsonb("judge_snapshot"),
+  pricesSnapshot: jsonb("prices_snapshot").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  baselineRunId: uuid("baseline_run_id"),
+  status: text("status").notNull(),
+  summary: jsonb("summary"),
+  errorCode: text("error_code"),
+  attempts: integer("attempts").notNull(),
+  leaseToken: uuid("lease_token"),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
+  createdAt: created(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+export const evaluationResults = pgTable("evaluation_results", {
+  id: uuid("id").primaryKey(),
+  runId: uuid("run_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  exampleId: uuid("example_id").notNull(),
+  status: text("status").notNull(),
+  output: text("output").notNull(),
+  score: doublePrecision("score"),
+  passed: boolean("passed").notNull(),
+  metrics: jsonb("metrics").notNull(),
+  errorCode: text("error_code"),
+  createdAt: created(),
+});
+export const agentQualityGates = pgTable("agent_quality_gates", {
+  agentId: uuid("agent_id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  settings: jsonb("settings").notNull(),
+  updatedBy: uuid("updated_by").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 });

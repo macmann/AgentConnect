@@ -53,7 +53,34 @@ export async function executeWorkflowAgent(
   providerOverride?: ProviderFactory,
   embeddingOverride?: EmbeddingFactory,
 ) {
-  const { c, model, conn } = await workflowAgentVersion(versionId, ctx);
+  const { c, model } = await workflowAgentVersion(versionId, ctx);
+  return executeAgentSnapshot(
+    c,
+    model,
+    input,
+    ctx,
+    signal,
+    providerOverride,
+    embeddingOverride,
+  );
+}
+export async function executeAgentSnapshot(
+  c: import("@agentconnect/schemas/agents").AgentConfig,
+  model: import("./agent-models.js").ModelSnapshot,
+  input: string,
+  ctx: ToolContext,
+  signal: AbortSignal,
+  providerOverride?: ProviderFactory,
+  embeddingOverride?: EmbeddingFactory,
+) {
+  validateAgentModel(c, model);
+  await validateKnowledgeIds(
+    c.rag.knowledgeBaseIds,
+    ctx.workspaceId,
+    ctx.organizationId,
+  );
+  await validateToolIds(c.tools.toolIds, ctx);
+  const conn = await connection(model, ctx.workspaceId, ctx.organizationId);
   const provider = providerOverride
     ? providerOverride(conn)
     : createProvider(
@@ -132,5 +159,5 @@ export async function executeWorkflowAgent(
     )
   )
     throw new KnowledgeError("INVALID_CITATION");
-  return { output: text, inputTokens, outputTokens, citations };
+  return { output: text, inputTokens, outputTokens, citations, sources };
 }

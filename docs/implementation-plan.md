@@ -111,9 +111,23 @@ See generative-experience.md for supported behavior, testing and limits. This in
 
 See channels-voice.md for the supported initial slice and integration prerequisites. Browser voice does not establish provider real-time capability.
 
+## Phase 8 — AI quality (initial agent release)
+
+- [x] Revisioned workspace datasets, JSON import/export and conversation/correction imports.
+- [x] Durable leased evaluation jobs with cancellation, crash recovery and case checkpoints.
+- [x] Saved-draft standard agent execution with current approved tools/retrieval and permission checks.
+- [x] Deterministic exact/required/forbidden/source checks and strict optional LLM judge.
+- [x] Token usage, latency, snapshotted price estimates, retrieval recall and regression summaries.
+- [x] Administrator-controlled publication gates bound to draft, dataset, evaluator and dependency state.
+- [x] Quality lab interface and tagged failing cases for manual knowledge-gap review.
+- [ ] Workflow and structured-generative evaluation, human/custom evaluators, automated gap recommendations.
+- [ ] Scheduled runs, retention/large-history pagination, regression gates and production scale/live-provider validation.
+
+See quality.md for capabilities, semantics and the explicit initial release limits.
+
 ## Subsequent phases
 
-Follow product-spec.md phases 8–10: evaluations; enterprise connectors; hardening. Complete a compiling, tested, usable slice before starting the next.
+Follow product-spec.md phases 9–10: enterprise connectors; hardening. Complete a compiling, tested, usable slice before starting the next.
 
 ## Risks and dependencies
 

@@ -1,3 +1,4 @@
+import { assertQualityGate } from "./quality-gate.js";
 import { requireWidgetOrigin } from "./channels.js";
 import {
   responseEnvelope,
@@ -134,7 +135,7 @@ async function validateModelRegistration(
     );
   return baseUrl;
 }
-async function modelSnapshot(modelId: string, workspaceId: string) {
+export async function modelSnapshot(modelId: string, workspaceId: string) {
   const [m] =
     await sql`SELECT id,provider,model_id,base_url,secret_id,capabilities,context_window,max_output_tokens FROM model_configurations WHERE id=${modelId} AND workspace_id=${workspaceId} AND archived_at IS NULL`;
   if (!m) throw new HttpError(400, "Select a model from this workspace");
@@ -827,6 +828,7 @@ export async function registerAgentRoutes(
         });
         const model = await modelSnapshot(c.modelId, w.id);
         validateAgentModel(c, model);
+        await assertQualityGate(tx, locked, c, model);
         await connection(model, w.id, w.organization_id);
         const [previous] =
           await tx`SELECT COALESCE(max(version),0) AS latest FROM agent_versions WHERE agent_id=${a.id}`;

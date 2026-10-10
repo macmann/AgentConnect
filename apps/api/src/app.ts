@@ -1,3 +1,4 @@
+import { registerQualityRoutes } from "./quality.js";
 import {
   registerChannelRoutes,
   widgetDeploymentPath,
@@ -697,6 +698,7 @@ export async function buildApp(
   await registerOperationsRoutes(app);
   await registerGenerativeRoutes(app);
   await registerChannelRoutes(app);
+  await registerQualityRoutes(app);
   await registerAgentRoutes(
     app,
     options.providerFactory,

@@ -131,9 +131,20 @@ The API previously masked sanitized model-test 502 messages as Internal server e
 - The final browser scenario passed: configure a deployment, load the script on a separate local website origin, stream a reply, request human support, join/reply as an operator, send visitor support messages, resolve and return to the agent. Mobile overflow and rendered screenshots were inspected. The browser exposed a static-script resource-policy issue, fixed with a cross-origin resource exception on `/widget.js` only.
 - Browser speech fixtures verified editable dictation, explicit playback and microphone-denial fallback. These tests do not validate actual microphone capture, speech service or live model acceptance. WhatsApp/Messenger and provider real-time voice are documented planned integrations, not implemented adapters.
 - Lint, all eight typechecks and all eight build targets passed. Migration 0009 applied and repeated successfully. Normal development services were restored without the temporary local model-host grant.
+
 ## OpenAI completion parameter and safe provider diagnostics
 
 - OpenAI Chat Completions uses `max_completion_tokens`; compatible providers retain `max_tokens`. Protocol assertions cover both mappings and omitted disabled sampling parameters. HTTP error tests preserve status and recognized code/parameter, reject arbitrary codes/fields and oversized/non-JSON error bodies, and verify transport cleanup.
 - Connection-test integration checks display HTTP/model-access and unsupported-temperature hints, reject empty visible responses, and retain existing credential-failure handling. Provider messages, raw error bodies and credentials are excluded from logs and responses. The connection probe uses at most 1,024 completion tokens, bounded by the registry limit.
 - Final full backend suite: **94 passed**, zero failures/skips. Lint, all eight typechecks and all eight build targets passed. Earlier runs encountered a development-worker race and shared Redis rate-limit buckets; the final run completed with worker supervisors stopped and normal bucket expiry. No rate-limit checks were disabled.
 - `gpt-6-luna` availability and the user's actual OpenAI project/model acceptance remain unverified. The original screenshot/error did not supply a provider HTTP status or structured error code, so the compatibility fix does not establish its original root cause.
+
+## Phase 8 initial quality release (2026-10-10)
+
+- Local `feat/quality-platform` starts from Phase 7 `f4654ff` and includes the local OpenAI compatibility fix `1db5e04`; no pull/rebase from main was performed.
+- Migration 0010 applied successfully and a repeat migration run completed without reapplying it; pgvector version verified.
+- Full backend suite: **115 passed, 0 failed**. Sixteen quality checks cover scoring, tenant/role restrictions, publication gates, dataset/draft revisions, provider errors, malformed judges, cancellation, pricing snapshots, dependency changes, revoked requester access and lease recovery/checkpoints.
+- Quality fixtures use a separate loopback client IP so added tests do not exhaust the existing suite's shared Redis rate bucket. Rate limits remain enabled. Initial attempts hit shared buckets; the final full run passed after normal expiry.
+- Browser quality lifecycle: **1 passed** using an explicit OpenAI-compatible protocol fixture and temporary API/worker private-host grant `127.0.0.1:4552`. Covers dataset creation, real chat/conversation import, worker evaluation, publication gate block/pass, regression baseline and stale-dataset invalidation/tagged failures. No browser page errors. A textarea label mismatch found during the first run was fixed with explicit accessible names.
+- Lint, type checks and production builds passed across all eight packages. Readiness returned PostgreSQL/Redis/storage/Temporal ready; web returned HTTP 200.
+- Fixture results do not establish live-provider accuracy, live voice support or production scale. Remaining Phase 8 extensions are recorded in quality.md.
