@@ -213,15 +213,16 @@ async function streamChat(
   try {
     await sql.begin(async (tx) => {
       const [locked] =
-        await tx`SELECT handoff_status FROM conversations WHERE id=${conversation.id} FOR UPDATE`;
+        await tx`SELECT conversation_mode FROM conversations WHERE id=${conversation.id} FOR UPDATE`;
       if (!locked)
         throw new HttpError(404, "Conversation expired or unavailable");
-      if (["pending", "active"].includes(locked.handoff_status))
+      if (locked.conversation_mode !== "ai")
         throw new HttpError(
           409,
           "This conversation is with the human support team",
         );
       await tx`INSERT INTO agent_runs(id,conversation_id,organization_id,workspace_id,status,trace_id) VALUES (${runId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},'running',${traceId})`;
+      await tx`UPDATE conversations SET last_customer_message_at=now() WHERE id=${conversation.id}`;
       await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content) VALUES (${randomUUID()},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'user',${message})`;
     });
   } catch (e) {
@@ -449,6 +450,8 @@ async function streamChat(
     reply.raw.off("close", disconnected);
     try {
       await sql.begin(async (tx) => {
+        if (output || uiBlocks.length)
+          await tx`UPDATE conversations SET last_agent_message_at=now() WHERE id=${conversation.id}`;
         if (output || uiBlocks.length)
           await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content,citations,ui_blocks) VALUES (${messageId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'assistant',${output},${tx.json(citations.map((s) => ({ ...s })))},${tx.json(uiBlocks as never)})`;
         for (const a of artifacts)

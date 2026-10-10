@@ -170,3 +170,7 @@ Proceed to product-spec.md Phase 10 hardening after Teams and Slack validation. 
 - RLS, SCIM/SAML/OIDC, custom roles, retention and security penetration/load tests require dedicated later slices.
 - Outbox delivery is at least once; an SMTP crash after send can deliver a duplicate message. Tokens remain one-time.
 - No automatic owner transfer or member-role editing is exposed in Phase 0. This avoids premature privilege mutation paths.
+
+## Current priority: human support enrichment
+
+Deployment automation and additional monitoring are on hold. Follow the seven-phase [human support roadmap](human-support.md). Phases A–C now provide the support foundation, console and operator/routing configuration. Next is Phase D: escalation policy, AI triage and handoff brief, followed by the private copilot, structured AI continuation and SLA/analytics.

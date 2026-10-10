@@ -108,3 +108,13 @@ Teams and Slack adapters import bounded complete channel message/reply inventori
 Readiness uses a separate bounded PostgreSQL probe pool, concurrent dependency checks with abort/deadline enforcement, shared in-flight requests and a two-second cache. Required migration/version checks are shared with the migration CLI. Deployment preflight additionally checks the runtime database role and known credential placeholders without mutating infrastructure.
 
 Workspace retention uses daily/manual policy-revision jobs and PostgreSQL transactions to delete eligible history and LangGraph checkpoint payloads. Conversation activity timestamps and shared writer locks protect recently used or active conversations. Generated-object deletion is an independent durable outbox with bounded S3 calls and retries, committed atomically with artifact registry removal and cleanup audit counts. See retention.md for supported data categories and lifecycle limits.
+
+## Support conversation control
+
+The [support foundation](human-support.md) introduces tenant-scoped cases, queues and append-only events. Conversation mode is authoritative; AI and support actions serialize on the same conversation lock. Legacy channel routes project this domain for existing clients.
+
+## Support console projection
+
+Migration 0018 adds private support notes. A bounded server projection merges agent messages and support events into one chronological staff timeline, retaining case boundaries. Notes are referenced by note-created events; public channel adapters continue to expose only customer-visible support events.
+
+Human Support Phase C uses a dedicated `support/routing.ts` domain and a worker loop over the durable queued-case backlog. Configuration remains in PostgreSQL: existing-user profiles, scoped presence TTL, skill proficiency, languages, queue membership and scoring weights. Routing filters eligibility before scoring; manual assignments and automatic routing reserve capacity under the same workspace transaction advisory lock, acquired after conversation/case locks. Assigned cases reserve capacity before acceptance. Per-queue timestamps persist round-robin fairness, case retry timestamps prevent backlog starvation, and routing explanation snapshots remain in append-only support history.

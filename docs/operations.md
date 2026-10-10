@@ -56,3 +56,13 @@ Use a timing-safe comparison, reject stale timestamps, and deduplicate event IDs
 6. If an approved HTTPS receiver is available, register a webhook, verify its HMAC, run the agent and inspect delivery status. Registration alone does not establish live delivery.
 
 Backend/browser tests use explicit fixtures. Live external receiver acceptance remains unverified. Production retention, custom roles, budget enforcement, broader filters/channels, public end-user feedback, workflow cost estimates and additional event types require later operations slices.
+
+## Support enrichment roadmap
+
+The [support roadmap](human-support.md) prioritizes product enrichment over deployment automation and additional monitoring. Phase A supports manual queues, exclusive claims and case histories through tenant-scoped APIs; the dedicated console and intelligent routing follow in B/C. No guaranteed staffing or notification is implied.
+
+## Human Support staff workflow
+
+Use Human Support for live backlog counts, paginated case filters, assignment/acceptance, replies, private notes and resolution. Updates poll every five seconds. SLA, presence and copilot are subsequent phases; the current console does not claim guaranteed staffing. See [support operations](human-support.md).
+
+The worker now polls support routing every three seconds (25 cases per batch). Apply migration **0019** before restarting both services. Unmatched cases remain queued and retry after 15 seconds; ordering by the persisted next-attempt time prevents starvation. No new provider credentials or deployment automation are needed. For a missing assignment, check queue enablement, strategy and assignment mode, queue membership, profile availability, heartbeat expiry, reserved capacity and required skills/language. Presence expires after 90 seconds; background/closed browser tabs stop renewing it.

@@ -139,6 +139,17 @@ export const conversations = pgTable("conversations", {
   channel: text("channel").notNull().default("hosted"),
   widgetOrigin: text("widget_origin"),
   handoffStatus: text("handoff_status").notNull().default("none"),
+  conversationMode: text("conversation_mode").notNull().default("ai"),
+  activeSupportCaseId: uuid("active_support_case_id"),
+  lastCustomerMessageAt: timestamp("last_customer_message_at", {
+    withTimezone: true,
+  }),
+  lastAgentMessageAt: timestamp("last_agent_message_at", {
+    withTimezone: true,
+  }),
+  lastHumanMessageAt: timestamp("last_human_message_at", {
+    withTimezone: true,
+  }),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
   workspaceId: uuid("workspace_id").notNull(),
@@ -676,5 +687,133 @@ export const retentionObjectDeletions = pgTable("retention_object_deletions", {
     .notNull()
     .defaultNow(),
   errorCode: text("error_code"),
+  createdAt: created(),
+});
+
+// Constraints and tenant-consistent composite foreign keys are defined in migration 0017.
+export const supportQueues = pgTable("support_queues", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  enabled: boolean("enabled").notNull().default(true),
+  priority: text("priority").notNull().default("normal"),
+  routingStrategy: text("routing_strategy").notNull().default("manual"),
+  assignmentMode: text("assignment_mode").notNull().default("manual"),
+  isDefault: boolean("is_default").notNull().default(false),
+  routingConfig: jsonb("routing_config").notNull().default({}),
+  createdAt: created(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const supportCases = pgTable("support_cases", {
+  routingNextAttemptAt: timestamp("routing_next_attempt_at", {
+    withTimezone: true,
+  })
+    .notNull()
+    .defaultNow(),
+  routingStrategy: text("routing_strategy"),
+  routingScore: doublePrecision("routing_score"),
+  routingExplanation: jsonb("routing_explanation").notNull().default({}),
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  status: text("status").notNull(),
+  reasonCode: text("reason_code").notNull().default("manual"),
+  reasonText: text("reason_text").notNull().default(""),
+  triggerType: text("trigger_type").notNull().default("manual"),
+  priority: text("priority").notNull().default("normal"),
+  queueId: uuid("queue_id"),
+  assignedOperatorId: uuid("assigned_operator_id"),
+  idempotencyKey: uuid("idempotency_key"),
+  resolutionCode: text("resolution_code"),
+  resolutionSummary: text("resolution_summary"),
+  resumeContext: jsonb("resume_context").notNull().default({}),
+  requestedAt: timestamp("requested_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  queuedAt: timestamp("queued_at", { withTimezone: true }),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  firstResponseAt: timestamp("first_response_at", { withTimezone: true }),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  createdAt: created(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const supportEvents = pgTable("support_events", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  supportCaseId: uuid("support_case_id").notNull(),
+  type: text("type").notNull(),
+  actorType: text("actor_type").notNull(),
+  actorId: uuid("actor_id"),
+  payload: jsonb("payload").notNull().default({}),
+  createdAt: created(),
+});
+
+export const supportNotes = pgTable("support_notes", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  supportCaseId: uuid("support_case_id").notNull(),
+  authorId: uuid("author_id").notNull(),
+  content: text("content").notNull(),
+  createdAt: created(),
+});
+
+export const operatorProfiles = pgTable("operator_profiles", {
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  userId: uuid("user_id").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  manualAvailability: boolean("manual_availability").notNull().default(true),
+  capacityLimit: integer("capacity_limit").notNull().default(5),
+  priorityWeight: integer("priority_weight").notNull().default(1),
+  timezone: text("timezone").notNull().default("UTC"),
+  languages: jsonb("languages").notNull().default([]),
+  presenceStatus: text("presence_status").notNull().default("offline"),
+  presenceExpiresAt: timestamp("presence_expires_at", { withTimezone: true }),
+  lastAssignedAt: timestamp("last_assigned_at", { withTimezone: true }),
+  createdAt: created(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const supportSkills = pgTable("support_skills", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: created(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const operatorSkills = pgTable("operator_skills", {
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  userId: uuid("user_id").notNull(),
+  skillId: uuid("skill_id").notNull(),
+  proficiency: integer("proficiency").notNull(),
+});
+export const supportQueueMembers = pgTable("support_queue_members", {
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  queueId: uuid("queue_id").notNull(),
+  userId: uuid("user_id").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  priorityWeight: integer("priority_weight").notNull().default(1),
+  lastAssignedAt: timestamp("last_assigned_at", { withTimezone: true }),
   createdAt: created(),
 });

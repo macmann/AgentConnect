@@ -81,6 +81,16 @@ export function HandoffPanel({
   return (
     <section className="handoff-panel">
       <h4>Human support</h4>
+      {events
+        .filter((e) => ["user_message", "operator_message"].includes(e.kind))
+        .map((e) => (
+          <p key={e.id}>
+            <strong>
+              {e.kind === "operator_message" ? "Support" : "You"}:{" "}
+            </strong>
+            {e.content}
+          </p>
+        ))}
       {open ? (
         <>
           <p>
@@ -88,18 +98,6 @@ export function HandoffPanel({
               ? "Waiting for an operator. You can leave a message."
               : "An operator has joined. Messages below go to human support."}
           </p>
-          {events
-            .filter((e) =>
-              ["user_message", "operator_message"].includes(e.kind),
-            )
-            .map((e) => (
-              <p key={e.id}>
-                <strong>
-                  {e.kind === "operator_message" ? "Support" : "You"}:{" "}
-                </strong>
-                {e.content}
-              </p>
-            ))}
           <label>
             Message to support
             <textarea

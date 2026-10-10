@@ -46,3 +46,13 @@ Migration 0006 adds revision and archived_at to model_configurations. Registry r
 ## Phase 5 operations
 
 Migration 0007 adds tenant-bound `conversation_reviews`, `model_prices`, `workspace_api_keys`, `workspace_webhooks` and `webhook_deliveries`. Review records reference an assistant message and reviewer without changing historical content. API keys store hashes and a single agent/workspace scope; webhook signing secrets remain encrypted. Agent runs retain input/output USD rates at completion so future price edits do not change estimates. Deployments add environment labels; promotions affect future conversation snapshots. The webhook outbox transaction is shared with terminal agent-run persistence, and delivery claims use leases and bounded retries.
+
+## Support foundation
+
+Migration 0017 adds support_cases, support_queues and support_events, with tenant-consistent composite foreign keys, one-open-case uniqueness and a conversation active-case pointer. Events reject updates but cascade with approved conversation retention. See [human support](human-support.md).
+
+## Private support notes
+
+Migration 0018 adds `support_notes`, linked to the same case/conversation/workspace/organization via a composite FK and cascaded on eligible retention deletion. The support-event conversation/time index supports paginated unified histories.
+
+Human Support Phase C migration **0019** adds `operator_profiles`, `support_skills`, `operator_skills` and `support_queue_members` with composite tenant references. Profiles reuse `users`; queue memberships retain per-queue assignment timestamps. Queues gain validated routing policy, assignment mode and a workspace-unique default flag. Cases retain routing score/explanation and a durable next-attempt timestamp; automatic routing events stay in the existing append-only case history. Presence status/expiry are workspace scoped in PostgreSQL, while assigned/open workload is calculated from cases.

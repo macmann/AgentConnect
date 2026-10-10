@@ -1,4 +1,6 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { legacyHandoff } from "./support/cases.js";
+import { permitted } from "@agentconnect/schemas/foundation";
+import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { widgetSettings, webOrigin } from "@agentconnect/schemas/channels";
@@ -151,54 +153,42 @@ export async function registerChannelRoutes(app: FastifyInstance) {
           d.action === "claim" ||
           d.action === "resolve" ||
           (d.action === "message" && c.user_id !== userId && userId !== null);
+        let supervise = false;
         if (operatorAction) {
           if (!userId) throw new HttpError(403, "Operator access required");
-          await workspaceAccess(userId, c.workspace_id, "handoff:manage");
+          const access = await workspaceAccess(
+            userId,
+            c.workspace_id,
+            "handoff:manage",
+          );
+          supervise = permitted(access.role!, "support:supervise");
         } else if (userId && c.user_id !== userId)
           throw new HttpError(403, "Conversation owner required");
         await sql.begin(async (tx) => {
-          const [locked] =
-            await tx`SELECT handoff_status FROM conversations WHERE id=${c.id} FOR UPDATE`;
-          const [run] =
-            await tx`SELECT id FROM agent_runs WHERE conversation_id=${c.id} AND status='running'`;
-          if (run)
-            throw new HttpError(
-              409,
-              "Wait for the current response to finish before handoff",
-            );
-          let status = locked!.handoff_status,
-            kind: string;
-          if (d.action === "request") {
-            if (!["none", "resolved"].includes(status))
-              throw new HttpError(409, "Handoff already requested");
-            status = "pending";
-            kind = "requested";
-          } else if (d.action === "claim") {
-            if (status !== "pending")
-              throw new HttpError(409, "Only pending handoffs can be claimed");
-            status = "active";
-            kind = "claimed";
-          } else if (d.action === "resolve") {
-            if (!["pending", "active"].includes(status))
-              throw new HttpError(409, "No open handoff");
-            status = "resolved";
-            kind = "resolved";
-          } else {
-            if (!["pending", "active"].includes(status) || !d.content)
-              throw new HttpError(
-                409,
-                "An open handoff and a message are required",
-              );
-            kind = operatorAction ? "operator_message" : "user_message";
-          }
-          await tx`UPDATE conversations SET handoff_status=${status} WHERE id=${c.id}`;
-          await tx`INSERT INTO handoff_events(id,conversation_id,organization_id,workspace_id,kind,content,actor_id) VALUES (${randomUUID()},${c.id},${c.organization_id},${c.workspace_id},${kind},${d.content},${userId})`;
+          if (["message", "reply"].includes(d.action) && !d.content)
+            throw new HttpError(400, "Message content required");
+          await legacyHandoff(tx, c.id, c.workspace_id, d.action, d.content, {
+            id: userId ?? null,
+            type: operatorAction
+              ? supervise
+                ? "supervisor"
+                : "operator"
+              : "customer",
+            supervise,
+          });
           if (userId)
             await audit(
               tx,
               r,
               userId,
-              "handoff." + kind,
+              "handoff." +
+                {
+                  request: "requested",
+                  claim: "claimed",
+                  resolve: "resolved",
+                  reply: "operator_message",
+                  message: operatorAction ? "operator_message" : "user_message",
+                }[d.action],
               c.id,
               c.organization_id,
               c.workspace_id,

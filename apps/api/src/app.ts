@@ -1,3 +1,4 @@
+import { registerSupportRoutes } from "./support/routes.js";
 import { registerRetentionRoutes } from "./retention.js";
 import { registerConnectorRoutes, connectorHttpError } from "./connectors.js";
 import { registerQualityRoutes } from "./quality.js";
@@ -176,7 +177,7 @@ export async function buildApp(
             : false
           : config.WEB_ORIGIN,
         credentials: !widget,
-        methods: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"],
+        methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: ["content-type", "authorization"],
       };
     },
@@ -680,6 +681,13 @@ export async function buildApp(
   await registerOperationsRoutes(app);
   await registerGenerativeRoutes(app);
   await registerChannelRoutes(app);
+  await registerSupportRoutes(app, {
+    actor,
+    audit,
+    id,
+    params,
+    workspaceAccess,
+  });
   await registerQualityRoutes(app);
   await registerConnectorRoutes(app, options.sharePointClientFactory);
   await registerRetentionRoutes(app);
