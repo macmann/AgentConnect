@@ -1,3 +1,4 @@
+import { registerMonitoring } from "./monitoring.js";
 import { registerSupportRoutes } from "./support/routes.js";
 import { registerRetentionRoutes } from "./retention.js";
 import { registerConnectorRoutes, connectorHttpError } from "./connectors.js";
@@ -314,6 +315,7 @@ export async function buildApp(
     status: "ok",
   }));
   const readiness = infrastructureReadiness();
+  registerMonitoring(app, readiness.probe);
   app.get(
     "/health/ready",
     { config: { rateLimit: false } },

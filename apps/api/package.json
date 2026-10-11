@@ -66,6 +66,7 @@
     "./connectors": "./src/connector-worker.ts",
     "./retention": "./src/retention-worker.ts",
     "./support-triage": "./src/support/triage.ts",
-    "./support": "./src/support/routing.ts"
+    "./support": "./src/support/routing.ts",
+    "./monitoring-core": "./src/monitoring-core.ts"
   }
 }

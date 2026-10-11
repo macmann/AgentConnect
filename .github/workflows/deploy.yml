@@ -1,0 +1,30 @@
+name: Deploy reviewed release
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_path:
+        description: Absolute path of the reviewed release.json on the deployment runner
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    # Dedicated, administrator-managed runner. Never attach this runner to PR jobs.
+    runs-on: [self-hosted, agentconnect-deploy]
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Preflight and rollout
+        env:
+          RELEASE_MANIFEST: ${{ inputs.manifest_path }}
+          RUNTIME_ENV_FILE: ${{ vars.RUNTIME_ENV_FILE }}
+          RELEASE_STATE_DIRECTORY: ${{ vars.RELEASE_STATE_DIRECTORY }}
+        run: |
+          test -n "$RUNTIME_ENV_FILE" && test -n "$RELEASE_STATE_DIRECTORY"
+          node scripts/release.mjs deploy "$RELEASE_MANIFEST" "$RUNTIME_ENV_FILE" "$RELEASE_STATE_DIRECTORY"

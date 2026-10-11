@@ -43,3 +43,7 @@ Run `pnpm recovery:drill` to restore a synthetic encrypted PostgreSQL/object bac
 ## Workspace retention
 
 Migration 0016 adds disabled-by-default workspace retention, administrator settings/preview, daily and manual cleanup batches, tenant-bound generated-object deletion with retries and audit counts. See [retention.md](retention.md) for deletion scope, scheduling, active-work protection, operational monitoring and remaining compliance obligations. Raw audit, knowledge/dataset copies, webhooks, backups and storage old versions require separate policies.
+
+## Release and monitoring implementation
+
+Locked service images, CI/release workflows and a tested single-host rollout/rollback command are implemented in [releases](releases.md). Authenticated aggregate metrics and worker progress probes, with private Prometheus/Grafana examples, are implemented in [monitoring](monitoring.md). These address the initial automation/visibility backlog; live target configuration, notifications, infrastructure provisioning, HA traffic switching, measured failover and production load acceptance remain outstanding.
