@@ -47,7 +47,16 @@ test("Disabled, always and unattached knowledge never call the planner", async (
         signal,
         32768,
       ),
-      { retrieve: usageMode === "always", inputTokens: 0, outputTokens: 0 },
+      {
+        retrieve: usageMode === "always",
+        inputTokens: 0,
+        outputTokens: 0,
+        diagnostics: {
+          status: "skipped",
+          querySource: usageMode === "always" ? "always_retrieve" : "disabled",
+          attempts: 0,
+        },
+      },
     );
   }
   const c = agentConfig.parse({ modelId, rag: { usageMode: "automatic" } });
@@ -85,11 +94,16 @@ test("Automatic uses instructions and conversation history, accepts skip/retriev
       await planKnowledgeUsage(c, provider, messages, signal, 32768, [
         { name: "Refund handbook", description: "Approved refund policies" },
       ]),
-      { retrieve, inputTokens: 7, outputTokens: 3 },
+      {
+        retrieve,
+        inputTokens: 7,
+        outputTokens: 3,
+        diagnostics: { status: "valid", querySource: "planner", attempts: 1 },
+      },
     );
   }
 });
-test("Invalid, oversized and over-budget automatic plans fail without guessing", async () => {
+test("Invalid and oversized plans repair once then fall back; context budgets remain hard failures", async () => {
   const c = agentConfig.parse({
     modelId,
     rag: { knowledgeBaseIds: [kb], usageMode: "automatic" },
@@ -105,9 +119,11 @@ test("Invalid, oversized and over-budget automatic plans fail without guessing",
         yield { type: "token", text };
       },
     };
-    await assert.rejects(planKnowledgeUsage(c, provider, [], signal, 32768), {
-      code: "KNOWLEDGE_PLAN_INVALID",
-    });
+    const plan = await planKnowledgeUsage(c, provider, [], signal, 32768);
+    assert.equal(plan.retrieve, true);
+    assert.equal(plan.diagnostics.status, "fallback");
+    assert.equal(plan.diagnostics.errorCode, "KNOWLEDGE_PLAN_INVALID");
+    assert.equal(plan.diagnostics.attempts, 2);
   }
   const provider: ChatProvider = {
     async *stream() {
@@ -118,4 +134,109 @@ test("Invalid, oversized and over-budget automatic plans fail without guessing",
   await assert.rejects(planKnowledgeUsage(c, provider, [], signal, 1), {
     code: "CONTEXT_LIMIT",
   });
+});
+
+test("Portable fenced and wrapped JSON validates without a repair", async () => {
+  const c = agentConfig.parse({
+    modelId,
+    rag: { knowledgeBaseIds: [kb], usageMode: "automatic" },
+  });
+  for (const text of [
+    '```json\n{"retrieve":true}\n```',
+    'Here is the decision:\n{"retrieve":true}\nDone.',
+    ' \n{"retrieve":false}\n ',
+  ]) {
+    let calls = 0;
+    const provider: ChatProvider = {
+      async *stream() {
+        calls++;
+        yield { type: "token", text };
+      },
+    };
+    const plan = await planKnowledgeUsage(
+      c,
+      provider,
+      [{ role: "user", content: "I forgot my password." }],
+      signal,
+      32768,
+    );
+    assert.equal(plan.diagnostics.status, "valid");
+    assert.equal(calls, 1);
+  }
+});
+test("Schema-invalid output repairs exactly once with canonical schema and accounts both calls", async () => {
+  const c = agentConfig.parse({
+    modelId,
+    rag: { knowledgeBaseIds: [kb], usageMode: "automatic" },
+  });
+  let calls = 0;
+  const provider: ChatProvider = {
+    async *stream(request) {
+      calls++;
+      assert.equal(request.responseSchema?.schema.additionalProperties, false);
+      if (calls === 2)
+        assert.match(request.system, /previous decision was invalid/);
+      yield {
+        type: "token",
+        text: calls === 1 ? '{"retrieve":"true"}' : '{"retrieve":true}',
+      };
+      yield { type: "usage", inputTokens: 5, outputTokens: 2 };
+    },
+  };
+  const plan = await planKnowledgeUsage(
+    c,
+    provider,
+    [{ role: "user", content: "I forgot my password." }],
+    signal,
+    32768,
+  );
+  assert.equal(calls, 2);
+  assert.equal(plan.retrieve, true);
+  assert.equal(plan.inputTokens, 10);
+  assert.equal(plan.outputTokens, 4);
+  assert.equal(plan.diagnostics.querySource, "repair");
+});
+test("Ambiguous objects, arrays and extra keys cannot bypass strict validation", async () => {
+  const c = agentConfig.parse({
+    modelId,
+    rag: { knowledgeBaseIds: [kb], usageMode: "automatic" },
+  });
+  for (const text of [
+    '{"retrieve":false}{"retrieve":true}',
+    '[{"retrieve":false}]',
+    '{"retrieve":false,"query":"password"}',
+    '{"retrieve":false,"retrieve":true}',
+  ]) {
+    let calls = 0;
+    const provider: ChatProvider = {
+      async *stream() {
+        calls++;
+        yield { type: "token", text };
+      },
+    };
+    const plan = await planKnowledgeUsage(c, provider, [], signal, 32768);
+    assert.equal(calls, 2);
+    assert.equal(plan.diagnostics.status, "fallback");
+  }
+});
+test("Authentication, infrastructure failures and cancellation are never formatting fallbacks", async () => {
+  const c = agentConfig.parse({
+    modelId,
+    rag: { knowledgeBaseIds: [kb], usageMode: "automatic" },
+  });
+  const { ProviderError } = await import("@agentconnect/provider-sdk");
+  for (const code of ["AUTHENTICATION_FAILED", "NETWORK_ERROR", "CANCELLED"]) {
+    let calls = 0;
+    const provider: ChatProvider = {
+      async *stream() {
+        calls++;
+        throw new ProviderError(code);
+        yield { type: "token", text: "" };
+      },
+    };
+    await assert.rejects(planKnowledgeUsage(c, provider, [], signal, 32768), {
+      code,
+    });
+    assert.equal(calls, 1);
+  }
 });

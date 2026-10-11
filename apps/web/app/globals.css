@@ -4753,3 +4753,29 @@ input[type="range"] {
 :root[data-theme="dark"] .product-logo-dark {
   display: block;
 }
+
+/* AI and human support share the same conversation log and composer. */
+.chat-system-event {
+  margin: 0.75rem auto;
+  max-width: 90%;
+  padding: 0.5rem 0.75rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.chat-system-event small {
+  display: none;
+}
+.chat-support-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border);
+}
+.chat-support-status p {
+  flex: 1 1 18rem;
+  margin: 0;
+  font-size: 0.875rem;
+}

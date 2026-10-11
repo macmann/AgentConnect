@@ -28,7 +28,8 @@ This inventory describes implemented product capabilities, not every requirement
 - PDF, DOCX, PPTX, XLSX, CSV, HTML, Markdown and text parsing.
 - Embedding ingestion jobs, source status, retry/reingestion and source previews.
 - Text/vector/hybrid retrieval, minimum relevance, retrieved passage limits and citations.
-- Automatic, always and disabled knowledge-use policies with usage instructions.
+- Automatic, always and never-retrieve knowledge-use policies with usage instructions.
+- Strict structured knowledge decisions, portable JSON parsing, one repair attempt and logged raw-query retrieval fallback.
 - Optional follow-up query rewriting and model-based reranking.
 - Table-aware retrieval and provenance; complex PDF tables still need review.
 - Optional scanned-PDF OCR with required worker utilities.
@@ -82,6 +83,11 @@ OAuth needs a one-time provider-app setup. Refreshable tokens renew server-side;
 - Credential/webhook setup and provider-specific acceptance are still required.
 
 ## Human support and AI copilot
+
+- Persistent per-user Playground conversations across navigation and refresh, reset with New chat.
+- One customer transcript and composer across AI and human support, named specialist join/leave notices, and explicit AI takeover events.
+- Immediate handoff for explicit chat requests, respecting support policy and business hours; inferred escalation offers retain customer confirmation.
+- Automatic private handoff briefs, including missing summary generation when claiming manual cases.
 
 - Customer escalation, support case state and operator inbox.
 - Operator presence, skills, availability, queues and routing.

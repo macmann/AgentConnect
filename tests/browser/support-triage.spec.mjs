@@ -142,7 +142,7 @@ async function openSupport(page, id = "") {
     page.getByRole("heading", { name: "Human Support", exact: true }),
   ).toBeVisible();
 }
-test("Policy-controlled customer offers produce private AI briefs, scoped overrides and responsive read-only settings", async ({
+test("Explicit chat handoff produces private AI briefs, scoped overrides and responsive read-only settings", async ({
   page,
   context,
   browser,
@@ -188,24 +188,24 @@ test("Policy-controlled customer offers produce private AI briefs, scoped overri
   await expect(page.getByLabel("Human access", { exact: true })).toHaveValue(
     "policy_controlled",
   );
-  await expect(page.getByLabel("Explicit requests before offer")).toHaveValue(
-    "2",
-  );
+  await expect(
+    page.getByLabel("Unsuccessful attempts before offer"),
+  ).toHaveValue("3");
   await page.getByLabel("Default queue", { exact: true }).selectOption(q.id);
   await page.getByRole("button", { name: "Save policy", exact: true }).click();
   await expect(
     page.getByText("Handoff policy saved.", { exact: false }),
   ).toBeVisible();
   // Unsaved fields survive refocus/refetch, and navigating away asks before discarding.
-  await page.getByLabel("Explicit requests before offer").fill("3");
+  await page.getByLabel("Unsuccessful attempts before offer").fill("4");
   page.once("dialog", (dialog) => dialog.dismiss());
   await page
     .getByRole("button", { name: "Operators & routing", exact: true })
     .click();
-  await expect(page.getByLabel("Explicit requests before offer")).toHaveValue(
-    "3",
-  );
-  await page.getByLabel("Explicit requests before offer").fill("2");
+  await expect(
+    page.getByLabel("Unsuccessful attempts before offer"),
+  ).toHaveValue("4");
+  await page.getByLabel("Unsuccessful attempts before offer").fill("3");
   await page.getByRole("button", { name: "Save policy", exact: true }).click();
   customer = await browser.newContext({ baseURL: "http://localhost:3000" });
   const visitor = await customer.newPage();
@@ -214,49 +214,12 @@ test("Policy-controlled customer offers produce private AI briefs, scoped overri
   await visitor
     .getByRole("button", { name: "Send message", exact: true })
     .click();
-  await expect(
-    visitor.getByText("I can help with account issues.", { exact: false }),
-  ).toBeVisible();
-  await expect(
-    visitor.getByRole("button", { name: "Connect me", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    visitor.getByRole("button", { name: "Request human support", exact: true }),
-  ).toHaveCount(0);
-  await visitor.getByLabel("Message", { exact: true }).fill("I need a human");
-  await visitor
-    .getByRole("button", { name: "Send message", exact: true })
-    .click();
-  await expect(
-    visitor.getByRole("button", { name: "Connect me", exact: true }),
-  ).toBeVisible();
-  // Declining an offer keeps the conversation in AI mode.
-  await visitor
-    .getByRole("button", { name: "Keep trying with AI", exact: true })
-    .click();
+  await expect(visitor.getByRole("log")).toContainText(
+    "Human support requested",
+  );
   await expect(
     visitor.getByRole("button", { name: "Connect me", exact: true }),
   ).toHaveCount(0);
-  await visitor.getByLabel("Message", { exact: true }).fill("I want a human");
-  await visitor
-    .getByRole("button", { name: "Send message", exact: true })
-    .click();
-  await expect(
-    visitor.getByRole("button", { name: "Connect me", exact: true }),
-  ).toHaveCount(0);
-  await visitor.getByLabel("Message", { exact: true }).fill("I need a human");
-  await visitor
-    .getByRole("button", { name: "Send message", exact: true })
-    .click();
-  await expect(
-    visitor.getByRole("button", { name: "Connect me", exact: true }),
-  ).toBeVisible();
-  await visitor
-    .getByRole("button", { name: "Connect me", exact: true })
-    .click();
-  await expect(
-    visitor.getByText("Waiting for an operator.", { exact: false }),
-  ).toBeVisible();
   await expect
     .poll(async () => {
       const [s] =

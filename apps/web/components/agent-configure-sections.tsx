@@ -382,6 +382,8 @@ export function PromptPreview({ draft }: { draft: Draft }) {
 function UsagePolicy(p: SectionProps & { kind: "rag" | "tools" }) {
   const policy = p.draft.config[p.kind];
   const mode = policy.usageMode ?? (p.kind === "rag" ? "always" : "automatic");
+  const requiresKnowledge =
+    p.kind === "rag" && p.draft.config.answerPolicy?.mode === "grounded";
   return (
     <Group title={p.kind === "rag" ? "Knowledge usage" : "Tool usage"}>
       <Field
@@ -401,11 +403,23 @@ function UsagePolicy(p: SectionProps & { kind: "rag" | "tools" }) {
               })
             }
           >
-            <option value="automatic">Automatic — only when relevant</option>
-            <option value="always">Always — required for every message</option>
-            <option value="disabled">
-              Disabled — keep attachments without using them
+            {!requiresKnowledge && (
+              <option value="automatic">
+                Automatic — agent decides when needed
+              </option>
+            )}
+            <option value="always">
+              {p.kind === "rag"
+                ? "Always retrieve — search before every response"
+                : "Always — required for every message"}
             </option>
+            {!requiresKnowledge && (
+              <option value="disabled">
+                {p.kind === "rag"
+                  ? "Never retrieve — do not use attached knowledge"
+                  : "Disabled — keep attachments without using them"}
+              </option>
+            )}
           </select>
         )}
       </Field>

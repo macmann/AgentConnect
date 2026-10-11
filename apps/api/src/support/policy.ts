@@ -98,6 +98,9 @@ export async function customerHandoffState(
     : null;
   return {
     businessHours,
+    canRequestExplicit:
+      policy.humanEntryMode !== "disabled" &&
+      (open || hours?.afterHours !== "continue_with_ai"),
     entryMode: policy.humanEntryMode,
     canRequest:
       (open || hours?.afterHours !== "continue_with_ai") &&
@@ -167,10 +170,21 @@ export async function dismissHandoff(tx: TransactionSql, c: Conversation) {
   await tx`UPDATE support_offers SET status='dismissed',decided_at=clock_timestamp() WHERE conversation_id=${c.id} AND status='offered'`;
 }
 export const isHumanRequest = (text: string) =>
-  /^(human|agent please|operator|representative)[.!?]*$/i.test(text.trim()) ||
-  /\b(?:want|need|speak to|talk to|connect me (?:to|with)|get me|request)(?:\s+(?:a|an|the|to|with))?\s+(?:human|real person|somebody|representative|support specialist|operator)\b/i.test(
-    text,
-  );
+  text.split(/[,.!?;]|\bbut\b/i).some((clause) => {
+    if (
+      /\b(?:do not|don't|dont|never|no need to)\s+(?:want|need|connect|speak|talk|chat|request)/i.test(
+        clause,
+      )
+    )
+      return false;
+    return (
+      /^(human|agent please|operator|representative)$/i.test(clause.trim()) ||
+      /\b(?:want|need|(?:speak|talk|chat) (?:to|with)|connect me (?:to|with)|get me|request|transfer me (?:to|with))(?:\s+(?:a|an|the|to|with))?\s+(?:human|real person|someone|somebody|representative|support specialist|operator|customer (?:service|support)(?: (?:agent|representative))?|(?:support|live) (?:agent|representative))\b/i.test(
+        clause,
+      )
+    );
+  });
+
 const unresolved = (text: string) =>
   /\b(?:did(?:n't| not) help|not helpful|still (?:not working|broken|unresolved)|does(?:n't| not) work|same (?:problem|issue)|already tried|you keep repeating)\b/i.test(
     text,
@@ -344,4 +358,47 @@ export async function evaluateEscalation(
     await tx`UPDATE support_offers SET status='expired' WHERE conversation_id=${c.id} AND status='offered' AND expires_at<=now()`;
     await tx`INSERT INTO support_offers(id,organization_id,workspace_id,conversation_id,reason_code,policy_snapshot,signals) VALUES (${randomUUID()},${c.organization_id},${c.workspace_id},${c.id},${reason},${tx.json(current)},${tx.json(signals)}) ON CONFLICT DO NOTHING`;
   });
+}
+
+// Explicit customer intent is already consent to request support. Other
+// escalation signals still create offers that the customer may accept/dismiss.
+export async function handoffExplicitRequest(
+  conversationId: string,
+  runId: string,
+) {
+  return sql.begin(async (tx) => {
+    const [c] =
+      await tx`SELECT * FROM conversations WHERE id=${conversationId} FOR UPDATE`;
+    if (!c || c.conversation_mode !== "ai") return false;
+    const [latest] =
+      await tx`SELECT ar.id,ar.status,m.content FROM agent_runs ar JOIN messages m ON m.run_id=ar.id AND m.role='user' WHERE ar.conversation_id=${c.id} ORDER BY ar.started_at DESC,ar.id DESC LIMIT 1`;
+    if (
+      latest?.id !== runId ||
+      latest.status !== "completed" ||
+      !isHumanRequest(latest.content)
+    )
+      return false;
+    const current = await effectivePolicy(tx, c as Conversation);
+    if (current.policy.humanEntryMode === "disabled") return false;
+    const access = await customerHandoffState(tx, c as Conversation);
+    if (!access.canRequestExplicit) return false;
+    await tx`UPDATE support_offers SET status='expired',decided_at=clock_timestamp() WHERE conversation_id=${c.id} AND status='offered'`;
+    await tx`INSERT INTO support_offers(id,organization_id,workspace_id,conversation_id,reason_code,policy_snapshot,signals) VALUES (${randomUUID()},${c.organization_id},${c.workspace_id},${c.id},'explicit_request',${tx.json(current)},${tx.json({ runId, automatic: true })})`;
+    await confirmHandoff(tx, c as Conversation, c.user_id);
+    await tx`INSERT INTO support_decisions(run_id,organization_id,workspace_id,conversation_id,signals,reason_code) VALUES (${runId},${c.organization_id},${c.workspace_id},${c.id},${tx.json({ automatic: true, explicitRequests: 1 })},'explicit_request') ON CONFLICT(run_id) DO NOTHING`;
+    return true;
+  });
+}
+
+export async function queueMissingHandoffBrief(
+  tx: TransactionSql,
+  caseId: string,
+) {
+  const [s] =
+    await tx`SELECT c.*,s.triage_status,s.handoff_brief FROM support_cases s JOIN conversations c ON c.id=s.conversation_id WHERE s.id=${caseId} FOR UPDATE OF s`;
+  if (!s || s.triage_status !== "none" || s.handoff_brief?.summary) return;
+  const current = await effectivePolicy(tx, s as Conversation);
+  if (!current.policy.generateHandoffSummary) return;
+  // A claimed manual case needs a summary, not a second routing decision.
+  await tx`UPDATE support_cases SET policy_snapshot=${tx.json({ ...current, policy: { ...current.policy, aiTriageEnabled: false } })},triage_status='pending' WHERE id=${caseId}`;
 }

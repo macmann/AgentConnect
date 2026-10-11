@@ -322,12 +322,12 @@ export async function resolveCase(
   await setStatus(tx, s, "resolved", actor, "case.resolved");
   await tx`UPDATE conversations SET ai_resume_case_id=${s.id} WHERE id=${s.conversation_id}`;
   const resumed = await restoreAI(tx, s);
+  await legacyEvent(tx, s, "resolved", actor);
   await appendEvent(tx, s, resumed ? "ai.resumed" : "ai.resume_paused", actor, {
     caseId: s.id,
     contextVersion: 1,
   });
   await refreshCaseSLA(tx, s);
-  await legacyEvent(tx, s, "resolved", actor);
 }
 export async function sendSupportMessage(
   tx: TransactionSql,

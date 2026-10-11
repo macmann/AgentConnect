@@ -196,8 +196,11 @@ export async function transferCase(
   if (!isOpenCase(s.status))
     throw new HttpError(409, "Only open support cases can be transferred");
   const [live] =
-    await tx`SELECT triage_status FROM support_cases WHERE id=${s.id}`;
-  if (["pending", "running"].includes(live!.triage_status))
+    await tx`SELECT triage_status,COALESCE((policy_snapshot->'policy'->>'aiTriageEnabled')::boolean,true) AS routing_pending FROM support_cases WHERE id=${s.id}`;
+  if (
+    live!.routing_pending &&
+    ["pending", "running"].includes(live!.triage_status)
+  )
     throw new HttpError(409, "Wait for handoff triage before transferring");
   const target = await availableQueue(
     tx,

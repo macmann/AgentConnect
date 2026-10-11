@@ -162,7 +162,7 @@ test("Support console assigns, accepts, notes privately, replies and restores cu
     .getByRole("button", { name: "Request human support", exact: true })
     .click();
   await expect(
-    visitor.getByText("Waiting for an operator. You can leave a message."),
+    visitor.getByText("Waiting for a specialist. Messages here go to support."),
   ).toBeVisible();
   await openSupport(page);
   await page.getByRole("button", { name: "Create queue", exact: true }).click();
@@ -235,10 +235,10 @@ test("Support console assigns, accepts, notes privately, replies and restores cu
     visitor.getByText("I am reviewing your billing request.", { exact: false }),
   ).toBeVisible({ timeout: 15000 });
   await visitor
-    .getByLabel("Message to support")
+    .getByLabel("Message", { exact: true })
     .fill("Thank you for reviewing");
   await visitor
-    .getByRole("button", { name: "Send to support", exact: true })
+    .getByRole("button", { name: "Send message", exact: true })
     .click();
   await expect(operator.getByRole("log")).toContainText(
     "Thank you for reviewing",
@@ -286,7 +286,7 @@ test("Support console assigns, accepts, notes privately, replies and restores cu
   await expect(resolve).toBeHidden();
   await expect(
     visitor.getByText(
-      "Support resolved this request. You can chat with the agent again.",
+      "The AI agent has taken over and can continue helping in this chat.",
     ),
   ).toBeVisible({ timeout: 15000 });
   await expect(visitor.getByText("PRIVATE:", { exact: false })).toHaveCount(0);
@@ -415,4 +415,138 @@ test("Inbox shows an accessible empty state and retries a failed case request", 
   await expect(
     page.getByRole("heading", { name: "No matching cases" }),
   ).toBeVisible();
+});
+
+test("Playground persists through navigation and reload and shares its composer with human support", async ({
+  page,
+  context,
+  browser,
+}) => {
+  await staff(context, "owner");
+  const register = async (path, data) => {
+    const response = await context.request.post(
+      "http://localhost:4000" + path,
+      { headers: { origin: "http://localhost:3000" }, data },
+    );
+    expect(response.ok(), await response.text()).toBeTruthy();
+    return response.json();
+  };
+  const model = await register(`/workspaces/${workspace}/models`, {
+    name: "Persistent playground provider",
+    provider: "openai-compatible",
+    modelId: "fixture",
+    baseUrl: "http://127.0.0.1:4551/v1",
+  });
+  const playgroundAgent = (
+    await register(`/workspaces/${workspace}/agents`, {
+      name: "Persistent playground",
+      config: { modelId: model.id },
+    })
+  ).id;
+
+  const playground = `/#view=Agents&organization=${org}&workspace=${workspace}&agent=${playgroundAgent}&stage=playground`;
+  await page.goto(playground);
+  const chat = page.locator(".chat-panel");
+  await chat
+    .getByLabel("Message", { exact: true })
+    .fill("Remember this billing test");
+  await chat.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(
+    chat.getByText("Support browser fixture answer", { exact: true }),
+  ).toBeVisible();
+  const [saved] =
+    await sql`SELECT id FROM conversations WHERE agent_id=${playgroundAgent} AND user_id=${users.owner} AND channel='playground' ORDER BY created_at DESC LIMIT 1`;
+  await page.goto(`/#view=Overview&organization=${org}&workspace=${workspace}`);
+  await page.goto(playground);
+  await expect(
+    chat.getByText("Remember this billing test", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    chat.getByText("Remember this billing test", { exact: true }),
+  ).toBeVisible();
+  await chat
+    .getByLabel("Message", { exact: true })
+    .fill("Please connect me with a support specialist");
+  await chat.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(chat.getByRole("log")).toContainText("Human support requested");
+  const [supportCase] =
+    await sql`SELECT id FROM support_cases WHERE conversation_id=${saved.id}`;
+  expect(supportCase).toBeTruthy();
+  const staffContext = await browser.newContext();
+  try {
+    await staff(staffContext, "operator");
+    const post = async (action, data = {}) => {
+      const response = await staffContext.request.post(
+        `http://localhost:4000/workspaces/${workspace}/support/cases/${supportCase.id}/${action}`,
+        { headers: { origin: "http://localhost:3000" }, data },
+      );
+      expect(response.ok(), await response.text()).toBeTruthy();
+    };
+    await post("claim");
+    await expect(chat.getByRole("log")).toContainText(
+      "Taylor Specialist joined the chat.",
+      { timeout: 15000 },
+    );
+    await post("messages", { content: "I am checking your billing test." });
+    await expect(chat.getByRole("log")).toContainText(
+      "I am checking your billing test.",
+      { timeout: 15000 },
+    );
+    await expect(chat.locator("textarea")).toHaveCount(1);
+    await chat
+      .getByLabel("Message", { exact: true })
+      .fill("My reference is TEST-123");
+    await chat
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
+    await expect(chat.getByRole("log")).toContainText(
+      "My reference is TEST-123",
+    );
+    await page.reload();
+    await expect(chat.getByRole("log")).toContainText(
+      "I am checking your billing test.",
+    );
+    await expect(chat.getByRole("log")).toContainText(
+      "My reference is TEST-123",
+    );
+    await expect(chat.locator("textarea")).toHaveCount(1);
+    await post("resolve", {
+      code: "fixed",
+      summary: "Billing checked",
+      finalResponse: "Your billing test is resolved.",
+    });
+    await expect(chat.getByRole("log")).toContainText(
+      "Taylor Specialist left the chat.",
+      { timeout: 15000 },
+    );
+    await expect(chat.getByRole("log")).toContainText(
+      "The AI agent has taken over",
+      { timeout: 15000 },
+    );
+    await chat
+      .getByLabel("Message", { exact: true })
+      .fill("Continue helping me");
+    await chat
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
+    await expect(
+      chat.getByText("Support browser fixture answer", { exact: true }),
+    ).toHaveCount(2);
+    expect(
+      (
+        await sql`SELECT count(*)::int AS n FROM conversations WHERE agent_id=${playgroundAgent} AND user_id=${users.owner} AND channel='playground'`
+      )[0].n,
+    ).toBe(1);
+    await chat.getByRole("button", { name: "New chat", exact: true }).click();
+    await page.reload();
+    await expect(
+      chat.getByText("Remember this billing test", { exact: true }),
+    ).toHaveCount(0);
+    await expect(chat.getByRole("log")).not.toContainText(
+      "My reference is TEST-123",
+    );
+  } finally {
+    await staffContext.close();
+  }
 });

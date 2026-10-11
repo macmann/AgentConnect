@@ -284,19 +284,9 @@ test("Complete support lifecycle includes automatic assignment, reviewed assista
     visitor.getByRole("button", { name: "Request human support", exact: true }),
   ).toHaveCount(0);
   await chat("I want a human");
-  await expect(
-    visitor.getByText("Support browser fixture answer", { exact: true }).last(),
-  ).toBeVisible();
-  await expect(
-    visitor.getByRole("button", { name: "Connect me", exact: true }),
-  ).toHaveCount(0);
-  await chat("I need a human");
-  await expect(
-    visitor.getByRole("button", { name: "Connect me", exact: true }),
-  ).toBeVisible();
-  await visitor
-    .getByRole("button", { name: "Connect me", exact: true })
-    .click();
+  await expect(visitor.getByRole("log")).toContainText(
+    "Human support requested",
+  );
   await expect
     .poll(
       async () => {
@@ -465,7 +455,7 @@ test("Complete support lifecycle includes automatic assignment, reviewed assista
     .click();
   await expect(dialog).toBeHidden();
   await expect(
-    visitor.getByText(/The AI has the approved resolution/),
+    visitor.getByText(/The AI agent has taken over and can continue helping in this chat/),
   ).toBeVisible();
   await chat("What happens next?");
   await expect(

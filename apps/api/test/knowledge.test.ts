@@ -34,6 +34,9 @@ let modelId = "",
   chatModel = "",
   deploymentId = "";
 let generationCalls = 0;
+let plannerCalls = 0;
+let plannerOutput: string | undefined;
+let embeddedQueries: string[] = [];
 let wrongDimension = false,
   omitCitation = false,
   retryEmbedding = false,
@@ -45,7 +48,8 @@ const vector = (text: string) => [
   0.3,
 ];
 const embedding: EmbeddingFactory = (c) => ({
-  async embed(texts) {
+  async embed(texts, _signal, purpose) {
+    if (purpose === "query") embeddedQueries.push(...texts);
     if (c.apiKey === "fixture-embedding-key") receivedKey = true;
     if (retryEmbedding) throw new ProviderError("RATE_LIMITED", true);
     return texts.map((text) => (wrongDimension ? [1, 2] : vector(text)));
@@ -54,11 +58,14 @@ const embedding: EmbeddingFactory = (c) => ({
 const chat: ProviderFactory = () => ({
   async *stream(input) {
     if (input.system.startsWith("Decide whether")) {
+      plannerCalls++;
       yield {
         type: "token",
-        text: JSON.stringify({
-          retrieve: input.messages.at(-1)?.content !== "hi",
-        }),
+        text:
+          plannerOutput ??
+          JSON.stringify({
+            retrieve: input.messages.at(-1)?.content !== "hi",
+          }),
       };
       yield { type: "usage", inputTokens: 3, outputTokens: 2 };
       return;
@@ -71,7 +78,9 @@ const chat: ProviderFactory = () => ({
       type: "token",
       text: omitCitation
         ? "Unsupported answer"
-        : "Refunds are available within 30 days [1].",
+        : input.messages.at(-1)?.content.includes("forgot my password")
+          ? "Start password recovery in the Next App; visit a branch for KYC verification to complete the reset [1]."
+          : "Refunds are available within 30 days [1].",
     };
     yield { type: "usage", inputTokens: 12, outputTokens: 9 };
   },
@@ -518,6 +527,73 @@ test("Knowledge automatic skips greetings, retrieves policies and persists usage
     await update("always");
   }
 });
+test("Password recovery survives invalid plans and respects always/never without planner calls", async () => {
+  const source = await call("POST", `/knowledge-bases/${kbId}/qa`, {
+    question: "I forgot my password.",
+    answer:
+      "Password recovery starts in the Next App; branch KYC verification is required to complete the reset.",
+  });
+  assert.equal(source.statusCode, 202, source.body);
+  await processKnowledgeJob(embedding);
+  const original = (await call("GET", `/agents/${agentId}`)).json();
+  let revision = original.revision;
+  const update = async (usageMode: string) => {
+    const result = await call("PUT", `/agents/${agentId}`, {
+      name: original.name,
+      description: original.description,
+      publicDescription: original.public_description,
+      config: {
+        ...original.draft_config,
+        rag: { ...original.draft_config.rag, usageMode },
+      },
+      revision,
+    });
+    assert.equal(result.statusCode, 200, result.body);
+    revision++;
+  };
+  try {
+    await update("automatic");
+    for (const output of [
+      '{"retrieve":true}',
+      '```json\n{"retrieve":true}\n```',
+      '{"retrieve":"yes"}',
+    ]) {
+      plannerOutput = output;
+      plannerCalls = 0;
+      embeddedQueries = [];
+      const result = await call("POST", `/agents/${agentId}/chat`, {
+        message: "I forgot my password.",
+      });
+      const events = frames(result.body);
+      assert.equal(events.at(-1)!.event, "done", result.body);
+      assert(!events.some((e) => e.event === "error"), result.body);
+      assert.match(result.body, /branch for KYC verification/);
+      assert(embeddedQueries.includes("I forgot my password."));
+      assert.equal(plannerCalls, output.includes('"yes"') ? 2 : 1);
+      const [run] =
+        await sql`SELECT context_breakdown FROM agent_runs WHERE id=${events[0]!.data.runId}`;
+      assert.equal(
+        run!.context_breakdown.retrievalEnhancements.status,
+        output.includes('"yes"') ? "fallback" : "valid",
+      );
+      assert.equal(events.at(-1)!.data.citations.length, 1);
+    }
+    for (const mode of ["always", "disabled"]) {
+      await update(mode);
+      plannerCalls = 0;
+      embeddedQueries = [];
+      const result = await call("POST", `/agents/${agentId}/chat`, {
+        message: "I forgot my password.",
+      });
+      assert.equal(frames(result.body).at(-1)!.event, "done", result.body);
+      assert.equal(plannerCalls, 0);
+      assert.equal(embeddedQueries.length > 0, mode === "always");
+    }
+  } finally {
+    plannerOutput = undefined;
+    await update("always");
+  }
+});
 test("Workflow agent snapshots honor knowledge skip, retrieval and disabled policies", async () => {
   const [version] =
     await sql`SELECT * FROM agent_versions WHERE agent_id=${agentId} ORDER BY version DESC LIMIT 1`;
@@ -613,11 +689,37 @@ test("Empty knowledge fails before generation and records NO_RELEVANT_SOURCES", 
   const events = frames(response.body);
   assert.equal(events.at(-1)!.data.code, "NO_RELEVANT_SOURCES");
   assert.equal(generationCalls, before);
+  const automatic = await call("PUT", `/agents/${agentId}`, {
+    ...payload,
+    config: {
+      ...payload.config,
+      rag: {
+        ...payload.config.rag,
+        knowledgeBaseIds: [empty.json().id],
+        usageMode: "automatic",
+      },
+    },
+    revision: updated.json().revision,
+  });
+  assert.equal(automatic.statusCode, 200, automatic.body);
+  plannerOutput = '{"retrieve":"invalid"}';
+  try {
+    const fallback = await call("POST", `/agents/${agentId}/chat`, {
+      message: "I forgot my password.",
+    });
+    assert.equal(
+      frames(fallback.body).at(-1)!.data.code,
+      "NO_RELEVANT_SOURCES",
+    );
+    assert.equal(generationCalls, before);
+  } finally {
+    plannerOutput = undefined;
+  }
   assert.equal(
     (
       await call("PUT", `/agents/${agentId}`, {
         ...payload,
-        revision: updated.json().revision,
+        revision: automatic.json().revision,
       })
     ).statusCode,
     200,

@@ -21,6 +21,8 @@ export interface ChatRequest {
   topP: number | null;
   maxOutputTokens: number;
   signal: AbortSignal;
+  /** Optional schema constraint; unsupported compatible providers use prompt-only JSON. */
+  responseSchema?: { name: string; schema: Record<string, unknown> };
 }
 export type ProviderEvent =
   | { type: "token"; text: string }
@@ -304,6 +306,12 @@ export function createProvider(
             parts: [{ text: m.content }],
           })),
           generationConfig: {
+            ...(input.responseSchema
+              ? {
+                  responseMimeType: "application/json",
+                  responseJsonSchema: input.responseSchema.schema,
+                }
+              : {}),
             maxOutputTokens: input.maxOutputTokens,
             ...(capabilities.temperature
               ? { temperature: input.temperature }
@@ -326,6 +334,18 @@ export function createProvider(
             ? { max_completion_tokens: input.maxOutputTokens }
             : { max_tokens: input.maxOutputTokens }),
           stream: true,
+          ...(provider === "openai" && input.responseSchema
+            ? {
+                response_format: {
+                  type: "json_schema",
+                  json_schema: {
+                    name: input.responseSchema.name,
+                    strict: true,
+                    schema: input.responseSchema.schema,
+                  },
+                },
+              }
+            : {}),
           ...parameters,
           ...(provider === "openai"
             ? { stream_options: { include_usage: true } }
