@@ -14,6 +14,44 @@ export function chunkDocument(
     throw new KnowledgeError("INVALID_CHUNK_CONFIG");
   const result: Chunk[] = [];
   for (const section of document.sections) {
+    if (section.metadata.table === true) {
+      const columns = Array.isArray(section.metadata.columns)
+        ? section.metadata.columns.map(String)
+        : [];
+      const header = columns.length
+        ? `Columns: ${columns.join(" | ").slice(0, Math.floor(chunkSize / 3))}\n`
+        : "";
+      const budget = chunkSize - header.length;
+      let rows = "";
+      const emit = () => {
+        if (rows)
+          result.push({
+            content: header + rows.trim(),
+            page: section.page,
+            heading: section.heading,
+            metadata: section.metadata,
+          });
+        rows = "";
+      };
+      for (const row of section.text.split("\n")) {
+        if (row.length > budget) {
+          emit();
+          for (let start = 0; start < row.length; start += budget) {
+            rows = row.slice(start, start + budget);
+            emit();
+            if (result.length > 500) throw new KnowledgeError("CHUNK_LIMIT");
+          }
+        } else {
+          if (rows.length + row.length + 1 > budget) emit();
+          rows += row + "\n";
+        }
+        if (result.length > 500) throw new KnowledgeError("CHUNK_LIMIT");
+      }
+      emit();
+      if (result.length > 500) throw new KnowledgeError("CHUNK_LIMIT");
+      continue;
+    }
+
     const parts =
       options.chunkStrategy === "heading"
         ? section.text.split(/(?=^#{1,6} +)/m)

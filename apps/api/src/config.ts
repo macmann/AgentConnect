@@ -36,6 +36,10 @@ const schema = z.object({
   TOOL_DATABASE_HOSTS: z.string().default(""),
   KNOWLEDGE_ALLOWED_HOSTS: z.string().default(""),
   KNOWLEDGE_PRIVATE_HOSTS: z.string().default(""),
+  OCR_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
   MAIL_FROM: z.email().default("noreply@agentconnect.local"),
 });
 export const config = schema.parse(process.env);

@@ -24,6 +24,7 @@ export const knowledgeInput = z
       .default("recursive"),
     publicAccess: z.boolean().default(false),
     approvalRequired: z.boolean().default(false),
+    ocrEnabled: z.boolean().default(false),
   })
   .refine((v) => v.chunkOverlap < v.chunkSize, {
     message: "Overlap must be smaller than chunk size",
@@ -34,6 +35,7 @@ export const knowledgeUpdate = z.object({
   description: z.string().max(2000).default(""),
   publicAccess: z.boolean(),
   approvalRequired: z.boolean().optional(),
+  ocrEnabled: z.boolean().optional(),
   revision: z.number().int().min(1),
 });
 export const textSource = z.object({
@@ -65,6 +67,9 @@ export const retrievalInput = z.object({
 export type RetrievalInput = z.infer<typeof retrievalInput>;
 export const ragConfig = z
   .object({
+    queryRewrite: z.boolean().default(false),
+    rerank: z.boolean().default(false),
+    candidateCount: z.number().int().min(5).max(30).default(15),
     knowledgeBaseIds: z.array(z.uuid()).max(5).default([]),
     contentMode: z.enum(["current", "approved"]).default("current"),
     releasePins: z.record(z.uuid(), z.uuid()).default({}),
@@ -76,6 +81,9 @@ export const ragConfig = z
     requireCitations: z.boolean().default(true),
   })
   .default({
+    queryRewrite: false,
+    rerank: false,
+    candidateCount: 15,
     knowledgeBaseIds: [],
     contentMode: "current",
     releasePins: {},

@@ -1,6 +1,7 @@
+import { routedProvider, modelUsageCost } from "./model-routing.js";
+import { enhancedRetrieval } from "./rag-enhancements.js";
 import { advanceJourney, generateGroundedAnswer } from "./bank-runtime.js";
 import {
-  controlledProvider,
   componentPreview,
   fitHistory,
   summarizeHistory,
@@ -31,6 +32,7 @@ import {
   modelSnapshotSchema,
   connection,
   validateAgentModel,
+  validateModelSet,
   type ModelSnapshot,
 } from "./agent-models.js";
 import { validateToolIds, runAgentTools, ToolError } from "./tool-runtime.js";
@@ -158,7 +160,11 @@ async function validateModelRegistration(
     );
   return baseUrl;
 }
-export async function modelSnapshot(modelId: string, workspaceId: string) {
+export async function modelSnapshot(
+  modelId: string,
+  workspaceId: string,
+  c?: AgentConfig,
+): Promise<ModelSnapshot> {
   const [m] =
     await sql`SELECT id,provider,model_id,base_url,secret_id,capabilities,context_window,max_output_tokens FROM model_configurations WHERE id=${modelId} AND workspace_id=${workspaceId} AND archived_at IS NULL`;
   if (!m) throw new HttpError(400, "Select a model from this workspace");
@@ -171,6 +177,18 @@ export async function modelSnapshot(modelId: string, workspaceId: string) {
     capabilities: m.capabilities,
     contextWindow: m.context_window,
     maxOutputTokens: m.max_output_tokens,
+    alternatives: c
+      ? await Promise.all(
+          [
+            ...new Set([
+              ...(c.modelRouting.enabled && c.modelRouting.lightModelId
+                ? [c.modelRouting.lightModelId]
+                : []),
+              ...c.modelRouting.fallbackModelIds,
+            ]),
+          ].map((id) => modelSnapshot(id, workspaceId)),
+        )
+      : [],
   });
 }
 async function ownedAgent(
@@ -208,15 +226,18 @@ async function streamChat(
 ) {
   const c = agentConfig.parse(conversation.config_snapshot);
   const model = modelSnapshotSchema.parse(conversation.model_snapshot);
-  validateAgentModel(c, model);
-  const originalProvider = factory(
-    await connection(
-      model,
-      conversation.workspace_id,
-      conversation.organization_id,
-    ),
+  validateModelSet(c, model);
+  const [prior] =
+    await sql`SELECT count(*)::int AS turns FROM agent_runs WHERE conversation_id=${conversation.id} AND status='completed'`;
+  const metered = routedProvider(
+    c,
+    model,
+    message,
+    prior!.turns,
+    conversation.workspace_id,
+    conversation.organization_id,
+    factory,
   );
-  const metered = controlledProvider(originalProvider, c, model);
   const provider = metered.provider;
   const runId = randomUUID();
   const span = trace.getTracer("agentconnect-runtime").startSpan("agent.run", {
@@ -351,6 +372,7 @@ async function streamChat(
   let sources: Citation[] = [];
   let citations: Citation[] = [];
   let retrievalMs: number | null = null;
+  let retrievalDiagnostics: Record<string, string | number> = {};
   let answerKind:
     "answer" | "clarify" | "no_answer" | "journey" | "handoff" | null = null;
   let offerHuman = false;
@@ -420,7 +442,10 @@ async function streamChat(
       );
       if (knowledgePlan.retrieve) {
         const started = performance.now();
-        sources = await ragTool.execute(
+        const retrieval = await enhancedRetrieval(
+          ragTool,
+          provider,
+          messages,
           journey!.query,
           c.rag.knowledgeBaseIds,
           c.rag,
@@ -430,7 +455,10 @@ async function streamChat(
             publicAccess: !!conversation.deployment_id,
           },
           controller.signal,
+          c.maxOutputTokens,
         );
+        sources = retrieval.sources;
+        retrievalDiagnostics = retrieval.diagnostics;
         if (c.contextControls.enabled) {
           let used = 0;
           sources = sources.filter((source) => {
@@ -663,8 +691,29 @@ async function streamChat(
         await tx`UPDATE agent_runs SET context_breakdown=${tx.json(breakdown ?? componentPreview(c, model, messages, sources.length ? groundedPrompt(sources) : "", "", continuation.grounding))} WHERE id=${runId}`;
         if (status === "completed")
           await tx`UPDATE conversations SET journey_state=${tx.json(journey!.state as never)} WHERE id=${conversation.id}`;
+        if (
+          c.modelRouting.enabled ||
+          c.modelRouting.fallbackModelIds.length ||
+          c.rag.queryRewrite ||
+          c.rag.rerank
+        ) {
+          inputTokens = metered.usage().inputTokens;
+          outputTokens = metered.usage().outputTokens;
+        }
         await tx`UPDATE agent_runs SET answer_kind=${answerKind},status=${status},input_tokens=${inputTokens},output_tokens=${outputTokens},error_code=${errorCode},finished_at=now(),retrieval=${tx.json(sources.map((s) => ({ ...s })))},retrieval_ms=${retrievalMs} WHERE id=${runId}`;
-        await tx`UPDATE agent_runs ar SET input_usd_per_million=p.input_usd_per_million,output_usd_per_million=p.output_usd_per_million FROM model_prices p WHERE ar.id=${runId} AND p.model_id=${model.id} AND p.workspace_id=${conversation.workspace_id}`;
+        await tx`UPDATE agent_runs ar SET input_usd_per_million=p.input_usd_per_million,output_usd_per_million=p.output_usd_per_million FROM model_prices p WHERE ar.id=${runId} AND p.model_id=${model.id} AND p.workspace_id=${conversation.workspace_id} AND ${!c.modelRouting.enabled && !c.modelRouting.fallbackModelIds.length}`;
+        if (c.modelRouting.enabled || c.modelRouting.fallbackModelIds.length) {
+          const prices = await tx<
+            {
+              model_id: string;
+              input_usd_per_million: number;
+              output_usd_per_million: number;
+            }[]
+          >`SELECT model_id,input_usd_per_million::float8,output_usd_per_million::float8 FROM model_prices WHERE workspace_id=${conversation.workspace_id}`;
+          const cost = modelUsageCost(metered.usage().modelUsage, prices);
+          if (cost)
+            await tx`UPDATE agent_runs SET input_usd_per_million=${cost.inputRate},output_usd_per_million=${cost.outputRate} WHERE id=${runId}`;
+        }
         await queueRunWebhooks(tx, {
           id: runId,
           workspaceId: conversation.workspace_id,
@@ -692,7 +741,15 @@ async function streamChat(
       }
       await sql.begin(async (tx) => {
         await settleTokens(tx, runId, metered.usage().reported);
-        await tx`UPDATE agent_runs SET context_breakdown=context_breakdown || ${tx.json({ providerCalls: metered.usage().requests, quotaChargedTokens: metered.usage().reported })}::jsonb WHERE id=${runId}`;
+        await tx`UPDATE agent_runs SET context_breakdown=context_breakdown || ${tx.json(
+          {
+            providerCalls: metered.usage().requests,
+            quotaChargedTokens: metered.usage().reported,
+            modelRouting: metered.usage().routing,
+            modelUsage: metered.usage().modelUsage,
+            retrievalEnhancements: retrievalDiagnostics,
+          },
+        )}::jsonb WHERE id=${runId}`;
       });
       if (errorCode)
         write("error", {
@@ -844,12 +901,13 @@ export async function registerAgentRoutes(
       if (!locked || locked.revision !== data.revision)
         throw new HttpError(409, "Model changed; reload before saving");
       const drafts =
-        await tx`SELECT draft_config FROM agents WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL AND draft_config->>'modelId'=${m.id}`;
+        await tx`SELECT draft_config FROM agents WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL AND (draft_config->>'modelId'=${m.id} OR draft_config->'modelRouting'->>'lightModelId'=${m.id} OR COALESCE(draft_config->'modelRouting'->'fallbackModelIds','[]'::jsonb) ? ${m.id})`;
       for (const a of drafts)
         validateAgentModel(agentConfig.parse(a.draft_config), {
           id: m.id,
           ...data,
           baseUrl,
+          alternatives: [],
         });
       const [saved] =
         await tx`UPDATE model_configurations SET name=${data.name},provider=${data.provider},model_id=${data.modelId},base_url=${baseUrl},secret_id=${data.secretId},context_window=${data.contextWindow},max_output_tokens=${data.maxOutputTokens},capabilities=${tx.json(data.capabilities)},revision=revision+1 WHERE id=${m.id} RETURNING revision`;
@@ -866,7 +924,7 @@ export async function registerAgentRoutes(
       if (!locked || locked.revision !== data.revision)
         throw new HttpError(409, "Model changed; reload before deleting");
       const [used] =
-        await tx`SELECT id FROM agents WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL AND draft_config->>'modelId'=${m.id} LIMIT 1`;
+        await tx`SELECT id FROM agents WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL AND (draft_config->>'modelId'=${m.id} OR draft_config->'modelRouting'->>'lightModelId'=${m.id} OR COALESCE(draft_config->'modelRouting'->'fallbackModelIds','[]'::jsonb) ? ${m.id}) LIMIT 1`;
       if (used)
         throw new HttpError(
           409,
@@ -984,9 +1042,9 @@ export async function registerAgentRoutes(
         workspaceId: w.id,
         organizationId: w.organization_id,
       });
-      validateAgentModel(
+      validateModelSet(
         data.config,
-        await modelSnapshot(data.config.modelId, w.id),
+        await modelSnapshot(data.config.modelId, w.id, data.config),
       );
       const agentId = randomUUID();
       await sql.begin(async (tx) => {
@@ -1016,9 +1074,9 @@ export async function registerAgentRoutes(
       workspaceId: w.id,
       organizationId: w.organization_id,
     });
-    validateAgentModel(
+    validateModelSet(
       data.config,
-      await modelSnapshot(data.config.modelId, w.id),
+      await modelSnapshot(data.config.modelId, w.id, data.config),
     );
     return sql.begin(async (tx) => {
       const [saved] =
@@ -1063,10 +1121,15 @@ export async function registerAgentRoutes(
           workspaceId: w.id,
           organizationId: w.organization_id,
         });
-        const model = await modelSnapshot(c.modelId, w.id);
-        validateAgentModel(c, model);
+        const model = await modelSnapshot(c.modelId, w.id, c);
+        validateModelSet(c, model);
         await assertQualityGate(tx, locked, c, model);
-        await connection(model, w.id, w.organization_id);
+        for (const candidate of [model, ...model.alternatives])
+          await connection(
+            { ...candidate, alternatives: [] },
+            w.id,
+            w.organization_id,
+          );
         const [previous] =
           await tx`SELECT COALESCE(max(version),0) AS latest FROM agent_versions WHERE agent_id=${a.id}`;
         const version = Number(previous!.latest) + 1;
@@ -1229,8 +1292,9 @@ export async function registerAgentRoutes(
         if (!conversation) throw new HttpError(404, "Conversation not found");
       } else {
         const c = agentConfig.parse(a.draft_config);
-        const model = await modelSnapshot(c.modelId, w.id);
-        await connection(model, w.id, w.organization_id);
+        const model = await modelSnapshot(c.modelId, w.id, c);
+        if (!c.modelRouting.enabled && !c.modelRouting.fallbackModelIds.length)
+          await connection(model, w.id, w.organization_id);
         const conversationId = randomUUID();
         [conversation] = await sql<
           ConversationRow[]
@@ -1280,7 +1344,7 @@ export async function registerAgentRoutes(
       })
       .parse(r.body);
     const c = data.config ?? agentConfig.parse(a.draft_config);
-    const m = await modelSnapshot(c.modelId, a.workspace_id);
+    const m = await modelSnapshot(c.modelId, a.workspace_id, c);
     return componentPreview(
       c,
       m,

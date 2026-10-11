@@ -22,6 +22,8 @@ import {
   purgeKnowledgePrefix,
 } from "./knowledge-storage.js";
 import { crawlWebsite, type CrawlConfig } from "./knowledge-websites.js";
+import { ocrPdfPage } from "./pdf-ocr.js";
+import { config } from "./config.js";
 interface Job {
   id: string;
   source_id: string;
@@ -99,6 +101,16 @@ export async function processKnowledgeJob(
         bytes,
         job.payload.filename,
         controller.signal,
+        kb.ocr_enabled
+          ? {
+              ocr: config.OCR_ENABLED
+                ? ocrPdfPage
+                : async () => {
+                    throw new KnowledgeError("OCR_NOT_AVAILABLE");
+                  },
+              maxOcrPages: 20,
+            }
+          : {},
       );
       document.title = source.title;
       document.metadata = {
@@ -196,7 +208,7 @@ export async function processKnowledgeJob(
         }
       }
       await tx`UPDATE knowledge_jobs SET status='completed',finished_at=now(),locked_until=NULL,lease_token=NULL,error_code=NULL WHERE id=${job.id}`;
-      await tx`UPDATE knowledge_sources SET status='ready',error_code=NULL,updated_at=now() WHERE id=${job.source_id} AND revision=${job.source_revision}`;
+      await tx`UPDATE knowledge_sources SET status='ready',error_code=NULL,metadata=metadata || ${tx.json({ ocrPages: pages.reduce((n, p) => n + Number(p.document.metadata.ocrPages ?? 0), 0), unrecognizedPages: pages.reduce((n, p) => n + Number(p.document.metadata.unrecognizedPages ?? 0), 0) })}::jsonb,updated_at=now() WHERE id=${job.source_id} AND revision=${job.source_revision}`;
     });
   } catch (error) {
     const code = controller.signal.aborted

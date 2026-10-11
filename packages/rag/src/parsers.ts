@@ -26,13 +26,44 @@ export type DocumentParser = (
   data: Uint8Array,
   filename: string,
   signal: AbortSignal,
+  options?: ParseOptions,
 ) => Promise<ParsedDocument>;
+export interface ParseOptions {
+  ocr?: (
+    data: Uint8Array,
+    page: number,
+    signal: AbortSignal,
+  ) => Promise<string>;
+  maxOcrPages?: number;
+}
 const section = (
   text: string,
   page: number | null = null,
   heading: string | null = null,
   metadata: Record<string, unknown> = {},
 ): Section => ({ text, page, heading, metadata });
+/** Keep column identities with every row, including empty values and sparse cells. */
+export function tableSection(
+  rows: string[][],
+  page: number | null = null,
+  heading: string | null = null,
+): Section {
+  const headers =
+    rows[0]?.map((value, i) => value.trim() || `Column ${i + 1}`) ?? [];
+  const content = rows.slice(1).map((row, i) => {
+    const columns = Array.from(
+      { length: Math.max(headers.length, row.length) },
+      (_, col) => `${headers[col] ?? `Column ${col + 1}`}: ${row[col] ?? ""}`,
+    );
+    return `Row ${i + 2}: ` + columns.join(" | ");
+  });
+  return section(
+    content.length ? content.join("\n") : headers.join(" | "),
+    page,
+    heading,
+    { table: true, columns: headers },
+  );
+}
 export const supportedExtensions = [
   "pdf",
   "docx",
@@ -65,6 +96,20 @@ export function parseHTML(data: Uint8Array, title: string): ParsedDocument {
   const canonical = $('link[rel="canonical"]').attr("href");
   const label = ($("title").first().text().trim() || title).slice(0, 200);
   const container = $("main").first().length ? $("main").first() : $("body");
+  container.find("table").each((_, table) => {
+    const rows = $(table)
+      .find("tr")
+      .map((_, row) => [
+        $(row)
+          .find("th,td")
+          .map((_, cell) => $(cell).text().trim())
+          .get(),
+      ])
+      .get() as unknown as string[][];
+    $(table).replaceWith(
+      $("<pre></pre>").text("\n" + tableSection(rows).text + "\n"),
+    );
+  });
   container.find("br").replaceWith("\n");
   container.find("p,div,li,tr,h1,h2,h3,h4,h5,h6").each((_, el) => {
     $(el).prepend("\n").append("\n");
@@ -124,7 +169,7 @@ registerParser("csv", async (data, name) => {
   if (rows.length > 50000) throw new KnowledgeError("DOCUMENT_LIMIT");
   return {
     title: name,
-    sections: [section(rows.map((r) => r.join(" | ")).join("\n"))],
+    sections: [tableSection(rows)],
     metadata: { rows: rows.length, columns: rows[0] ?? [] },
     links: [],
   };
@@ -157,7 +202,7 @@ function office(data: Uint8Array) {
           count > 2000
         )
           throw new KnowledgeError("ARCHIVE_LIMIT");
-        return /\.xml$/.test(entry.name);
+        return /\.(xml|rels)$/.test(entry.name);
       },
     });
   } catch (e) {
@@ -202,16 +247,36 @@ function texts(node: unknown, tag = "t"): string[] {
 registerParser("docx", async (data, name) => {
   const files = office(data);
   const doc = readXML(files["word/document.xml"]);
+  const body = (doc.document as Record<string, unknown>)?.body as
+    Record<string, unknown> | undefined;
+  const tables = body?.tbl
+    ? Array.isArray(body.tbl)
+      ? body.tbl
+      : [body.tbl]
+    : [];
+  const tableSections = tables.map((table, i) => {
+    const raw = (table as Record<string, unknown>).tr ?? [];
+    const rows = (Array.isArray(raw) ? raw : [raw]).map((row) => {
+      const cells = (row as Record<string, unknown>).tc ?? [];
+      return (Array.isArray(cells) ? cells : [cells]).map((cell) =>
+        texts(cell)
+          .filter((t) => t !== "\n")
+          .join(" "),
+      );
+    });
+    return tableSection(rows, null, `Table ${i + 1}`);
+  });
   return {
     title: name,
     sections: [
       section(
-        texts(doc)
+        texts(body ? { ...body, tbl: undefined } : doc)
           .join(" ")
           .replace(/ *\n */g, "\n"),
       ),
+      ...tableSections,
     ],
-    metadata: { format: "docx" },
+    metadata: { format: "docx", tables: tableSections.length },
     links: [],
   };
 });
@@ -249,25 +314,84 @@ registerParser("xlsx", async (data, name) => {
         Number(a.match(/sheet(\d+)/)?.[1]) - Number(b.match(/sheet(\d+)/)?.[1]),
     );
   if (keys.length > 100) throw new KnowledgeError("DOCUMENT_LIMIT");
+  const workbook = files["xl/workbook.xml"]
+    ? readXML(files["xl/workbook.xml"])
+    : {};
+  const rawSheets =
+    (
+      (workbook.workbook as Record<string, unknown>)?.sheets as Record<
+        string,
+        unknown
+      >
+    )?.sheet ?? [];
+  const relationships = files["xl/_rels/workbook.xml.rels"]
+    ? readXML(files["xl/_rels/workbook.xml.rels"])
+    : {};
+  const rawRelationships =
+    (relationships.Relationships as Record<string, unknown>)?.Relationship ??
+    [];
+  const targets = new Map(
+    (Array.isArray(rawRelationships)
+      ? rawRelationships
+      : [rawRelationships]
+    ).map((r) => {
+      const rel = r as Record<string, unknown>;
+      return [
+        String(rel["@_Id"] ?? ""),
+        String(rel["@_Target"] ?? "")
+          .replace(/^\/xl\//, "")
+          .replace(/^\.\//, ""),
+      ];
+    }),
+  );
+  const sheetNames = new Map(
+    (Array.isArray(rawSheets) ? rawSheets : [rawSheets]).map((v) => {
+      const sheet = v as Record<string, unknown>;
+      return [
+        "xl/" + targets.get(String(sheet["@_id"] ?? "")),
+        String(sheet["@_name"] ?? ""),
+      ];
+    }),
+  );
   const sections = keys.map((key, i) => {
     const value = readXML(files[key]);
     const sheet = value.worksheet as Record<string, unknown>;
     const rows = (sheet?.sheetData as Record<string, unknown>)?.row ?? [];
-    const lines = (Array.isArray(rows) ? rows : [rows]).map(
+    const parsedRows = (Array.isArray(rows) ? rows : [rows]).map(
       (row: Record<string, unknown>) => {
         const cells = row.c ?? [];
-        return (Array.isArray(cells) ? cells : [cells])
-          .map((c: Record<string, unknown>) =>
+        const values: string[] = [];
+        for (const c of (Array.isArray(cells) ? cells : [cells]) as Record<
+          string,
+          unknown
+        >[]) {
+          const reference = String(c["@_r"] ?? "").match(/^[A-Z]+/)?.[0];
+          const col = reference
+            ? [...reference].reduce(
+                (n, letter) => n * 26 + letter.charCodeAt(0) - 64,
+                0,
+              ) - 1
+            : values.length;
+          if (col > 1000) throw new KnowledgeError("DOCUMENT_LIMIT");
+          while (values.length < col) values.push("");
+          values[col] =
             c["@_t"] === "s"
               ? (strings[Number(c.v)] ?? "")
               : c["@_t"] === "inlineStr"
                 ? texts(c.is).join("")
-                : String(c.v ?? ""),
-          )
-          .join(" | ");
+                : String(c.v ?? "");
+        }
+        return values;
       },
     );
-    return section(lines.join("\n"), i + 1, "Sheet " + (i + 1), { sheet: key });
+    return {
+      ...tableSection(
+        parsedRows,
+        i + 1,
+        sheetNames.get(key) || "Sheet " + (i + 1),
+      ),
+      metadata: { table: true, columns: parsedRows[0] ?? [], sheet: key },
+    };
   });
   return {
     title: name,
@@ -276,7 +400,7 @@ registerParser("xlsx", async (data, name) => {
     links: [],
   };
 });
-registerParser("pdf", async (data, name, signal) => {
+registerParser("pdf", async (data, name, signal, options) => {
   const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const task = getDocument({
     data: new Uint8Array(data),
@@ -288,28 +412,49 @@ registerParser("pdf", async (data, name, signal) => {
   try {
     if (doc.numPages > 200) throw new KnowledgeError("DOCUMENT_LIMIT");
     const sections: Section[] = [];
+    let ocrPages = 0,
+      unrecognizedPages = 0;
     for (let page = 1; page <= doc.numPages; page++) {
       signal.throwIfAborted();
       const p = await doc.getPage(page);
       const content = await p.getTextContent();
-      sections.push(
-        section(
-          content.items
-            .map((item) =>
-              "str" in item
-                ? item.str + ("hasEOL" in item && item.hasEOL ? "\n" : " ")
-                : "",
-            )
-            .join(""),
-          page,
-        ),
-      );
+      let previous: { x: number; y: number; width: number } | null = null;
+      let text = content.items
+        .map((item) => {
+          if (!("str" in item)) return "";
+          const x = item.transform[4]!,
+            y = item.transform[5]!;
+          const gap =
+            previous &&
+            Math.abs(y - previous.y) < 3 &&
+            x - previous.x - previous.width > 12
+              ? " | "
+              : " ";
+          const line = previous && Math.abs(y - previous.y) >= 3 ? "\n" : gap;
+          previous = item.hasEOL ? null : { x, y, width: item.width };
+          return line + item.str + (item.hasEOL ? "\n" : "");
+        })
+        .join("");
+      let ocr = false;
+      if (text.replace(/\s/g, "").length < 20 && options?.ocr) {
+        if (++ocrPages > (options.maxOcrPages ?? 20))
+          throw new KnowledgeError("OCR_PAGE_LIMIT");
+        text = await options.ocr(data, page, signal);
+        ocr = true;
+      }
+      if (!ocr && text.replace(/\s/g, "").length < 20) unrecognizedPages++;
+      sections.push(section(text, page, null, { ocr, positionalText: !ocr }));
       p.cleanup();
     }
     return {
       title: name,
       sections,
-      metadata: { format: "pdf", pages: doc.numPages },
+      metadata: {
+        format: "pdf",
+        pages: doc.numPages,
+        ocrPages,
+        unrecognizedPages,
+      },
       links: [],
     };
   } finally {
@@ -320,13 +465,14 @@ export async function parseDocument(
   data: Uint8Array,
   filename: string,
   signal: AbortSignal,
+  options: ParseOptions = {},
 ) {
   if (data.byteLength > 10000000) throw new KnowledgeError("UPLOAD_LIMIT");
   const extension = filename.split(".").at(-1)?.toLowerCase() ?? "";
   const parser = parsers.get(extension);
   if (!parser) throw new KnowledgeError("UNSUPPORTED_FILE_TYPE");
   signal.throwIfAborted();
-  const parsed = await parser(data, filename, signal);
+  const parsed = await parser(data, filename, signal, options);
   let size = 0;
   for (const s of parsed.sections) {
     s.text = s.text.replace(/\u0000/g, "").trim();

@@ -4,7 +4,7 @@ import type { ModelConnection } from "@agentconnect/provider-sdk";
 import { sql } from "./db.js";
 import { decrypt } from "./security.js";
 import { HttpError } from "./http-error.js";
-export const modelSnapshotSchema = z.object({
+const modelDefinitionSchema = z.object({
   id: z.uuid(),
   provider: modelInput.shape.provider,
   modelId: z.string(),
@@ -13,6 +13,9 @@ export const modelSnapshotSchema = z.object({
   capabilities: modelInput.shape.capabilities,
   contextWindow: z.number(),
   maxOutputTokens: z.number(),
+});
+export const modelSnapshotSchema = modelDefinitionSchema.extend({
+  alternatives: z.array(modelDefinitionSchema).max(3).default([]),
 });
 export type ModelSnapshot = z.infer<typeof modelSnapshotSchema>;
 export async function connection(
@@ -60,4 +63,23 @@ export function validateAgentModel(c: AgentConfig, m: ModelSnapshot) {
       400,
       "Output limit must fit in the model context window",
     );
+}
+
+export function validateModelSet(c: AgentConfig, m: ModelSnapshot) {
+  validateAgentModel(c, m);
+  const ids = [
+    ...(c.modelRouting.enabled && c.modelRouting.lightModelId
+      ? [c.modelRouting.lightModelId]
+      : []),
+    ...c.modelRouting.fallbackModelIds,
+  ];
+  for (const id of ids) {
+    const alternative = m.alternatives.find((a) => a.id === id);
+    if (!alternative)
+      throw new HttpError(
+        409,
+        "A routed model is unavailable; save and publish a new snapshot",
+      );
+    validateAgentModel(c, { ...alternative, alternatives: [] });
+  }
 }

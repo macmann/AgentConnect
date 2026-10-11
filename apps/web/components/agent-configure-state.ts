@@ -57,6 +57,7 @@ const labels: Record<string, string> = {
 };
 export function fieldSection(field: string): ConfigureSection {
   if (field.startsWith("config.contextControls")) return "advanced";
+  if (field.startsWith("config.modelRouting")) return "advanced";
   if (field.startsWith("config.prompt")) return "prompt";
   if (field.startsWith("config.answerPolicy")) return "knowledge";
   if (field.startsWith("config.rag")) return "knowledge";
@@ -107,6 +108,42 @@ export function configureIssues(
       section: "behavior",
       message: `Use at most ${Math.min(model.max_output_tokens, model.context_window - 1).toLocaleString()} tokens for this model.`,
     });
+  const routing = draft.config.modelRouting;
+  if (models && routing) {
+    const selected = [
+      ...(routing.enabled && routing.lightModelId
+        ? [
+            {
+              id: routing.lightModelId,
+              field: "config.modelRouting.lightModelId",
+            },
+          ]
+        : []),
+      ...routing.fallbackModelIds.map((id, index) => ({
+        id,
+        field: `config.modelRouting.fallbackModelIds.${index}`,
+      })),
+    ];
+    for (const choice of selected) {
+      const alternative = models.find((m) => m.id === choice.id);
+      if (
+        !alternative ||
+        draft.config.maxOutputTokens > alternative.max_output_tokens ||
+        draft.config.maxOutputTokens >= alternative.context_window ||
+        (draft.config.contextControls?.inputBudget &&
+          draft.config.contextControls.inputBudget >
+            alternative.context_window - draft.config.maxOutputTokens)
+      )
+        issues.push({
+          field: choice.field,
+          label: "Routed model",
+          section: "advanced",
+          message: !alternative
+            ? "Select an available workspace model."
+            : `${alternative.name} must support the agent output limit and configured input budget.`,
+        });
+    }
+  }
   return issues.filter(
     (i, index, a) => a.findIndex((v) => v.field === i.field) === index,
   );
