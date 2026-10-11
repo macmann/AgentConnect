@@ -92,6 +92,8 @@ pnpm dev
 
 Migration **0030** adds knowledge-connector OAuth attempts and sync-mode recording. Migrations are tracked and repeatable; use the supported migration command instead of editing tables manually. Existing connector credentials remain supported.
 
+Each migration and its tracking row commit in a separate transaction. A session advisory lock serializes concurrent migration commands. If a migration fails, earlier migrations remain applied; fix the reported migration error and rerun `pnpm db:migrate`. The failed migration is rolled back and retried. Error output contains only a safe code and, when available, the migration version.
+
 ## Configuration
 
 `.env.example` lists the supported settings. The API and worker must use consistent credentials and host grants. Changes normally require restarting both; changes to `NEXT_PUBLIC_API_URL` require restarting/rebuilding the web application.
@@ -147,7 +149,7 @@ pnpm test
 pnpm build
 ```
 
-API tests require initialized development infrastructure. Stop the ordinary background worker while running isolated API fixtures so it cannot claim their jobs. Browser scenarios require the application to be running and the documented local test-provider endpoint grants; do not enable fixture endpoints in production.
+API tests require initialized development infrastructure. Migration regression tests create and remove isolated temporary databases, so the development database role must have `CREATEDB` and permission to install pgvector. Stop the ordinary background worker while running isolated API fixtures so it cannot claim their jobs. Browser scenarios require the application to be running and the documented local test-provider endpoint grants; do not enable fixture endpoints in production.
 
 ```sh
 pnpm test:e2e
@@ -198,3 +200,7 @@ See the [dark agent view](docs/screenshots/rag-agent-dark.png) and [dark widget]
 Open a knowledge base → Sources → **Ingest website**, enter a main URL and select a crawler. Built-in Cheerio needs no key; Firecrawl renders JavaScript sites using an API key saved in workspace Secrets. Defaults crawl up to 20 pages at depth 2; limits and allowed/blocked paths are configurable. Once the source is Ready, attach the knowledge base to an agent for grounded chat with page citations. Reingest recrawls the site using the saved settings.
 
 Approve website hosts in API/worker `KNOWLEDGE_ALLOWED_HOSTS`; Firecrawl also needs outbound access to `api.firecrawl.dev` and account credits. See the [website crawl guide](docs/user-guide.md#crawl-a-website-into-knowledge).
+
+### Advanced knowledge processing
+
+Knowledge bases can optionally enable advanced processing for documents with complex tables. It keeps original values, separates tables, combines grouped headers and creates token-aware chunks. Optional LLM assistance selects validated boundaries during ingestion; standard processing remains the default and makes no assistance calls. Sources provide an extraction preview with review warnings. Parent-context expansion is a separate retrieval switch and can increase chat context usage. Existing sources require manual Reingest to apply processing changes; approved releases preserve their indexed context. See [the user guide](docs/user-guide.md#advanced-document-processing-and-financial-tables) for setup and financial-document limitations. Migration **0031** adds these settings and release metadata.

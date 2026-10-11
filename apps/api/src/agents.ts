@@ -931,6 +931,13 @@ export async function registerAgentRoutes(
           409,
           "An active agent draft uses this model. Select another model in that agent or archive the agent before deleting it.",
         );
+      const [knowledgeUse] =
+        await tx`SELECT id FROM knowledge_bases WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL AND advanced_processing->>'enabled'='true' AND advanced_processing->>'llmAssisted'='true' AND advanced_processing->>'modelId'=${m.id} LIMIT 1`;
+      if (knowledgeUse)
+        throw new HttpError(
+          409,
+          "A knowledge base uses this processing model. Disable LLM-assisted processing or select another model first.",
+        );
       await tx`UPDATE model_configurations SET archived_at=now(),revision=revision+1 WHERE id=${m.id}`;
       await audit(tx, r, u.id, "model.deleted", m.id, w.organization_id, w.id);
       return { ok: true };

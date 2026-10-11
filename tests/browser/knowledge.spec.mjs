@@ -197,6 +197,15 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
     .getByRole("button", { name: "Create knowledge base", exact: true })
     .click();
   await page.getByLabel("Knowledge base name").fill("Refund knowledge");
+  await expect(
+    page.getByRole("checkbox", {
+      name: "Enable advanced document processing",
+      exact: true,
+    }),
+  ).not.toBeChecked();
+  await expect(
+    page.getByLabel("Target chunk size (tokens)", { exact: true }),
+  ).toHaveCount(0);
   await page
     .getByRole("checkbox", { name: "Allow knowledge in public hosted chat" })
     .check();
@@ -455,6 +464,126 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   } finally {
     await websiteGuest.close();
   }
+  await page.getByRole("button", { name: "settings", exact: true }).click();
+  const advanced = page.getByRole("checkbox", {
+    name: "Enable advanced document processing",
+    exact: true,
+  });
+  await expect(advanced).not.toBeChecked();
+  await advanced.check();
+  await page
+    .getByLabel("Target chunk size (tokens)", { exact: true })
+    .fill("100");
+  await page
+    .getByRole("checkbox", { name: "Use LLM-assisted boundaries", exact: true })
+    .check();
+  await page
+    .getByLabel("Processing model", { exact: true })
+    .selectOption({ label: "Grounded chat fixture" });
+  await page
+    .getByRole("checkbox", { name: "Use LLM-assisted boundaries", exact: true })
+    .uncheck();
+  await page
+    .getByRole("checkbox", {
+      name: "Expand retrieved passages with parent context",
+      exact: true,
+    })
+    .check();
+  await page
+    .getByRole("button", { name: "Save knowledge settings", exact: true })
+    .click();
+  await expect(
+    page.getByText("Knowledge settings saved", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "sources", exact: true }).click();
+  await expect(
+    page.getByText("Processing changed · Reingest to apply").first(),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Upload document", exact: true })
+    .click();
+  await page.getByLabel("Document file").setInputFiles({
+    name: "financial-statement.html",
+    mimeType: "text/html",
+    buffer: Buffer.from(
+      '<main><p>Amounts in USD thousands</p><table><caption>Annual results</caption><tr><th rowspan="2">Metric</th><th colspan="2">Group</th><th colspan="2">Company</th></tr><tr><th>2026</th><th>2025</th><th>2026</th><th>2025</th></tr><tr><td>Revenue</td><td>125,000</td><td>110,000</td><td>80,000</td><td>72,000</td></tr></table></main>',
+    ),
+  });
+  await page
+    .getByRole("button", { name: "Upload and ingest", exact: true })
+    .click();
+  const financial = page.getByRole("row").filter({
+    has: page.getByText("financial-statement.html", { exact: true }),
+  });
+  await expect(financial.getByText("ready", { exact: true })).toBeVisible({
+    timeout: 20000,
+  });
+  await financial
+    .getByRole("button", { name: "Extraction preview", exact: true })
+    .click();
+  const extracted = page.getByRole("region", {
+    name: "Extraction preview",
+    exact: true,
+  });
+  await expect(
+    extracted.getByText("Review before publishing", { exact: true }),
+  ).toBeVisible();
+  await extracted.getByText("Annual results · 1 row", { exact: true }).click();
+  await expect(
+    extracted.getByText(
+      "Columns: Metric | Group / 2026 | Group / 2025 | Company / 2026 | Company / 2025",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(extracted.locator("pre")).toContainText("Group / 2026: 125,000");
+  await expect(extracted.locator("pre")).toContainText(
+    "Company / 2025: 72,000",
+  );
+  await expect(extracted.locator("pre")).toContainText(
+    "Amounts in USD thousands",
+  );
+  await page
+    .getByRole("button", { name: "Close extraction preview", exact: true })
+    .click();
+  await page.getByRole("button", { name: "settings", exact: true }).click();
+  await expect(advanced).toBeChecked();
+  await advanced.uncheck();
+  await page
+    .getByRole("button", { name: "Save knowledge settings", exact: true })
+    .click();
+  await expect(
+    page.getByText("Knowledge settings saved", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "sources", exact: true }).click();
+  await financial
+    .getByRole("button", { name: "Extraction preview", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("region", { name: "Extraction preview", exact: true })
+      .getByText("Review before publishing", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Close extraction preview", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Retrieval playground", exact: true })
+    .click();
+  await page.getByLabel("Retrieval query").fill("Revenue 125,000 2026 Company");
+  await page
+    .getByRole("button", { name: "Search knowledge", exact: true })
+    .click();
+  const financialCitation = page.getByText("[1] financial-statement.html", {
+    exact: true,
+  });
+  await expect(financialCitation).toBeVisible();
+  await financialCitation.click();
+  await expect(
+    page.locator(".citations .source-snippet").first(),
+  ).toContainText("Group / 2026: 125,000");
+  await expect(
+    page.locator(".citations .source-snippet").first(),
+  ).toContainText("Company / 2025: 72,000");
   expect(generated).toBe(3);
   expect(embedded).toBeGreaterThanOrEqual(4);
   const [message] =

@@ -127,3 +127,13 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 - Optional Firecrawl v2 API integration for rendered sites, using encrypted workspace secrets, asynchronous polling, pagination, cancellation and sanitized failures.
 - Crawl output flows through existing storage, embedding, table-aware parsing and RAG citation/approval/publication controls.
 - Page counts, background ingestion status, chunk inspection, retrieval testing and explicit recrawl through Reingest.
+
+## Advanced knowledge processing
+
+- Per-base opt-in advanced document processing, off by default; standard processing makes no LLM assistance calls.
+- Separate tables, grouped headers and original numeric values, with HTML spans, Excel merged cells/sparse row separators, Word grid spans and heuristic PDF coordinate extraction.
+- Token-aware advanced chunks that retain table rows; bounded parent context is a separate optional retrieval setting.
+- Optional workspace-model assistance restricted to validated boundaries/header counts, with call/context/time budgets and deterministic fallback warnings.
+- Source extraction preview with table samples, warnings and reported processing-model usage; manual Reingest applies changed settings to existing sources.
+- Durable per-job settings snapshots and immutable parent-context metadata in approved knowledge releases.
+- Financial extraction requires review; spreadsheet display formats/formula evaluation and deterministic financial calculations remain outside this feature.

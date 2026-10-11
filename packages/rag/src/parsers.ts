@@ -29,6 +29,7 @@ export type DocumentParser = (
   options?: ParseOptions,
 ) => Promise<ParsedDocument>;
 export interface ParseOptions {
+  advanced?: boolean;
   ocr?: (
     data: Uint8Array,
     page: number,
@@ -86,7 +87,11 @@ const plain = (data: Uint8Array) => {
     throw new KnowledgeError("INVALID_TEXT_ENCODING");
   }
 };
-export function parseHTML(data: Uint8Array, title: string): ParsedDocument {
+export function parseHTML(
+  data: Uint8Array,
+  title: string,
+  options?: ParseOptions,
+): ParsedDocument {
   const $ = load(plain(data));
   const links = $("a[href]")
     .map((_, a) => $(a).attr("href")!)
@@ -96,6 +101,7 @@ export function parseHTML(data: Uint8Array, title: string): ParsedDocument {
   const canonical = $('link[rel="canonical"]').attr("href");
   const label = ($("title").first().text().trim() || title).slice(0, 200);
   const container = $("main").first().length ? $("main").first() : $("body");
+  const extractedTables: Section[] = [];
   container.find("table").each((_, table) => {
     const rows = $(table)
       .find("tr")
@@ -106,9 +112,74 @@ export function parseHTML(data: Uint8Array, title: string): ParsedDocument {
           .get(),
       ])
       .get() as unknown as string[][];
-    $(table).replaceWith(
-      $("<pre></pre>").text("\n" + tableSection(rows).text + "\n"),
-    );
+    if (options?.advanced) {
+      // Expand HTML spans without asking a model to recreate values.
+      const grid: string[][] = [];
+      let expandedCells = 0;
+      $(table)
+        .find("tr")
+        .each((ri, row) => {
+          grid[ri] ??= [];
+          let col = 0;
+          $(row)
+            .children("th,td")
+            .each((_, cell) => {
+              while (grid[ri]![col] !== undefined) col++;
+              const width = Math.min(
+                100,
+                Math.max(1, Math.trunc(Number($(cell).attr("colspan"))) || 1),
+              );
+              const height = Math.min(
+                100,
+                Math.max(1, Math.trunc(Number($(cell).attr("rowspan"))) || 1),
+              );
+              if (col + width > 1000 || ri + height > 50000)
+                throw new KnowledgeError("DOCUMENT_LIMIT");
+              expandedCells += width * height;
+              if (expandedCells > 100000)
+                throw new KnowledgeError("DOCUMENT_LIMIT");
+              const value = $(cell).text().trim();
+              for (let r = ri; r < ri + height; r++) {
+                grid[r] ??= [];
+                for (let c = col; c < col + width; c++) grid[r]![c] = value;
+              }
+              col += width;
+            });
+        });
+      const heading =
+        $(table).find("caption").first().text().trim() ||
+        $(table).prevAll("h1,h2,h3,h4,p").first().text().trim().slice(0, 300) ||
+        `Table ${extractedTables.length + 1}`;
+      extractedTables.push({
+        ...tableSection(grid, null, heading),
+        metadata: {
+          sourceContext: $(table)
+            .prevUntil("table", "p,h1,h2,h3,h4")
+            .slice(0, 4)
+            .get()
+            .reverse()
+            .map((el) => $(el).text())
+            .join("\n")
+            .slice(-1500),
+          footnotes: $(table)
+            .nextUntil("table")
+            .filter("p")
+            .slice(0, 2)
+            .map((_, el) => $(el).text())
+            .get()
+            .join("\n")
+            .slice(0, 1500),
+          rawRows: grid,
+          table: true,
+          layoutHeuristic: true,
+        },
+      });
+      $(table).remove();
+    } else {
+      $(table).replaceWith(
+        $("<pre></pre>").text("\n" + tableSection(rows).text + "\n"),
+      );
+    }
   });
   container.find("br").replaceWith("\n");
   container.find("p,div,li,tr,h1,h2,h3,h4,h5,h6").each((_, el) => {
@@ -122,7 +193,7 @@ export function parseHTML(data: Uint8Array, title: string): ParsedDocument {
     .trim();
   return {
     title: label,
-    sections: [section(text)],
+    sections: [section(text), ...extractedTables],
     metadata: {
       canonical: canonical ?? null,
       headings: $("h1,h2,h3")
@@ -158,18 +229,24 @@ for (const ext of ["txt", "md", "markdown"])
     };
   });
 for (const ext of ["html", "htm"])
-  registerParser(ext, async (data, name) => parseHTML(data, name));
-registerParser("csv", async (data, name) => {
+  registerParser(ext, async (data, name, _signal, options) =>
+    parseHTML(data, name, options),
+  );
+registerParser("csv", async (data, name, _signal, options) => {
   const rows = csv(plain(data), {
     bom: true,
     relax_column_count: true,
     max_record_size: 100000,
-    skip_empty_lines: true,
+    skip_empty_lines: !options?.advanced,
   }) as string[][];
   if (rows.length > 50000) throw new KnowledgeError("DOCUMENT_LIMIT");
   return {
     title: name,
-    sections: [tableSection(rows)],
+    sections: [
+      options?.advanced
+        ? { ...tableSection(rows), metadata: { rawRows: rows, table: true } }
+        : tableSection(rows),
+    ],
     metadata: { rows: rows.length, columns: rows[0] ?? [] },
     links: [],
   };
@@ -244,7 +321,7 @@ function texts(node: unknown, tag = "t"): string[] {
   }
   return result;
 }
-registerParser("docx", async (data, name) => {
+registerParser("docx", async (data, name, _signal, options) => {
   const files = office(data);
   const doc = readXML(files["word/document.xml"]);
   const body = (doc.document as Record<string, unknown>)?.body as
@@ -258,13 +335,40 @@ registerParser("docx", async (data, name) => {
     const raw = (table as Record<string, unknown>).tr ?? [];
     const rows = (Array.isArray(raw) ? raw : [raw]).map((row) => {
       const cells = (row as Record<string, unknown>).tc ?? [];
-      return (Array.isArray(cells) ? cells : [cells]).map((cell) =>
-        texts(cell)
+      return (Array.isArray(cells) ? cells : [cells]).flatMap((cell) => {
+        const value = texts(cell)
           .filter((t) => t !== "\n")
-          .join(" "),
-      );
+          .join(" ");
+        if (!options?.advanced) return [value];
+        const span =
+          Number(
+            ((cell as Record<string, unknown>).tcPr as Record<string, unknown>)
+              ?.gridSpan &&
+              (
+                (
+                  (cell as Record<string, unknown>).tcPr as Record<
+                    string,
+                    unknown
+                  >
+                ).gridSpan as Record<string, unknown>
+              )["@_val"],
+          ) || 1;
+        if (!Number.isInteger(span) || span < 1 || span > 100)
+          throw new KnowledgeError("DOCUMENT_LIMIT");
+        return [value, ...Array.from({ length: span - 1 }, () => "")];
+      });
     });
-    return tableSection(rows, null, `Table ${i + 1}`);
+    const parsed = tableSection(rows, null, `Table ${i + 1}`);
+    return options?.advanced
+      ? {
+          ...parsed,
+          metadata: {
+            ...parsed.metadata,
+            rawRows: rows,
+            layoutHeuristic: true,
+          },
+        }
+      : parsed;
   });
   return {
     title: name,
@@ -298,7 +402,7 @@ registerParser("pptx", async (data, name) => {
     links: [],
   };
 });
-registerParser("xlsx", async (data, name) => {
+registerParser("xlsx", async (data, name, _signal, options) => {
   const files = office(data);
   const shared = files["xl/sharedStrings.xml"]
     ? readXML(files["xl/sharedStrings.xml"])
@@ -384,13 +488,71 @@ registerParser("xlsx", async (data, name) => {
         return values;
       },
     );
+    if (options?.advanced) {
+      // Sparse row indices retain blank separators between tables.
+      const sparse: string[][] = [];
+      const sourceRows = Array.isArray(rows) ? rows : [rows];
+      sourceRows.forEach((row, index) => {
+        const n = Math.max(
+          0,
+          Number((row as Record<string, unknown>)["@_r"] ?? index + 1) - 1,
+        );
+        if (!Number.isInteger(n) || n > 50000)
+          throw new KnowledgeError("DOCUMENT_LIMIT");
+        while (sparse.length < n) sparse.push([]);
+        sparse[n] = parsedRows[index]!;
+      });
+      parsedRows.splice(0, parsedRows.length, ...sparse);
+      const merges =
+        (sheet?.mergeCells as Record<string, unknown>)?.mergeCell ?? [];
+      const location = (ref: string) => {
+        const match = /^([A-Z]+)([1-9]\d*)$/.exec(ref);
+        if (!match) throw new KnowledgeError("INVALID_DOCUMENT");
+        const col =
+          [...match[1]!].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) -
+          1;
+        return { row: Number(match[2]) - 1, col };
+      };
+      let expandedCells = 0;
+      for (const merge of Array.isArray(merges) ? merges : [merges]) {
+        const [first, last] = String(
+          (merge as Record<string, unknown>)["@_ref"] ?? "",
+        ).split(":");
+        if (!first || !last) continue;
+        const from = location(first),
+          to = location(last);
+        if (
+          to.col > 1000 ||
+          to.row > 50000 ||
+          to.col < from.col ||
+          to.row < from.row ||
+          (to.col - from.col + 1) * (to.row - from.row + 1) > 10000
+        )
+          throw new KnowledgeError("DOCUMENT_LIMIT");
+        expandedCells += (to.col - from.col + 1) * (to.row - from.row + 1);
+        if (expandedCells > 100000) throw new KnowledgeError("DOCUMENT_LIMIT");
+        const value = parsedRows[from.row]?.[from.col] ?? "";
+        for (let r = from.row; r <= to.row; r++) {
+          parsedRows[r] ??= [];
+          for (let c = from.col; c <= to.col; c++)
+            if (!parsedRows[r]![c]) parsedRows[r]![c] = value;
+        }
+      }
+    }
     return {
       ...tableSection(
         parsedRows,
         i + 1,
         sheetNames.get(key) || "Sheet " + (i + 1),
       ),
-      metadata: { table: true, columns: parsedRows[0] ?? [], sheet: key },
+      metadata: {
+        table: true,
+        columns: parsedRows[0] ?? [],
+        sheet: key,
+        ...(options?.advanced
+          ? { rawRows: parsedRows, layoutHeuristic: true }
+          : {}),
+      },
     };
   });
   return {
@@ -435,6 +597,40 @@ registerParser("pdf", async (data, name, signal, options) => {
           return line + item.str + (item.hasEOL ? "\n" : "");
         })
         .join("");
+      let rawRows: string[][] | undefined;
+      if (options?.advanced) {
+        const items = content.items
+          .filter((item) => "str" in item && item.str.trim().length > 0)
+          .map((item) => {
+            if (!("str" in item)) throw new KnowledgeError("INVALID_DOCUMENT");
+            return {
+              text: item.str,
+              x: item.transform[4]!,
+              y: item.transform[5]!,
+              width: item.width,
+            };
+          })
+          .sort((a, b) => b.y - a.y || a.x - b.x);
+        const lines: (typeof items)[] = [];
+        for (const item of items) {
+          const line = lines.at(-1);
+          if (!line || Math.abs(line[0]!.y - item.y) > 3) lines.push([item]);
+          else line.push(item);
+        }
+        rawRows = lines.map((line) => {
+          line.sort((a, b) => a.x - b.x);
+          const cells: string[] = [];
+          let last: (typeof items)[number] | undefined;
+          for (const item of line) {
+            if (last && item.x - last.x - last.width <= 12)
+              cells[cells.length - 1] += " " + item.text;
+            else cells.push(item.text);
+            last = item;
+          }
+          return cells;
+        });
+        text = rawRows.map((row) => row.join(" | ")).join("\n");
+      }
       let ocr = false;
       if (text.replace(/\s/g, "").length < 20 && options?.ocr) {
         if (++ocrPages > (options.maxOcrPages ?? 20))
@@ -443,7 +639,20 @@ registerParser("pdf", async (data, name, signal, options) => {
         ocr = true;
       }
       if (!ocr && text.replace(/\s/g, "").length < 20) unrecognizedPages++;
-      sections.push(section(text, page, null, { ocr, positionalText: !ocr }));
+      sections.push(
+        section(text, page, null, {
+          ocr,
+          positionalText: !ocr,
+          ...(options?.advanced
+            ? {
+                rawRows: ocr
+                  ? text.split("\n").map((line) => line.split(/\t| {2,}| \| /))
+                  : rawRows,
+                layoutHeuristic: true,
+              }
+            : {}),
+        }),
+      );
       p.cleanup();
     }
     return {
