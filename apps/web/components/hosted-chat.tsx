@@ -5,6 +5,7 @@ import { ChatPanel } from "./chat-panel";
 import { requestJson } from "./agent-client";
 export function HostedChat({ deploymentId }: { deploymentId: string }) {
   const [deployment, setDeployment] = useState<{
+    branding?: import("@agentconnect/schemas/customer-experience").Branding;
     name: string;
     description: string;
     welcomeMessage: string;
@@ -26,10 +27,32 @@ export function HostedChat({ deploymentId }: { deploymentId: string }) {
     };
   }, [deploymentId]);
   return (
-    <main className="hosted-shell">
+    <main
+      className="hosted-shell"
+      style={
+        deployment?.branding
+          ? ({
+              "--brand": deployment.branding.primaryColor,
+              "--accent": deployment.branding.primaryColor,
+              background: deployment.branding.backgroundColor,
+              color: deployment.branding.textColor,
+            } as React.CSSProperties)
+          : undefined
+      }
+    >
       <a className="brand" href="/">
-        <Boxes />
-        AgentConnect
+        {deployment?.branding?.logoUrl ? (
+          <img
+            src={deployment.branding.logoUrl}
+            alt={deployment.name + " logo"}
+            width={36}
+            height={36}
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <Boxes />
+        )}
+        {deployment?.branding?.name || "AgentConnect"}
       </a>
       {error ? (
         <div className="error-banner" role="alert">

@@ -50,7 +50,7 @@ async function sourceFor(r: FastifyRequest, kb: KnowledgeBase) {
   if (!source) throw new HttpError(404, "Source not found");
   return source;
 }
-async function addSource(
+export async function addSource(
   r: FastifyRequest,
   kb: KnowledgeBase,
   userId: string,
@@ -60,6 +60,7 @@ async function addSource(
   filename: string | null,
   metadata: Record<string, unknown>,
   sourceUrl: string | null = null,
+  transaction?: import("postgres").TransactionSql,
 ) {
   const sourceId = randomUUID();
   const key = bytes
@@ -67,7 +68,7 @@ async function addSource(
     : null;
   if (key && bytes) await storeKnowledge(key, bytes);
   try {
-    await sql.begin(async (tx) => {
+    const save = async (tx: import("postgres").TransactionSql) => {
       const [active] =
         await tx`SELECT id FROM knowledge_bases WHERE id=${kb.id} AND archived_at IS NULL FOR SHARE`;
       if (!active) throw new HttpError(404, "Knowledge base unavailable");
@@ -82,7 +83,9 @@ async function addSource(
         kb.organization_id,
         kb.workspace_id,
       );
-    });
+    };
+    if (transaction) await save(transaction);
+    else await sql.begin(save);
   } catch (e) {
     if (key) await deleteKnowledge(key).catch(() => {});
     throw e;

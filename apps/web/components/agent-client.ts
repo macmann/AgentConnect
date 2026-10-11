@@ -71,6 +71,7 @@ export async function streamChat(
   signal: AbortSignal,
   onEvent: (event: string, data: StreamData) => void,
   guestToken?: string,
+  customerToken?: string,
 ) {
   const response = await fetch(apiBase + path, {
     method: "POST",
@@ -78,6 +79,7 @@ export async function streamChat(
     signal,
     headers: {
       "Content-Type": "application/json",
+      ...(customerToken ? { "x-customer-token": customerToken } : {}),
       ...(guestToken ? { Authorization: `Bearer ${guestToken}` } : {}),
     },
     body: JSON.stringify(body),

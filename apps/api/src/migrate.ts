@@ -59,7 +59,11 @@ try {
                                                       ? "0022_support_continuation.sql"
                                                       : version === "0023"
                                                         ? "0023_support_operations.sql"
-                                                        : "0024_bank_core_ai.sql";
+                                                        : version === "0024"
+                                                          ? "0024_bank_core_ai.sql"
+                                                          : version === "0025"
+                                                            ? "0025_customer_insights.sql"
+                                                            : "0026_presence_reporting.sql";
         await tx.unsafe(
           await readFile(
             new URL(`../../../packages/db/migrations/${file}`, import.meta.url),

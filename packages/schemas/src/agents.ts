@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { contextControls } from "@agentconnect/schemas/customer-experience";
 import {
   quickAction,
   supportJourney,
@@ -46,6 +47,7 @@ export const promptSchema = z.object({
 });
 export const agentConfig = z
   .object({
+    contextControls,
     generative: generativeConfig,
     answerPolicy,
     quickActions: z.array(quickAction).max(20).default([]),

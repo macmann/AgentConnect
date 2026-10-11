@@ -1,3 +1,4 @@
+import { controlledProvider, tokenCount } from "./context-control.js";
 import { generateGroundedAnswer } from "./bank-runtime.js";
 import { planKnowledgeUsage } from "./knowledge-usage.js";
 import { agentConfig } from "@agentconnect/schemas/agents";
@@ -75,7 +76,7 @@ export async function executeAgentSnapshot(
   await validateKnowledgeSelection(c.rag, ctx.workspaceId, ctx.organizationId);
   await validateToolIds(c.tools.toolIds, ctx);
   const conn = await connection(model, ctx.workspaceId, ctx.organizationId);
-  const provider = providerOverride
+  const originalProvider = providerOverride
     ? providerOverride(conn)
     : createProvider(
         conn,
@@ -84,19 +85,23 @@ export async function executeAgentSnapshot(
           hosts(config.MODEL_PRIVATE_HOSTS),
         ),
       );
+  const provider = controlledProvider(originalProvider, c, model).provider;
+  const contextBudget = c.contextControls.enabled
+    ? Infinity
+    : model.contextWindow - c.maxOutputTokens;
   const knowledgePlan = await planKnowledgeUsage(
     c,
     provider,
     [{ role: "user", content: input }],
     signal,
-    model.contextWindow - c.maxOutputTokens,
+    contextBudget,
     c.rag.usageMode === "automatic" && c.rag.knowledgeBaseIds.length
       ? await sql<
           { name: string; description: string }[]
         >`SELECT name,description FROM knowledge_bases WHERE id=ANY(${c.rag.knowledgeBaseIds}::uuid[]) AND workspace_id=${ctx.workspaceId} AND organization_id=${ctx.organizationId} AND archived_at IS NULL`
       : [],
   );
-  const sources = knowledgePlan.retrieve
+  let sources = knowledgePlan.retrieve
     ? await new PostgresRagTool(embeddingOverride).execute(
         input,
         c.rag.knowledgeBaseIds,
@@ -109,6 +114,15 @@ export async function executeAgentSnapshot(
         signal,
       )
     : [];
+  if (c.contextControls.enabled) {
+    let used = 0;
+    sources = sources.filter((source) => {
+      const size = tokenCount(source.content, c.contextControls.tokenizer);
+      if (used + size > c.contextControls.knowledgeBudget) return false;
+      used += size;
+      return true;
+    });
+  }
   if (c.answerPolicy.mode === "grounded") {
     const result = await generateGroundedAnswer(
       c,
@@ -116,7 +130,7 @@ export async function executeAgentSnapshot(
       [{ role: "user", content: input }],
       sources,
       signal,
-      model.contextWindow - c.maxOutputTokens,
+      contextBudget,
     );
     return {
       output: result.message,
@@ -135,7 +149,7 @@ export async function executeAgentSnapshot(
     ctx,
     signal,
     () => {},
-    model.contextWindow - c.maxOutputTokens,
+    contextBudget,
   );
   tools.inputTokens =
     tools.inputTokens === null || knowledgePlan.inputTokens === null
@@ -148,10 +162,11 @@ export async function executeAgentSnapshot(
   const grounding =
     (sources.length ? groundedPrompt(sources) : "") + tools.grounding;
   if (
+    !c.contextControls.enabled &&
     Buffer.byteLength(input) +
       Buffer.byteLength(JSON.stringify(c.prompt)) +
       Buffer.byteLength(grounding) >
-    model.contextWindow - c.maxOutputTokens
+      model.contextWindow - c.maxOutputTokens
   )
     throw new ProviderError("CONTEXT_LIMIT");
   let text = "",

@@ -1,4 +1,5 @@
 "use client";
+import { CustomerBranding } from "./customer-branding";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -19,6 +20,7 @@ type Deployment = {
   agent_name: string;
   enabled: boolean;
   widget_settings: Partial<WidgetSettings>;
+  branding?: unknown;
 };
 export function ChannelsStudio({
   workspaceId,
@@ -337,6 +339,12 @@ function WidgetEditor({
         </p>
       )}
       {saved && <p role="status">Widget settings saved.</p>}
+      <CustomerBranding
+        workspaceId={workspaceId}
+        deploymentId={deployment.id}
+        value={deployment.branding}
+        manage={manage}
+      />
       <label>
         Website embed code
         <textarea readOnly value={`<script async ${attributes}></script>`} />

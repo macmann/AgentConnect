@@ -1,7 +1,22 @@
 import { advanceJourney, generateGroundedAnswer } from "./bank-runtime.js";
+import {
+  controlledProvider,
+  componentPreview,
+  fitHistory,
+  summarizeHistory,
+  reserveTokens,
+  settleTokens,
+  tokenCount,
+} from "./context-control.js";
+import {
+  customerSession,
+  customerOwnsConversation,
+  customerConversationActive,
+} from "./customer-sessions.js";
+import { branding } from "@agentconnect/schemas/customer-experience";
 import { planKnowledgeUsage } from "./knowledge-usage.js";
 import { continuationContext } from "./support/continuation.js";
-import { evaluateEscalation } from "./support/policy.js";
+import { evaluateEscalation, effectivePolicy } from "./support/policy.js";
 import { assertQualityGate } from "./quality-gate.js";
 import { requireWidgetOrigin } from "./channels.js";
 import {
@@ -90,6 +105,7 @@ type ConversationRow = {
   version_id: string | null;
   user_id: string | null;
   guest_token_hash: string | null;
+  customer_session_id?: string | null;
   config_snapshot: AgentConfig;
   model_snapshot: ModelSnapshot;
 };
@@ -193,13 +209,15 @@ async function streamChat(
   const c = agentConfig.parse(conversation.config_snapshot);
   const model = modelSnapshotSchema.parse(conversation.model_snapshot);
   validateAgentModel(c, model);
-  const provider = factory(
+  const originalProvider = factory(
     await connection(
       model,
       conversation.workspace_id,
       conversation.organization_id,
     ),
   );
+  const metered = controlledProvider(originalProvider, c, model);
+  const provider = metered.provider;
   const runId = randomUUID();
   const span = trace.getTracer("agentconnect-runtime").startSpan("agent.run", {
     attributes: {
@@ -242,6 +260,20 @@ async function streamChat(
         c.tools.toolIds,
       );
       await tx`INSERT INTO agent_runs(id,conversation_id,organization_id,workspace_id,status,trace_id) VALUES (${runId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},'running',${traceId})`;
+      const { policy } = await effectivePolicy(tx, locked as never);
+      await reserveTokens(
+        tx,
+        c,
+        model,
+        conversation,
+        runId,
+        policy.humanEntryMode !== "disabled" &&
+          !!(
+            policy.agentCanRequestHandoff ||
+            policy.sentimentEscalationEnabled ||
+            policy.intentRules.length
+          ),
+      );
       await tx`UPDATE conversations SET last_customer_message_at=now() WHERE id=${conversation.id}`;
       await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content) VALUES (${randomUUID()},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'user',${message})`;
     });
@@ -254,10 +286,23 @@ async function streamChat(
       );
     throw e;
   }
+  const [summaryState] =
+    await sql`SELECT context_summary FROM conversations WHERE id=${conversation.id}`;
   const rows = await sql<
-    { role: "user" | "assistant"; content: string }[]
-  >`SELECT m.role,m.content FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${conversation.id} AND (ar.status='completed' OR ar.id=${runId}) ORDER BY m.created_at DESC,m.id DESC LIMIT ${c.historyWindow * 2}`;
-  const messages: ChatMessage[] = rows.reverse();
+    {
+      id: string;
+      created_at: Date;
+      role: "user" | "assistant";
+      content: string;
+    }[]
+  >`SELECT m.id,m.created_at,m.role,m.content FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${conversation.id} AND (ar.status='completed' OR ar.id=${runId}) AND (${c.contextControls.enabled && c.contextControls.summarize ? (summaryState!.context_summary.beforeTime ?? null) : null}::timestamptz IS NULL OR (m.created_at,m.id)>(${c.contextControls.enabled && c.contextControls.summarize ? (summaryState!.context_summary.beforeTime ?? null) : null}::timestamptz,${summaryState!.context_summary.beforeId ?? "00000000-0000-0000-0000-000000000000"}::uuid)) ORDER BY m.created_at DESC,m.id DESC LIMIT ${c.contextControls.enabled && c.contextControls.summarize ? 200 : c.historyWindow * 2}`;
+  const fitted = fitHistory(c, model, rows.reverse());
+  const messages: ChatMessage[] = fitted.messages.map(({ role, content }) => ({
+    role,
+    content,
+  }));
+  let newSummary: string | null = null;
+  let breakdown: ReturnType<typeof componentPreview> | null = null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90000);
   timer.unref();
@@ -319,10 +364,44 @@ async function streamChat(
       write("token", { text: output });
     } else {
       if (
+        c.contextControls.enabled &&
+        c.contextControls.summarize &&
+        fitted.removed.length
+      ) {
+        const [saved] =
+          await sql`SELECT context_summary FROM conversations WHERE id=${conversation.id}`;
+        try {
+          newSummary = await summarizeHistory(
+            provider,
+            c,
+            fitted.removed,
+            saved!.context_summary.text ?? "",
+            controller.signal,
+          );
+        } catch (e) {
+          if (controller.signal.aborted) throw e;
+          r.log.warn(
+            { runId, code: "SUMMARY_UNAVAILABLE" },
+            "Context summary unavailable; retaining recent turns",
+          );
+        }
+      }
+      const [savedContext] =
+        await sql`SELECT context_summary FROM conversations WHERE id=${conversation.id}`;
+      const summaryText =
+        c.contextControls.enabled && c.contextControls.summarize
+          ? (newSummary ?? savedContext!.context_summary.text ?? "")
+          : "";
+      if (summaryText)
+        continuation.grounding +=
+          "\nUntrusted conversation summary (not approved factual guidance):\n" +
+          JSON.stringify(summaryText);
+      if (
+        !c.contextControls.enabled &&
         Buffer.byteLength(JSON.stringify(messages)) +
           Buffer.byteLength(JSON.stringify(c.prompt)) +
           Buffer.byteLength(continuation.grounding) >
-        model.contextWindow - c.maxOutputTokens
+          model.contextWindow - c.maxOutputTokens
       )
         throw new ProviderError("CONTEXT_LIMIT");
       const knowledgePlan = await planKnowledgeUsage(
@@ -330,7 +409,9 @@ async function streamChat(
         provider,
         messages,
         controller.signal,
-        model.contextWindow - c.maxOutputTokens,
+        c.contextControls.enabled
+          ? Infinity
+          : model.contextWindow - c.maxOutputTokens,
         c.rag.usageMode === "automatic" && c.rag.knowledgeBaseIds.length
           ? await sql<
               { name: string; description: string }[]
@@ -350,6 +431,18 @@ async function streamChat(
           },
           controller.signal,
         );
+        if (c.contextControls.enabled) {
+          let used = 0;
+          sources = sources.filter((source) => {
+            const size = tokenCount(
+              source.content,
+              c.contextControls.tokenizer,
+            );
+            if (used + size > c.contextControls.knowledgeBudget) return false;
+            used += size;
+            return true;
+          });
+        }
         retrievalMs = Math.round(performance.now() - started);
         if (!sources.length && c.answerPolicy.mode !== "grounded")
           throw new KnowledgeError("NO_RELEVANT_SOURCES");
@@ -362,7 +455,9 @@ async function streamChat(
           [...messages.slice(0, -1), { role: "user", content: journey!.query }],
           sources,
           controller.signal,
-          model.contextWindow - c.maxOutputTokens,
+          c.contextControls.enabled
+            ? Infinity
+            : model.contextWindow - c.maxOutputTokens,
           continuation.grounding,
         );
         output = result.message;
@@ -394,7 +489,9 @@ async function streamChat(
           },
           controller.signal,
           (data) => write("tool", data),
-          model.contextWindow - c.maxOutputTokens,
+          c.contextControls.enabled
+            ? Infinity
+            : model.contextWindow - c.maxOutputTokens,
           continuation.grounding,
           messages,
         );
@@ -416,11 +513,20 @@ async function streamChat(
               ` Allowed block types: ${c.generative.allowedBlocks.join(",")}.`
             : "");
         // Conservative UTF-8 byte budget avoids sending an oversized context to providers.
+        breakdown = componentPreview(
+          c,
+          model,
+          messages,
+          sources.length ? groundedPrompt(sources) : "",
+          toolsResult.grounding,
+          continuation.grounding,
+        );
         if (
+          !c.contextControls.enabled &&
           Buffer.byteLength(JSON.stringify(messages)) +
             Buffer.byteLength(JSON.stringify(c.prompt)) +
             Buffer.byteLength(grounding) >
-          model.contextWindow - c.maxOutputTokens
+            model.contextWindow - c.maxOutputTokens
         )
           throw new ProviderError("CONTEXT_LIMIT");
         for await (const event of runtime.run(
@@ -552,6 +658,9 @@ async function streamChat(
           await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content,citations,ui_blocks) VALUES (${messageId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'assistant',${output},${tx.json(citations.map((s) => ({ ...s })))},${tx.json(uiBlocks as never)})`;
         for (const a of artifacts)
           await tx`INSERT INTO generated_artifacts(id,organization_id,workspace_id,message_id,name,content_type,storage_key,byte_size) VALUES (${a.id},${conversation.organization_id},${conversation.workspace_id},${messageId},${a.name},${a.contentType},${a.key},${a.byteSize})`;
+        if (status === "completed" && newSummary)
+          await tx`UPDATE conversations SET context_summary=${tx.json({ text: newSummary, updatedAt: new Date().toISOString(), tokenizer: c.contextControls.tokenizer, beforeTime: (fitted.removed.at(-1) as (typeof rows)[number] | undefined)?.created_at?.toISOString(), beforeId: (fitted.removed.at(-1) as (typeof rows)[number] | undefined)?.id })} WHERE id=${conversation.id}`;
+        await tx`UPDATE agent_runs SET context_breakdown=${tx.json(breakdown ?? componentPreview(c, model, messages, sources.length ? groundedPrompt(sources) : "", "", continuation.grounding))} WHERE id=${runId}`;
         if (status === "completed")
           await tx`UPDATE conversations SET journey_state=${tx.json(journey!.state as never)} WHERE id=${conversation.id}`;
         await tx`UPDATE agent_runs SET answer_kind=${answerKind},status=${status},input_tokens=${inputTokens},output_tokens=${outputTokens},error_code=${errorCode},finished_at=now(),retrieval=${tx.json(sources.map((s) => ({ ...s })))},retrieval_ms=${retrievalMs} WHERE id=${runId}`;
@@ -581,6 +690,10 @@ async function streamChat(
           "Support escalation evaluation failed",
         );
       }
+      await sql.begin(async (tx) => {
+        await settleTokens(tx, runId, metered.usage().reported);
+        await tx`UPDATE agent_runs SET context_breakdown=context_breakdown || ${tx.json({ providerCalls: metered.usage().requests, quotaChargedTokens: metered.usage().reported })}::jsonb WHERE id=${runId}`;
+      });
       if (errorCode)
         write("error", {
           code: errorCode,
@@ -1135,15 +1248,60 @@ export async function registerAgentRoutes(
       );
     },
   );
+  app.get("/conversations/:conversationId/context", async (r) => {
+    const u = await actor(r);
+    const [c] =
+      await sql`SELECT workspace_id,organization_id FROM conversations WHERE id=${id(params(r).conversationId)}`;
+    if (!c) throw new HttpError(404, "Conversation not found");
+    await workspaceAccess(u.id, c.workspace_id, "conversation:view");
+    return sql`SELECT id,started_at,status,input_tokens,output_tokens,context_breakdown FROM agent_runs WHERE conversation_id=${id(params(r).conversationId)} AND workspace_id=${c.workspace_id} ORDER BY started_at DESC,id DESC LIMIT 30`;
+  });
+  app.post("/agents/:agentId/context-preview", async (r) => {
+    const u = await actor(r);
+    const [a] =
+      await sql`SELECT * FROM agents WHERE id=${id(params(r).agentId)} AND archived_at IS NULL`;
+    if (!a) throw new HttpError(404, "Agent not found");
+    await workspaceAccess(u.id, a.workspace_id, "conversation:view");
+    const data = z
+      .object({
+        config: agentConfig.optional(),
+        message: z.string().max(12000).default(""),
+        history: z
+          .array(
+            z.object({
+              role: z.enum(["user", "assistant"]),
+              content: z.string().max(12000),
+            }),
+          )
+          .max(100)
+          .default([]),
+        knowledge: z.string().max(100000).default(""),
+        tools: z.string().max(100000).default(""),
+      })
+      .parse(r.body);
+    const c = data.config ?? agentConfig.parse(a.draft_config);
+    const m = await modelSnapshot(c.modelId, a.workspace_id);
+    return componentPreview(
+      c,
+      m,
+      [...data.history, { role: "user", content: data.message }],
+      data.knowledge,
+      data.tools,
+    );
+  });
   for (const channel of ["deployments", "widgets"])
     app.get(`/public/${channel}/:deploymentId`, async (r) => {
       const d = await publicDeployment(id(params(r).deploymentId));
       const c = agentConfig.parse(d.config);
+      const [presentation] =
+        await sql`SELECT branding FROM deployments WHERE id=${d.id}`;
+      const b = branding.parse(presentation!.branding);
       return {
+        branding: b,
         id: d.id,
-        name: d.name,
+        name: b.name || d.name,
         description: d.public_description,
-        welcomeMessage: c.welcomeMessage,
+        welcomeMessage: b.welcomeMessage || c.welcomeMessage,
         conversationStarters: c.conversationStarters,
         quickActions: c.quickActions,
         ...(channel === "widgets"
@@ -1166,6 +1324,9 @@ export async function registerAgentRoutes(
         if (channel === "widgets") await requireWidgetOrigin(r);
         const d = await publicDeployment(id(params(r).deploymentId));
         const data = chatInput.parse(r.body);
+        const customer = await customerSession(r, d.id);
+        if (r.headers["x-customer-token"] && !customer)
+          throw new HttpError(401, "Customer session expired or unavailable");
         let conversation: ConversationRow | undefined;
         let raw: string | undefined;
         if (data.conversationId) {
@@ -1174,8 +1335,11 @@ export async function registerAgentRoutes(
           >`SELECT * FROM conversations WHERE id=${data.conversationId} AND deployment_id=${d.id} AND user_id IS NULL`;
           const bearer = r.headers.authorization?.replace(/^Bearer /, "") ?? "";
           if (
-            !conversation?.guest_token_hash ||
-            !equalToken(bearer, conversation.guest_token_hash)
+            !conversation ||
+            !(await customerConversationActive(conversation)) ||
+            (!(await customerOwnsConversation(r, conversation)) &&
+              (!conversation.guest_token_hash ||
+                !equalToken(bearer, conversation.guest_token_hash)))
           )
             throw new HttpError(404, "Conversation not found");
           const [binding] =
@@ -1199,6 +1363,10 @@ export async function registerAgentRoutes(
           [conversation] = await sql<
             ConversationRow[]
           >`INSERT INTO conversations(id,organization_id,workspace_id,agent_id,version_id,deployment_id,guest_token_hash,config_snapshot,model_snapshot,channel,widget_origin) VALUES (${randomUUID()},${d.organization_id},${d.workspace_id},${d.agent_id},${d.version_id},${d.id},${digest(raw)},${sql.json(d.config)},${sql.json(d.model_snapshot)},${channel === "widgets" ? "widget" : "hosted"},${channel === "widgets" ? r.headers.origin! : null}) RETURNING *`;
+        }
+        if (customer && !data.conversationId) {
+          await sql`UPDATE conversations SET customer_session_id=${customer.id} WHERE id=${conversation!.id}`;
+          conversation!.customer_session_id = customer.id;
         }
         await streamChat(
           r,

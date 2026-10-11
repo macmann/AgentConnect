@@ -56,6 +56,7 @@ const labels: Record<string, string> = {
   conversationStarters: "Conversation starters",
 };
 export function fieldSection(field: string): ConfigureSection {
+  if (field.startsWith("config.contextControls")) return "advanced";
   if (field.startsWith("config.prompt")) return "prompt";
   if (field.startsWith("config.answerPolicy")) return "knowledge";
   if (field.startsWith("config.rag")) return "knowledge";

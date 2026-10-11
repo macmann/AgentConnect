@@ -82,6 +82,8 @@ test.afterAll(async () => {
   try {
     await sql.begin(async (tx) => {
       for (const table of [
+        "knowledge_improvements",
+        "conversation_reviews",
         "handoff_events",
         "messages",
         "agent_runs",
@@ -198,6 +200,23 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
   await page
     .getByLabel("Bank recovery — knowledge release", { exact: true })
     .selectOption({ label: "Version 1 · Approved recovery v1" });
+  await page
+    .getByRole("navigation", { name: "Configure sections" })
+    .getByRole("button", { name: "Advanced", exact: true })
+    .click();
+  await page
+    .getByLabel("Enable tokenizer-aware context budgeting", { exact: true })
+    .check();
+  await page.getByText("Preview token components", { exact: true }).click();
+  await page
+    .getByLabel("Example user message", { exact: true })
+    .fill("Where can I get approved recovery guidance?");
+  await page
+    .getByRole("button", { name: "Preview draft payload", exact: true })
+    .click();
+  await expect(
+    page.locator("pre").filter({ hasText: "outputReservation" }),
+  ).toBeVisible();
   const savedResponse = page.waitForResponse(
     (r) =>
       r.url().endsWith(`/agents/${agent}`) && r.request().method() === "PUT",
@@ -232,10 +251,57 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
     "put",
   );
   await sql`UPDATE deployments SET widget_settings=${sql.json({ enabled: true, access: "restricted", allowedOrigins: ["http://localhost:4567"], theme: "light", position: "right", launcher: "Chat", greeting: "Bank support", width: 380, height: 560, language: "en" })} WHERE id=${deployment}`;
+  await page.goto(url("Channels"));
+  await page
+    .getByText("Bank support · Bank support draft", { exact: true })
+    .count()
+    .then(async (count) => {
+      if (count)
+        await page
+          .getByText("Bank support · Bank support draft", { exact: true })
+          .click();
+      else
+        await page
+          .locator("details")
+          .filter({ hasText: "Bank support" })
+          .first()
+          .locator("summary")
+          .first()
+          .click();
+    });
+  await page.getByLabel("Chatbot name", { exact: true }).fill("Bank Care");
+  await page
+    .getByLabel("Welcome message", { exact: true })
+    .fill("Welcome to Bank Care");
+  await page.getByLabel("Button color", { exact: true }).fill("#123456");
+  await page
+    .getByRole("button", { name: "Save branding", exact: true })
+    .click();
+  await expect(
+    page.getByText("Branding saved for hosted chat and widget.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.goto(url("Operations", "&operationsSection=Insights"));
+  await expect(
+    page.getByRole("heading", {
+      name: "Customer insights and reports",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Export Excel", exact: true }),
+  ).toBeEnabled();
   const guest = await browser.newContext();
   try {
     const chat = await guest.newPage();
     await chat.goto(`/chat/${deployment}`);
+    await expect(
+      chat.getByRole("heading", { name: "Bank Care", exact: true }).first(),
+    ).toBeVisible();
+    await expect(
+      chat.getByText("Welcome to Bank Care", { exact: true }),
+    ).toBeVisible();
     await expect(
       chat.getByRole("button", { name: "Bill Payment", exact: true }),
     ).toBeVisible();
@@ -256,6 +322,59 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
         exact: true,
       }),
     ).toBeVisible();
+    await chat.reload();
+    await expect(
+      chat.getByText("Follow the approved recovery screen [1].", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await chat.getByText(/Previous conversations/).click();
+    await expect(
+      chat.getByRole("button", { name: /I forgot my password/ }),
+    ).toBeVisible();
+    const [assistant] =
+      await sql`SELECT m.id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.deployment_id=${deployment} AND m.role='assistant' ORDER BY m.created_at DESC LIMIT 1`;
+    await post(context, `/messages/${assistant.id}/reviews`, {
+      rating: "dislike",
+      correctedResponse: "Use the bank-approved recovery screen.",
+      reason: "Needs clearer recovery guidance",
+    });
+    await page.goto(url("Operations", "&operationsSection=Knowledge gaps"));
+    await page.getByText(/I cannot find recovery ·/).click();
+    await page
+      .getByRole("button", {
+        name: "Turn correction into knowledge draft",
+        exact: true,
+      })
+      .click();
+    await page
+      .getByLabel("Approval-required knowledge base", { exact: true })
+      .selectOption(kb);
+    await page
+      .getByRole("button", { name: "Create review draft", exact: true })
+      .click();
+    const correction = page
+      .locator("details")
+      .filter({ hasText: "I cannot find recovery · draft" });
+    await expect(correction).toBeVisible();
+    await auth(context, "reviewer");
+    await page.goto(url("Operations", "&operationsSection=Knowledge gaps"));
+    const reviewedDraft = page
+      .locator("details")
+      .filter({ hasText: "I cannot find recovery · draft" });
+    await reviewedDraft.locator("summary").click();
+    await reviewedDraft
+      .getByRole("button", { name: "Approve correction", exact: true })
+      .click();
+    await expect(
+      page
+        .locator("details")
+        .filter({ hasText: "I cannot find recovery · approved" }),
+    ).toBeVisible();
+    const [approvedCorrection] =
+      await sql`SELECT reviewer_id FROM knowledge_improvements WHERE organization_id=${org}`;
+    expect(approvedCorrection.reviewer_id).toBe(users.reviewer);
+    await auth(context, "owner");
     const widget = await guest.newPage();
     await widget.goto("http://localhost:4567");
     await widget.getByRole("button", { name: "Chat", exact: true }).click();
@@ -287,6 +406,31 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
     await widget
       .getByRole("button", { name: "Connect me", exact: true })
       .click();
+    await expect(
+      widget.getByText("Waiting for human support. You can leave a message.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await widget
+      .getByLabel("Message", { exact: true })
+      .fill("Please review this transfer reference");
+    await widget.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(
+      widget.getByText("Please review this transfer reference", {
+        exact: true,
+      }),
+    ).toHaveCount(1);
+    await expect(
+      widget.getByRole("button", { name: "Send", exact: true }),
+    ).toBeEnabled();
+    await widget.reload();
+    await widget.getByRole("button", { name: "Chat", exact: true }).click();
+    await expect(widget.getByText("REF-456", { exact: true })).toBeVisible();
+    await expect(
+      widget.getByText("Please review this transfer reference", {
+        exact: true,
+      }),
+    ).toHaveCount(1);
     await expect(
       widget.getByText("Waiting for human support. You can leave a message.", {
         exact: true,
