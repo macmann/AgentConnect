@@ -69,7 +69,14 @@ export const executeToolInput = z.object({
 export const agentTools = z
   .object({
     toolIds: z.array(z.uuid()).max(8).default([]),
+    usageMode: z.enum(["automatic", "always", "disabled"]).default("automatic"),
+    usageInstructions: z.string().trim().max(4000).default(""),
     maxCalls: z.number().int().min(1).max(5).default(3),
   })
-  .default({ toolIds: [], maxCalls: 3 });
+  .default({
+    toolIds: [],
+    maxCalls: 3,
+    usageMode: "automatic",
+    usageInstructions: "",
+  });
 export type ToolConfig = z.infer<typeof toolConfig>;

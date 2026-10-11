@@ -277,6 +277,24 @@ test("Configure preserves a single draft across sections, validates locally, pre
   await expect(page.getByLabel("Instructions", { exact: true })).toHaveValue(
     "Explain the approved product steps.",
   );
+  await section(page, "Knowledge");
+  await page
+    .getByLabel("Usage policy", { exact: true })
+    .selectOption("automatic");
+  await page
+    .getByLabel("Usage instructions", { exact: true })
+    .fill("Skip greetings; search policies");
+  await section(page, "Tools");
+  await page
+    .getByLabel("Usage policy", { exact: true })
+    .selectOption("disabled");
+  await page
+    .getByLabel("Usage instructions", { exact: true })
+    .fill("Use only for current weather");
+  await section(page, "Knowledge");
+  await expect(page.getByLabel("Usage policy", { exact: true })).toHaveValue(
+    "automatic",
+  );
   await section(page, "Overview");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(
@@ -295,7 +313,17 @@ test("Configure preserves a single draft across sections, validates locally, pre
       ...config.prompt,
       instructions: "Explain the approved product steps.",
     },
-    rag: { ...config.rag, minScore: 0.45 },
+    rag: {
+      ...config.rag,
+      minScore: 0.45,
+      usageMode: "automatic",
+      usageInstructions: "Skip greetings; search policies",
+    },
+    tools: {
+      ...config.tools,
+      usageMode: "disabled",
+      usageInstructions: "Use only for current weather",
+    },
     conversationStarters: ["Card support", "Branch directory"],
   });
   await page.getByLabel("Agent name", { exact: true }).fill("Discard me");

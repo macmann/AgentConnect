@@ -9,6 +9,7 @@ import { config } from "../src/config.js";
 import { digest, hashPassword } from "../src/security.js";
 import { agentConfig } from "@agentconnect/schemas/agents";
 import {
+  runAgentTools,
   validateInputSchema,
   redact,
   executeTool,
@@ -517,6 +518,62 @@ test("Agent tool planning is bounded, grounded and traced with combined provider
   });
   assert(many.body.includes("TOOL_PLAN_INVALID"));
   overBudget = false;
+});
+test("Tool usage policies skip planning, permit no calls, require a call, and pass agent instructions", async () => {
+  const c = agentConfig.parse({
+    modelId: model,
+    prompt: { instructions: "Use tools only for weather" },
+    tools: { toolIds: [httpTool], usageInstructions: "Skip greetings" },
+  });
+  let plans = 0;
+  const provider = {
+    async *stream(request: import("@agentconnect/provider-sdk").ChatRequest) {
+      plans++;
+      assert(request.system.includes("Use tools only for weather"));
+      assert(request.system.includes("Skip greetings"));
+      yield { type: "token" as const, text: '{"calls":[]}' };
+      yield { type: "usage" as const, inputTokens: 2, outputTokens: 1 };
+    },
+  };
+  const ctx = { workspaceId: workspace, organizationId: org };
+  const signal = new AbortController().signal;
+  c.tools.usageMode = "disabled";
+  assert.deepEqual(
+    await runAgentTools(c, provider, "hi", ctx, signal, () => {}),
+    { grounding: "", inputTokens: 0, outputTokens: 0 },
+  );
+  assert.equal(plans, 0);
+  c.tools.usageMode = "automatic";
+  assert.equal(
+    (await runAgentTools(c, provider, "hi", ctx, signal, () => {})).grounding,
+    "",
+  );
+  assert.equal(plans, 1);
+  const caller = {
+    async *stream() {
+      yield {
+        type: "token" as const,
+        text: JSON.stringify({
+          calls: [{ toolId: httpTool, arguments: { city: "Yangon" } }],
+        }),
+      };
+      yield { type: "usage" as const, inputTokens: 2, outputTokens: 1 };
+    },
+  };
+  c.tools.usageMode = "always";
+  const required = await runAgentTools(
+    c,
+    caller,
+    "weather",
+    ctx,
+    signal,
+    () => {},
+  );
+  assert(required.grounding.includes("sunny"));
+  await assert.rejects(
+    runAgentTools(c, provider, "hi", ctx, signal, () => {}),
+    { code: "TOOL_REQUIRED" },
+  );
 });
 test("Optimistic updates, tool revocation and connector disabling prevent subsequent execution", async () => {
   const update = { ...input(), revision: 1, enabled: false };

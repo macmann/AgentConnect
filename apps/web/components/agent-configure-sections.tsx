@@ -363,6 +363,72 @@ export function PromptPreview({ draft }: { draft: Draft }) {
     </details>
   );
 }
+function UsagePolicy(p: SectionProps & { kind: "rag" | "tools" }) {
+  const policy = p.draft.config[p.kind];
+  const mode = policy.usageMode ?? (p.kind === "rag" ? "always" : "automatic");
+  return (
+    <Group title={p.kind === "rag" ? "Knowledge usage" : "Tool usage"}>
+      <Field
+        field={`config.${p.kind}.usageMode`}
+        label="Usage policy"
+        issues={p.issues}
+      >
+        {(a) => (
+          <select
+            {...a}
+            value={mode}
+            onChange={(e) =>
+              config(p, p.kind, {
+                ...policy,
+                usageMode: e.target.value as
+                  "automatic" | "always" | "disabled",
+              })
+            }
+          >
+            <option value="automatic">Automatic — only when relevant</option>
+            <option value="always">Always — required for every message</option>
+            <option value="disabled">
+              Disabled — keep attachments without using them
+            </option>
+          </select>
+        )}
+      </Field>
+      <Field
+        field={`config.${p.kind}.usageInstructions`}
+        label="Usage instructions"
+        issues={p.issues}
+        help="Describe when to use and when to skip. Automatic selection follows these instructions; Always requires usage and Disabled skips it. Instructions guide model decisions and do not override access permissions."
+      >
+        {(a) => (
+          <textarea
+            {...a}
+            maxLength={4000}
+            rows={4}
+            value={policy.usageInstructions ?? ""}
+            placeholder={
+              p.kind === "rag"
+                ? "Search for product policies. Skip greetings and general conversation."
+                : "Use search for current information. Skip greetings and questions answerable directly."
+            }
+            onChange={(e) =>
+              config(p, p.kind, {
+                ...policy,
+                usageInstructions: e.target.value,
+              })
+            }
+          />
+        )}
+      </Field>
+      <p className="muted">
+        {mode === "disabled"
+          ? "Attachments remain configured. No retrieval or tool planning runs."
+          : p.kind === "rag"
+            ? "Automatic adds a model decision before retrieval. Required retrieval still fails if no relevant sources are found."
+            : "The planner chooses relevant read-only tools. Always requires at least one call; it does not call every attached tool."}
+      </p>
+    </Group>
+  );
+}
 export function KnowledgeSection(p: SectionProps) {
   const c = p.draft.config;
   return (
@@ -385,6 +451,7 @@ export function KnowledgeSection(p: SectionProps) {
           })
         }
       />
+      <UsagePolicy {...p} kind="rag" />
       <Group title="Retrieval">
         <Field field="config.rag.mode" label="Retrieval mode" issues={p.issues}>
           {(a) => (
@@ -480,15 +547,7 @@ export function ToolsSection(p: SectionProps) {
           })
         }
       />
-      <Group title="Tool usage">
-        <p>
-          <strong>Tool selection: Automatic</strong>
-        </p>
-        <p className="muted">
-          The agent may call attached read-only tools when needed, based on
-          their descriptions and configuration.
-        </p>
-      </Group>
+      <UsagePolicy {...p} kind="tools" />
       <details
         className="configure-details"
         open={

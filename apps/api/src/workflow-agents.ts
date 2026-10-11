@@ -1,3 +1,4 @@
+import { planKnowledgeUsage } from "./knowledge-usage.js";
 import { agentConfig } from "@agentconnect/schemas/agents";
 import {
   createProvider,
@@ -90,7 +91,19 @@ export async function executeAgentSnapshot(
           hosts(config.MODEL_PRIVATE_HOSTS),
         ),
       );
-  const sources = c.rag.knowledgeBaseIds.length
+  const knowledgePlan = await planKnowledgeUsage(
+    c,
+    provider,
+    [{ role: "user", content: input }],
+    signal,
+    model.contextWindow - c.maxOutputTokens,
+    c.rag.usageMode === "automatic" && c.rag.knowledgeBaseIds.length
+      ? await sql<
+          { name: string; description: string }[]
+        >`SELECT name,description FROM knowledge_bases WHERE id=ANY(${c.rag.knowledgeBaseIds}::uuid[]) AND workspace_id=${ctx.workspaceId} AND organization_id=${ctx.organizationId} AND archived_at IS NULL`
+      : [],
+  );
+  const sources = knowledgePlan.retrieve
     ? await new PostgresRagTool(embeddingOverride).execute(
         input,
         c.rag.knowledgeBaseIds,
@@ -103,7 +116,7 @@ export async function executeAgentSnapshot(
         signal,
       )
     : [];
-  if (c.rag.knowledgeBaseIds.length && !sources.length)
+  if (knowledgePlan.retrieve && !sources.length)
     throw new KnowledgeError("NO_RELEVANT_SOURCES");
   const tools = await runAgentTools(
     c,
@@ -114,6 +127,14 @@ export async function executeAgentSnapshot(
     () => {},
     model.contextWindow - c.maxOutputTokens,
   );
+  tools.inputTokens =
+    tools.inputTokens === null || knowledgePlan.inputTokens === null
+      ? null
+      : tools.inputTokens + knowledgePlan.inputTokens;
+  tools.outputTokens =
+    tools.outputTokens === null || knowledgePlan.outputTokens === null
+      ? null
+      : tools.outputTokens + knowledgePlan.outputTokens;
   const grounding =
     (sources.length ? groundedPrompt(sources) : "") + tools.grounding;
   if (

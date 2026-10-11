@@ -1,3 +1,5 @@
+import { executeAgentSnapshot } from "../src/workflow-agents.js";
+import { modelSnapshotSchema } from "../src/agent-models.js";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -50,6 +52,16 @@ const embedding: EmbeddingFactory = (c) => ({
 });
 const chat: ProviderFactory = () => ({
   async *stream(input) {
+    if (input.system.startsWith("Decide whether")) {
+      yield {
+        type: "token",
+        text: JSON.stringify({
+          retrieve: input.messages.at(-1)?.content !== "hi",
+        }),
+      };
+      yield { type: "usage", inputTokens: 3, outputTokens: 2 };
+      return;
+    }
     generationCalls++;
     receivedGrounding =
       input.system.includes("<reference_passages>") &&
@@ -455,6 +467,98 @@ test("RAG assembles untrusted passages and persists actual cited references with
     "",
   );
   assert.equal(frames(publicChat.body).at(-1)!.data.citations.length, 1);
+});
+test("Knowledge automatic skips greetings, retrieves policies and persists usage; disabled skips retrieval", async () => {
+  const original = (await call("GET", `/agents/${agentId}`)).json();
+  let revision = original.revision;
+  const update = async (usageMode: string) => {
+    const result = await call("PUT", `/agents/${agentId}`, {
+      name: original.name,
+      description: original.description,
+      publicDescription: original.public_description,
+      config: {
+        ...original.draft_config,
+        rag: {
+          ...original.draft_config.rag,
+          usageMode,
+          usageInstructions: "Skip greetings; search policies",
+        },
+      },
+      revision,
+    });
+    assert.equal(result.statusCode, 200, result.body);
+    revision++;
+  };
+  try {
+    await update("automatic");
+    const greeting = await call("POST", `/agents/${agentId}/chat`, {
+      message: "hi",
+    });
+    assert.equal(frames(greeting.body).at(-1)!.event, "done", greeting.body);
+    assert(!greeting.body.includes("event: sources"));
+    assert.equal(receivedGrounding, false);
+    const policy = await call("POST", `/agents/${agentId}/chat`, {
+      message: "refund within 30 days",
+    });
+    assert.equal(frames(policy.body).at(-1)!.event, "done", policy.body);
+    assert(receivedGrounding);
+    const [run] =
+      await sql`SELECT input_tokens,output_tokens FROM agent_runs WHERE id=${frames(policy.body)[0]!.data.runId}`;
+    assert.equal(run!.input_tokens, 15);
+    assert.equal(run!.output_tokens, 11);
+    await update("disabled");
+    const disabled = await call("POST", `/agents/${agentId}/chat`, {
+      message: "refund within 30 days",
+    });
+    assert.equal(frames(disabled.body).at(-1)!.event, "done", disabled.body);
+    assert.equal(receivedGrounding, false);
+    assert(!disabled.body.includes("event: sources"));
+  } finally {
+    await update("always");
+  }
+});
+test("Workflow agent snapshots honor knowledge skip, retrieval and disabled policies", async () => {
+  const [version] =
+    await sql`SELECT * FROM agent_versions WHERE agent_id=${agentId} ORDER BY version DESC LIMIT 1`;
+  const c = agentConfig.parse(version!.config);
+  const model = modelSnapshotSchema.parse(version!.model_snapshot);
+  const ctx = { workspaceId: workspace, organizationId: org };
+  const signal = new AbortController().signal;
+  c.rag.usageMode = "automatic";
+  const greeting = await executeAgentSnapshot(
+    c,
+    model,
+    "hi",
+    ctx,
+    signal,
+    chat,
+    embedding,
+  );
+  assert.equal(greeting.citations.length, 0);
+  assert.equal(receivedGrounding, false);
+  const policy = await executeAgentSnapshot(
+    c,
+    model,
+    "refund within 30 days",
+    ctx,
+    signal,
+    chat,
+    embedding,
+  );
+  assert.equal(policy.citations.length, 1);
+  assert.equal(receivedGrounding, true);
+  c.rag.usageMode = "disabled";
+  const disabled = await executeAgentSnapshot(
+    c,
+    model,
+    "refund within 30 days",
+    ctx,
+    signal,
+    chat,
+    embedding,
+  );
+  assert.equal(disabled.citations.length, 0);
+  assert.equal(receivedGrounding, false);
 });
 test("Missing citations and revoked public knowledge access are explicit failed runs", async () => {
   omitCitation = true;

@@ -64,6 +64,8 @@ export type RetrievalInput = z.infer<typeof retrievalInput>;
 export const ragConfig = z
   .object({
     knowledgeBaseIds: z.array(z.uuid()).max(5).default([]),
+    usageMode: z.enum(["automatic", "always", "disabled"]).default("always"),
+    usageInstructions: z.string().trim().max(4000).default(""),
     topK: z.number().int().min(1).max(10).default(5),
     minScore: z.number().min(0).max(1).default(0.2),
     mode: z.enum(["vector", "hybrid"]).default("hybrid"),
@@ -71,6 +73,8 @@ export const ragConfig = z
   })
   .default({
     knowledgeBaseIds: [],
+    usageMode: "always",
+    usageInstructions: "",
     topK: 5,
     minScore: 0.2,
     mode: "hybrid",
