@@ -4742,3 +4742,14 @@ input[type="range"] {
     scroll-behavior: auto !important;
   }
 }
+
+/* Follow the selected application theme rather than the device media query. */
+.product-logo-dark {
+  display: none;
+}
+:root[data-theme="dark"] .product-logo-light {
+  display: none;
+}
+:root[data-theme="dark"] .product-logo-dark {
+  display: block;
+}
