@@ -186,7 +186,7 @@ test("Private copilot drafts require operator review, preserve manual support on
     .getByRole("button", { name: "Request human support", exact: true })
     .click();
   await expect(
-    visitor.getByText("Waiting for an operator. You can leave a message."),
+    visitor.getByText("Waiting for a specialist. Messages here go to support."),
   ).toBeVisible();
   await openSupport(page);
   await page.getByRole("button", { name: "Create queue", exact: true }).click();

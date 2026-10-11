@@ -1,11 +1,5 @@
 "use client";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { QuickAction } from "@agentconnect/schemas/bank-experience";
 import { ArrowUp, Square, RefreshCw, Sparkles } from "lucide-react";
 import { CustomerFeedback } from "./customer-feedback";
@@ -16,7 +10,10 @@ import { Button } from "./button";
 import { Citations, type Citation } from "./citations";
 import { ToolTraces, type ToolTrace } from "./tool-studio";
 import { VoiceControls } from "./voice-controls";
-import { HandoffPanel } from "./handoff-panel";
+import {
+  useConversationSupport,
+  supportEventText,
+} from "./use-conversation-support";
 import {
   openCustomerSession,
   customerRequest,
@@ -71,7 +68,10 @@ export function ChatPanel({
     null,
   );
   const customer = useRef<CustomerMemory | null>(null);
-  const [restoring, setRestoring] = useState(endpoint.startsWith("/public/"));
+  const [restoring, setRestoring] = useState(true);
+  const [handoffRequested, setHandoffRequested] = useState(false);
+  const playgroundStorage = useRef<string | null>(null);
+  const [conversationId, setConversationId] = useState<string | undefined>();
   const [olderMessages, setOlderMessages] = useState(false);
   const [history, setHistory] = useState<
     { id: string; title: string; created_at: string; handoff_status: string }[]
@@ -79,11 +79,6 @@ export function ChatPanel({
   const publicBase = endpoint.startsWith("/public/")
     ? endpoint.replace(/\/chat$/, "")
     : null;
-  const [handoffOpen, setHandoffOpen] = useState(false);
-  const handoffStatus = useCallback(
-    (open: boolean) => setHandoffOpen(open),
-    [],
-  );
   const composer = useRef<HTMLTextAreaElement | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -94,10 +89,64 @@ export function ChatPanel({
   const guest = useRef<string | undefined>(undefined);
   const controller = useRef<AbortController | null>(null);
   const bottom = useRef<HTMLDivElement | null>(null);
+  const support = useConversationSupport(
+    conversationId
+      ? publicBase
+        ? `${publicBase}/conversations/${conversationId}/handoff`
+        : `/conversations/${conversationId}/handoff`
+      : null,
+    guest.current,
+    busy,
+  );
+  const handoffOpen =
+    handoffRequested ||
+    ["pending", "active"].includes(support.state?.status ?? "");
+  useEffect(() => {
+    if (
+      support.state?.status === "resolved" &&
+      support.state?.conversationMode === "ai"
+    )
+      setHandoffRequested(false);
+  }, [support.state]);
+  const supportLoading = !!conversationId && !support.state && !support.error;
+  const supportPaused = support.state?.conversationMode === "returning_to_ai";
+  const transcript = [
+    ...messages.map((m, index) => ({
+      ...m,
+      key: m.messageId ?? `ai-${index}`,
+      label: m.role === "user" ? "You" : name,
+      system: false,
+    })),
+    ...(support.state?.events ?? []).map((event) => ({
+      blocks: undefined,
+      messageId: undefined,
+      actionsEnabled: false,
+      citations: undefined,
+      tools: undefined,
+      key: event.id,
+      role:
+        event.kind === "user_message"
+          ? ("user" as const)
+          : ("assistant" as const),
+      content: supportEventText(event),
+      created_at: event.created_at,
+      label:
+        event.kind === "operator_message"
+          ? event.actor_name || "Support specialist"
+          : event.kind === "user_message"
+            ? "You"
+            : "Conversation",
+      system: !["user_message", "operator_message"].includes(event.kind),
+    })),
+  ].sort(
+    (a, b) =>
+      (a.created_at ? Date.parse(a.created_at) : Number.MAX_SAFE_INTEGER) -
+      (b.created_at ? Date.parse(b.created_at) : Number.MAX_SAFE_INTEGER),
+  );
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
-  }, [messages]);
+  }, [messages, support.state?.events.at(-1)?.id]);
   async function loadHistory(memory: CustomerMemory) {
     if (!publicBase) return;
     setHistory(await customerRequest(publicBase, memory, "/history"));
@@ -110,6 +159,8 @@ export function ChatPanel({
     }>(publicBase, memory, "/history/" + id);
     controller.current?.abort();
     conversation.current = id;
+    setConversationId(id);
+    setHandoffRequested(false);
     guest.current = memory.token;
     customer.current = { ...memory, active: id };
     writeMemory(publicBase, customer.current);
@@ -117,7 +168,6 @@ export function ChatPanel({
     setOlderMessages(saved.hasMore ?? false);
     setError("");
     setTraceId("");
-    setHandoffOpen(false);
   }
   useEffect(() => {
     if (!publicBase) return;
@@ -153,8 +203,64 @@ export function ChatPanel({
     };
     // Session restores only when the deployment changes.
   }, [publicBase]);
+  useEffect(() => {
+    if (publicBase) return;
+    let active = true;
+    setRestoring(true);
+    void (async () => {
+      try {
+        const user = await requestJson<{ id: string }>("/auth/me");
+        if (!active) return;
+        const key = `agentconnex:playground:${apiBase}:${user.id}:${endpoint}`;
+        playgroundStorage.current = key;
+        let id: string | null = null;
+        try {
+          id = localStorage.getItem(key);
+        } catch {
+          /* Storage is optional. */
+        }
+        if (id) {
+          const saved = await requestJson<{ messages: typeof messages }>(
+            endpoint.replace(/\/chat$/, `/conversations/${id}`),
+          );
+          if (!active) return;
+          conversation.current = id;
+          setConversationId(id);
+          setMessages(saved.messages);
+        }
+      } catch (e) {
+        if (active)
+          setError(
+            `Unable to restore Playground: ${(e as Error).message}. Use New chat to start again.`,
+          );
+      } finally {
+        if (active) setRestoring(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [endpoint, publicBase]);
   async function send(text: string, quickActionId?: string) {
-    if (!text.trim() || busy || handoffOpen || restoring) return;
+    if (
+      !text.trim() ||
+      busy ||
+      support.sending ||
+      supportPaused ||
+      supportLoading ||
+      restoring
+    )
+      return;
+    if (handoffOpen) {
+      setError("");
+      try {
+        await support.post("message", text);
+        setInput("");
+      } catch (e) {
+        setError((e as Error).message);
+      }
+      return;
+    }
     setBusy(true);
     setError("");
     setInput("");
@@ -162,8 +268,8 @@ export function ChatPanel({
     controller.current = abort;
     setMessages((m) => [
       ...m,
-      { role: "user", content: text },
-      { role: "assistant", content: "" },
+      { role: "user", content: text, created_at: new Date().toISOString() },
+      { role: "assistant", content: "", created_at: new Date().toISOString() },
     ]);
     try {
       await streamChat(
@@ -177,6 +283,17 @@ export function ChatPanel({
         (event, data) => {
           if (event === "meta") {
             conversation.current = data.conversationId;
+            setConversationId(data.conversationId);
+            if (playgroundStorage.current && data.conversationId) {
+              try {
+                localStorage.setItem(
+                  playgroundStorage.current,
+                  data.conversationId,
+                );
+              } catch {
+                /* Storage is optional. */
+              }
+            }
             guest.current = data.guestToken ?? guest.current;
             setTraceId(data.traceId ?? "");
             if (publicBase && customer.current) {
@@ -187,6 +304,7 @@ export function ChatPanel({
               writeMemory(publicBase, customer.current);
             }
           }
+          if (event === "support") setHandoffRequested(true);
           if (event === "tool")
             setMessages((m) =>
               m.map((item, i) =>
@@ -262,6 +380,15 @@ export function ChatPanel({
     setWorkflowAction(null);
     controller.current?.abort();
     conversation.current = undefined;
+    setConversationId(undefined);
+    setHandoffRequested(false);
+    if (playgroundStorage.current) {
+      try {
+        localStorage.removeItem(playgroundStorage.current);
+      } catch {
+        /* Storage is optional. */
+      }
+    }
     guest.current = undefined;
     if (publicBase && customer.current) {
       customer.current = { ...customer.current, active: undefined };
@@ -271,7 +398,6 @@ export function ChatPanel({
     setOlderMessages(false);
     setError("");
     setTraceId("");
-    setHandoffOpen(false);
   }
   return (
     <section className="panel chat-panel">
@@ -287,7 +413,11 @@ export function ChatPanel({
               : "Draft playground · each new chat snapshots the saved draft"}
           </p>
         </div>
-        <button className="text-button" disabled={busy} onClick={reset}>
+        <button
+          className="text-button"
+          disabled={busy || support.sending || restoring}
+          onClick={reset}
+        >
           <RefreshCw size={14} />
           New chat
         </button>
@@ -386,7 +516,13 @@ export function ChatPanel({
             <Button
               key={a.id}
               className="secondary"
-              disabled={busy || handoffOpen || restoring}
+              disabled={
+                busy ||
+                support.sending ||
+                supportPaused ||
+                supportLoading ||
+                restoring
+              }
               onClick={() => {
                 if (a.behavior === "workflow" && publicBase) {
                   void (async () => {
@@ -406,6 +542,17 @@ export function ChatPanel({
                         const data = await r.json();
                         if (!r.ok) throw new Error(data.error);
                         conversation.current = data.conversationId;
+                        setConversationId(data.conversationId);
+                        if (playgroundStorage.current) {
+                          try {
+                            localStorage.setItem(
+                              playgroundStorage.current,
+                              data.conversationId,
+                            );
+                          } catch {
+                            /* Storage is optional. */
+                          }
+                        }
                         guest.current = customer.current!.token;
                         customer.current = {
                           ...customer.current!,
@@ -447,7 +594,13 @@ export function ChatPanel({
           action.
         </p>
       )}
-      <div className="chat-messages" aria-live="polite">
+      {restoring && <p role="status">Restoring conversation…</p>}
+      <div
+        className="chat-messages"
+        role="log"
+        aria-label="Conversation"
+        aria-live="polite"
+      >
         {olderMessages && publicBase && (
           <Button
             type="button"
@@ -501,9 +654,14 @@ export function ChatPanel({
             </div>
           </div>
         )}
-        {messages.map((m, i) => (
-          <div key={i} className={`chat-message ${m.role}`}>
-            <small>{m.role === "user" ? "You" : name}</small>
+        {transcript.map((m) => (
+          <div
+            key={m.key}
+            className={
+              m.system ? "chat-system-event" : `chat-message ${m.role}`
+            }
+          >
+            <small>{m.label}</small>
             <div>
               {m.content ||
                 (m.blocks?.length
@@ -537,23 +695,59 @@ export function ChatPanel({
             ?.content ?? ""
         }
         onTranscript={setInput}
-        disabled={busy || handoffOpen || restoring}
+        disabled={
+          busy ||
+          support.sending ||
+          supportPaused ||
+          supportLoading ||
+          restoring
+        }
       />
-      {conversation.current && (
-        <HandoffPanel
-          key={"support:" + conversation.current}
-          endpoint={
-            endpoint.startsWith("/public")
-              ? endpoint.replace(
-                  /\/chat$/,
-                  "/conversations/" + conversation.current + "/handoff",
-                )
-              : "/conversations/" + conversation.current + "/handoff"
-          }
-          guestToken={guest.current}
-          busy={busy}
-          onStatus={handoffStatus}
-        />
+      {support.state &&
+        (support.state.access.entryMode !== "disabled" ||
+          handoffOpen ||
+          supportPaused) && (
+          <div className="chat-support-status" aria-label="Human support">
+            <p role="status">
+              {handoffOpen
+                ? support.state.status !== "active"
+                  ? "Waiting for a specialist. Messages here go to support."
+                  : "You are chatting with human support."
+                : supportPaused
+                  ? "AI chat is paused until support restores it."
+                  : support.state.access.businessHours &&
+                      !support.state.access.businessHours.open
+                    ? support.state.access.businessHours.message
+                    : "You can ask for a human specialist in this chat."}
+            </p>
+            {support.state.access.canRequest && !handoffOpen && (
+              <Button
+                type="button"
+                className="secondary"
+                disabled={busy || support.sending}
+                onClick={() => void support.post("request").catch(() => {})}
+              >
+                {support.state.access.offer
+                  ? "Connect me"
+                  : "Request human support"}
+              </Button>
+            )}
+            {support.state.access.offer && !handoffOpen && (
+              <Button
+                type="button"
+                className="secondary"
+                disabled={busy || support.sending}
+                onClick={() => void support.post("dismiss").catch(() => {})}
+              >
+                Keep trying with AI
+              </Button>
+            )}
+          </div>
+        )}
+      {support.error && (
+        <p className="error" role="alert">
+          {support.error}
+        </p>
       )}
       {publicBase &&
         conversation.current &&
@@ -574,11 +768,19 @@ export function ChatPanel({
           ref={composer}
           id={`chat-${name}`}
           aria-label="Message"
-          placeholder="Ask your agent…"
+          placeholder={
+            handoffOpen ? "Message human support…" : "Ask your agent…"
+          }
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          maxLength={12000}
-          disabled={busy || handoffOpen || restoring}
+          maxLength={handoffOpen ? 4000 : 12000}
+          disabled={
+            busy ||
+            support.sending ||
+            supportPaused ||
+            supportLoading ||
+            restoring
+          }
         />
         {busy ? (
           <Button
@@ -591,7 +793,9 @@ export function ChatPanel({
         ) : (
           <Button
             type="submit"
-            disabled={!input.trim() || handoffOpen}
+            disabled={
+              !input.trim() || support.sending || supportPaused || restoring
+            }
             aria-label="Send message"
           >
             <ArrowUp size={17} />

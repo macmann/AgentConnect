@@ -7,6 +7,7 @@ import { supportStream } from "./support/live.js";
 import {
   customerHandoffState,
   confirmHandoff,
+  queueMissingHandoffBrief,
   dismissHandoff,
 } from "./support/policy.js";
 import { legacyHandoff } from "./support/cases.js";
@@ -182,7 +183,11 @@ export async function registerChannelRoutes(app: FastifyInstance) {
         conversationMode: c.conversation_mode,
         access: await sql.begin((tx) => customerHandoffState(tx, c as never)),
         events: (
-          await sql`SELECT id,kind,content,created_at FROM handoff_events WHERE conversation_id=${c.id} ORDER BY created_at DESC,id DESC LIMIT 500`
+          await sql`SELECT * FROM (
+            SELECT e.id,e.kind,e.content,e.created_at,u.name AS actor_name FROM handoff_events e LEFT JOIN users u ON u.id=e.actor_id WHERE e.conversation_id=${c.id}
+            UNION ALL
+            SELECT e.id,'ai_resumed' AS kind,'' AS content,e.created_at,NULL::text AS actor_name FROM support_events e WHERE e.conversation_id=${c.id} AND e.type='ai.resumed'
+          ) visible_events ORDER BY created_at DESC,id DESC LIMIT 500`
         ).reverse(),
       };
     });
@@ -237,6 +242,15 @@ export async function registerChannelRoutes(app: FastifyInstance) {
                 : "customer",
               supervise,
             });
+          if (d.action === "claim") {
+            const [activeCase] =
+              await tx`SELECT active_support_case_id FROM conversations WHERE id=${c.id}`;
+            if (activeCase?.active_support_case_id)
+              await queueMissingHandoffBrief(
+                tx,
+                activeCase.active_support_case_id,
+              );
+          }
           if (userId)
             await audit(
               tx,

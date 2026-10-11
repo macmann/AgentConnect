@@ -56,7 +56,7 @@ For approval-required knowledge, review and publish a knowledge release. Reviewe
    > You are a product support assistant. Answer policy questions from approved knowledge. Cite the evidence you use. If the available sources do not support an answer, say so and offer human support. Do not invent fees, eligibility rules or deadlines.
 
 4. In **Knowledge**, attach the prepared knowledge base. Select hybrid/vector/text retrieval and enable citations if your answers must show evidence.
-5. Set the knowledge usage policy. **Automatic** decides relevance using your instructions; **Always** searches attached knowledge for every message; **Disabled** retains the attachment but skips retrieval.
+5. Set the knowledge usage policy. **Automatic** decides relevance using your instructions; **Always** searches attached knowledge for every message; **Never retrieve** retains the attachment but skips retrieval. Automatic tolerates wrapped JSON and repairs an invalid decision once; persistent formatting failures fall back to normal retrieval rather than failing the chat.
 6. Add usage instructions such as: “Search knowledge for policies and procedures; skip greetings and thanks.”
 7. In **Behavior**, choose response creativity and conversation memory. Use advanced settings only when needed; respect the configured model’s supported values and output budget.
 8. In **Experience**, configure the welcome message, fallback response and conversation starters. Enable rich response components only for the formats you want.
@@ -228,3 +228,11 @@ The advanced parser separates tables in HTML and Word, handles HTML row/column s
 This is assisted extraction, not audited financial analysis. PDF reconstruction is heuristic; complex vertical Word merges, multi-column PDF layouts and low-quality scans can still need manual correction. Excel display formatting is not reconstructed and formulas are not recalculated: verify percentages, units and cached values. OCR remains a separate opt-in setting requiring the configured worker utilities. Financial calculations and structured financial-fact storage are not introduced by this feature.
 
 For controlled publication, enable knowledge approval and create/review a knowledge release after checking extraction. Approved releases snapshot parent context with their passages; reingesting current sources cannot rewrite the release's evidence. Existing releases retain their original content without gaining new context retroactively.
+
+### Continue a Playground conversation with human support
+
+Playground keeps the active conversation for each agent and signed-in user across navigation and refresh. Choose **New chat** to start with a fresh saved-draft snapshot. Returning to an existing chat keeps its original snapshot, even after editing the agent.
+
+Ask for a human specialist in the message box to request support automatically when policy and business hours allow it. AI and human replies, named join/leave notices, and the return to AI appear in that same transcript. The same message box sends to the support team while a case is queued or active. The support request button remains available as an alternative.
+
+CS agents see the customer's AI conversation and, when handoff summaries are enabled, a private generated brief. Summary generation runs in the background; the full conversation remains available if generation fails. Private operator notes and briefs are never shown to the customer.

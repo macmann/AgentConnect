@@ -1,3 +1,4 @@
+import { trace } from "@opentelemetry/api";
 import { HttpError } from "./http-error.js";
 import { sql } from "./db.js";
 import { config } from "./config.js";
@@ -132,12 +133,19 @@ export class PostgresRagTool implements RagTool {
           context.workspaceId,
           context.organizationId,
         );
-        const vectors = await this.factory(connection).embed(
-          [query],
-          signal,
-          "query",
-        );
-        vector = validateVectors(vectors, 1, kb.dimensions)[0]!;
+        const span = trace
+          .getTracer("agentconnect-runtime")
+          .startSpan("knowledge.embedding");
+        try {
+          const vectors = await this.factory(connection).embed(
+            [query],
+            signal,
+            "query",
+          );
+          vector = validateVectors(vectors, 1, kb.dimensions)[0]!;
+        } finally {
+          span.end();
+        }
         queries.set(kb.embedding_model_id, vector);
       }
       const releaseId = options.releasePins?.[kb.id] ?? kb.published_release_id;
@@ -162,6 +170,9 @@ export class PostgresRagTool implements RagTool {
         options.mode === "hybrid"
           ? await sql`${select} AND c.search_vector @@ websearch_to_tsquery('simple',${query}) ORDER BY lexical_score DESC LIMIT 30`
           : [];
+      const fusionSpan = trace
+        .getTracer("agentconnect-runtime")
+        .startSpan("knowledge.ranking_fusion");
       const pool = new Map<
         string,
         { row: Record<string, unknown>; fusion: number }
@@ -176,6 +187,8 @@ export class PostgresRagTool implements RagTool {
           fusion: (old?.fusion ?? 0) + 1 / (60 + index + 1),
         });
       });
+      fusionSpan.setAttribute("candidates", pool.size);
+      fusionSpan.end();
       for (const { row, fusion } of pool.values()) {
         const vectorScore = Math.max(0, Math.min(1, Number(row.vector_score)));
         if (vectorScore < options.minScore) continue;

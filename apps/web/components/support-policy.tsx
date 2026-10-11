@@ -229,21 +229,10 @@ export function SupportPolicy({
                   <option value="disabled">Disabled</option>
                 </select>
                 <small>
-                  AI-controlled offers require customer confirmation. Repeated
-                  requests are honored at the threshold below.
+                  Explicit requests in chat connect to human support
+                  automatically. Other AI-controlled offers require customer
+                  confirmation.
                 </small>
-              </label>
-              <label>
-                Explicit requests before offer
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={value.explicitRequestThreshold}
-                  onChange={(e) =>
-                    update("explicitRequestThreshold", Number(e.target.value))
-                  }
-                />
               </label>
               <label>
                 Unsuccessful attempts before offer

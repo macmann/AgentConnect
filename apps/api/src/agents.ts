@@ -18,7 +18,13 @@ import {
 import { branding } from "@agentconnect/schemas/customer-experience";
 import { planKnowledgeUsage } from "./knowledge-usage.js";
 import { continuationContext } from "./support/continuation.js";
-import { evaluateEscalation, effectivePolicy } from "./support/policy.js";
+import {
+  evaluateEscalation,
+  effectivePolicy,
+  customerHandoffState,
+  isHumanRequest,
+  handoffExplicitRequest,
+} from "./support/policy.js";
 import { assertQualityGate } from "./quality-gate.js";
 import { requireWidgetOrigin } from "./channels.js";
 import {
@@ -258,6 +264,7 @@ async function streamChat(
     span.spanContext().traceId === "00000000000000000000000000000000"
       ? randomUUID().replaceAll("-", "")
       : span.spanContext().traceId;
+  let explicitHandoff = false;
   let journey: ReturnType<typeof advanceJourney>;
   let continuation = {
     grounding: "",
@@ -275,7 +282,7 @@ async function streamChat(
           409,
           "This conversation is with the human support team",
         );
-      journey = advanceJourney(c, locked.journey_state, message, quickActionId);
+
       continuation = await continuationContext(
         tx,
         locked as never,
@@ -283,19 +290,31 @@ async function streamChat(
       );
       await tx`INSERT INTO agent_runs(id,conversation_id,organization_id,workspace_id,status,trace_id) VALUES (${runId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},'running',${traceId})`;
       const { policy } = await effectivePolicy(tx, locked as never);
-      await reserveTokens(
-        tx,
-        c,
-        model,
-        conversation,
-        runId,
-        policy.humanEntryMode !== "disabled" &&
-          !!(
-            policy.agentCanRequestHandoff ||
-            policy.sentimentEscalationEnabled ||
-            policy.intentRules.length
-          ),
-      );
+      explicitHandoff =
+        isHumanRequest(message) &&
+        (await customerHandoffState(tx, locked as never)).canRequestExplicit;
+      journey = explicitHandoff
+        ? {
+            state: locked.journey_state as Record<string, unknown>,
+            response: null,
+            query: message,
+            handoff: false,
+          }
+        : advanceJourney(c, locked.journey_state, message, quickActionId);
+      if (!explicitHandoff)
+        await reserveTokens(
+          tx,
+          c,
+          model,
+          conversation,
+          runId,
+          policy.humanEntryMode !== "disabled" &&
+            !!(
+              policy.agentCanRequestHandoff ||
+              policy.sentimentEscalationEnabled ||
+              policy.intentRules.length
+            ),
+        );
       await tx`UPDATE conversations SET last_customer_message_at=now() WHERE id=${conversation.id}`;
       await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content) VALUES (${randomUUID()},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'user',${message})`;
     });
@@ -378,7 +397,14 @@ async function streamChat(
     "answer" | "clarify" | "no_answer" | "journey" | "handoff" | null = null;
   let offerHuman = false;
   try {
-    if (journey!.response) {
+    if (explicitHandoff) {
+      output =
+        "I’ll request human support for this conversation. You can continue in this same chat.";
+      answerKind = "handoff";
+      inputTokens = 0;
+      outputTokens = 0;
+      write("token", { text: output });
+    } else if (journey!.response) {
       output = journey!.response;
       answerKind = journey!.handoff ? "handoff" : "journey";
       offerHuman = journey!.handoff;
@@ -441,13 +467,35 @@ async function streamChat(
             >`SELECT name,description FROM knowledge_bases WHERE id=ANY(${c.rag.knowledgeBaseIds}::uuid[]) AND workspace_id=${conversation.workspace_id} AND organization_id=${conversation.organization_id} AND archived_at IS NULL`
           : [],
       );
+      const planningRoute = metered.usage().routing.attempts.at(-1);
+      retrievalDiagnostics = {
+        ...knowledgePlan.diagnostics,
+        provider: planningRoute?.provider ?? model.provider,
+        model: planningRoute?.modelId ?? model.id,
+      };
+      span.addEvent("knowledge.planning", knowledgePlan.diagnostics);
+      if (knowledgePlan.diagnostics.status === "fallback")
+        r.log.warn(
+          {
+            runId,
+            traceId,
+            knowledgePlan: {
+              ...knowledgePlan.diagnostics,
+              provider: retrievalDiagnostics.provider,
+              model: retrievalDiagnostics.model,
+            },
+          },
+          "Knowledge planner used raw-query retrieval fallback",
+        );
       if (knowledgePlan.retrieve) {
         const started = performance.now();
         const retrieval = await enhancedRetrieval(
           ragTool,
           provider,
           messages,
-          journey!.query,
+          knowledgePlan.diagnostics.status === "fallback"
+            ? message
+            : journey!.query,
           c.rag.knowledgeBaseIds,
           c.rag,
           {
@@ -459,7 +507,10 @@ async function streamChat(
           c.maxOutputTokens,
         );
         sources = retrieval.sources;
-        retrievalDiagnostics = retrieval.diagnostics;
+        retrievalDiagnostics = {
+          ...retrievalDiagnostics,
+          ...retrieval.diagnostics,
+        };
         if (c.contextControls.enabled) {
           let used = 0;
           sources = sources.filter((source) => {
@@ -472,12 +523,15 @@ async function streamChat(
             return true;
           });
         }
+        retrievalDiagnostics.selectedChunks = sources.length;
+        span.addEvent("knowledge.selected_chunks", { count: sources.length });
         retrievalMs = Math.round(performance.now() - started);
         if (!sources.length && c.answerPolicy.mode !== "grounded")
           throw new KnowledgeError("NO_RELEVANT_SOURCES");
         write("sources", { sources });
       }
       if (c.answerPolicy.mode === "grounded") {
+        span.addEvent("generation.started", { mode: "grounded" });
         const result = await generateGroundedAnswer(
           c,
           provider,
@@ -558,6 +612,7 @@ async function streamChat(
             model.contextWindow - c.maxOutputTokens
         )
           throw new ProviderError("CONTEXT_LIMIT");
+        span.addEvent("generation.started", { mode: "standard" });
         for await (const event of runtime.run(
           c,
           messages,
@@ -724,16 +779,25 @@ async function streamChat(
         });
       });
       try {
-        await evaluateEscalation(
-          conversation.id,
-          runId,
-          provider,
-          offerHuman
-            ? answerKind === "handoff"
-              ? "required_intent"
-              : "knowledge_gap"
-            : undefined,
-        );
+        const handedOff =
+          explicitHandoff &&
+          (await handoffExplicitRequest(conversation.id, runId));
+        if (handedOff)
+          write("support", {
+            status: "pending",
+            conversationMode: "waiting_human",
+          });
+        if (!handedOff)
+          await evaluateEscalation(
+            conversation.id,
+            runId,
+            provider,
+            offerHuman
+              ? answerKind === "handoff"
+                ? "required_intent"
+                : "knowledge_gap"
+              : undefined,
+          );
       } catch {
         r.log.warn(
           { runId, traceId, code: "SUPPORT_DECISION_FAILED" },
@@ -1273,6 +1337,16 @@ export async function registerAgentRoutes(
     if (!!q.before !== !!q.beforeId)
       throw new HttpError(400, "Cursor requires before and beforeId");
     return sql`SELECT c.id,c.agent_id,c.deployment_id,c.created_at,a.name FROM conversations c JOIN agents a ON a.id=c.agent_id WHERE c.workspace_id=${w.id} AND (c.created_at,c.id)<(${q.before ?? new Date().toISOString()},${q.beforeId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"}) ORDER BY c.created_at DESC,c.id DESC LIMIT 30`;
+  });
+  app.get("/agents/:agentId/conversations/:conversationId", async (r) => {
+    const { u, a } = await ownedAgent(r, "agent:execute");
+    const [conversation] =
+      await sql`SELECT id FROM conversations WHERE id=${id(params(r).conversationId)} AND agent_id=${a.id} AND user_id=${u.id} AND deployment_id IS NULL`;
+    if (!conversation)
+      throw new HttpError(404, "Playground conversation unavailable");
+    const messages =
+      await sql`SELECT m.id AS "messageId",m.role,m.content,m.citations,m.ui_blocks AS blocks,m.created_at,true AS "actionsEnabled" FROM messages m WHERE m.conversation_id=${conversation.id} ORDER BY m.created_at,m.id`;
+    return { conversationId: conversation.id, messages };
   });
   app.get("/conversations/:conversationId/messages", async (r) => {
     const u = await actor(r);

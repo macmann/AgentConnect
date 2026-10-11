@@ -192,7 +192,7 @@ test("Approved resolution continues the same customer journey without private st
     .getByRole("button", { name: "Request human support", exact: true })
     .click();
   await expect(
-    visitor.getByText("Waiting for an operator. You can leave a message."),
+    visitor.getByText("Waiting for a specialist. Messages here go to support."),
   ).toBeVisible();
   await openSupport(page);
   await page.getByRole("button", { name: "Create queue", exact: true }).click();
@@ -286,7 +286,7 @@ test("Approved resolution continues the same customer journey without private st
     .click();
   await expect(resolve).toBeHidden();
   await expect(
-    visitor.getByText(/The AI has the approved resolution/),
+    visitor.getByText(/The AI agent has taken over and can continue helping in this chat/),
   ).toBeVisible({ timeout: 15000 });
   await visitor
     .getByLabel("Message", { exact: true })

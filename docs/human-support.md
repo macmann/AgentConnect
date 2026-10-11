@@ -164,7 +164,7 @@ Phase D now adds validated AI triage and language/skill suggestions. Phase G add
 
 Apply migration **0020** and restart API and worker. Under **Human Support → Handoff policy**, configure workspace defaults or a complete agent/deployment override. Precedence is deployment → agent → workspace → built-in defaults. Reset removes only the selected override. Existing conversations use the current effective access policy; confirmed cases retain their policy snapshot and revision for provenance.
 
-Human access defaults to **AI-controlled offers**, with two explicit requests required. **Always available** exposes the request button after the first chat turn; **Disabled** blocks customer requests at the server. The legacy widget, hosted chat and playground all enforce the same policy. Existing open support sessions continue to accept customer messages even if access is subsequently disabled. Staff can still manually escalate through the support case API.
+Human access defaults to **AI-controlled offers** for inferred escalation. A customer explicitly asking for a human in chat automatically creates the support request on the first message, without a second confirmation click. **Always available** exposes the request button after the first chat turn; **Disabled** blocks customer requests at the server. The legacy widget, hosted chat and playground all enforce the same policy. Existing open support sessions continue to accept customer messages even if access is subsequently disabled. Staff can still manually escalate through the support case API.
 
 The runtime evaluates the last 20 customer turns since the most recent case or declined/confirmed offer. Exact repeated questions of at least eight normalized characters, or repeated statements that the answer did not help, count toward the default three-attempt resolution-loop threshold. Two failed tool/MCP runs produce a tool-failure offer by default. These are explicit heuristics, not a claim of semantic similarity or calibrated confidence. Ordinary provider failures alone do not count as tool failures; repeated human requests still work when chat generation fails. Explicit-request detection currently recognizes common English phrases; administrators can use Always available for languages that need direct access.
 
@@ -250,14 +250,24 @@ Apply migration **0023** with `pnpm db:migrate` and restart API/worker/web. No n
 
 Phase G API routes are under `/workspaces/:workspaceId/support`:
 
-| Route | Access / behavior |
-| --- | --- |
-| `GET /analytics?days=30&queueId=…` | Support analytics readers; 1–90 days, optional queue filter. |
-| `GET /supervision` | Supervisors; backlog, queue health and operator capacity. |
-| `GET /notifications` | Current recipient only; stable cursor pagination and unread count. |
-| `POST /notifications/:notificationId/read` | Current recipient only; idempotent acknowledgement. |
-| `POST /cases/:caseId/transfer` | Current controller; `{queueId, operatorId?: UUID \| null, reason}`. |
-| `POST /cases/:caseId/priority` | Supervisors; `{priority, reason}`. |
-| `GET /stream` | Workspace support readers; authorized content-free SSE invalidations. |
+| Route                                      | Access / behavior                                                     |
+| ------------------------------------------ | --------------------------------------------------------------------- |
+| `GET /analytics?days=30&queueId=…`         | Support analytics readers; 1–90 days, optional queue filter.          |
+| `GET /supervision`                         | Supervisors; backlog, queue health and operator capacity.             |
+| `GET /notifications`                       | Current recipient only; stable cursor pagination and unread count.    |
+| `POST /notifications/:notificationId/read` | Current recipient only; idempotent acknowledgement.                   |
+| `POST /cases/:caseId/transfer`             | Current controller; `{queueId, operatorId?: UUID \| null, reason}`.   |
+| `POST /cases/:caseId/priority`             | Supervisors; `{priority, reason}`.                                    |
+| `GET /stream`                              | Workspace support readers; authorized content-free SSE invalidations. |
 
 Customer handoff routes also expose `/stream` with their existing conversation authorization and widget-origin checks. Queue create/update accepts the validated `operations` configuration; existing queues retain disabled SLA targets and unrestricted hours until configured.
+
+### One conversation across AI and human support
+
+Playground restores the signed-in user's last conversation for each agent after navigation or refresh, until **New chat** is selected. The browser stores only a conversation identifier; authorized messages are loaded from the server. New chat clears the active identifier and leaves the previous conversation in workspace history. Database retention can make old conversations unavailable.
+
+Playground, hosted chat and the widget use one transcript and one composer for both AI and human messages. While a case is queued or active, that composer sends messages to support. Named join/leave events appear in the transcript, followed by an AI takeover event when support resolves the case and return-to-AI is enabled. If return-to-AI is disabled, the composer remains paused until support resumes it.
+
+Explicit customer requests still respect disabled support and queue business hours. Inferred escalation continues to offer **Connect me** and **Keep trying with AI**. The request button remains available according to policy. The legacy explicit-request threshold remains readable in the API for compatibility; it does not delay direct requests in chat.
+
+With **Generate handoff summary** enabled (the default), a bounded private LLM brief is queued automatically at handoff. Operators see its status, issue, customer context, attempted actions and suggested next action in the case. Claiming a manual case also queues a missing brief. Summary generation is asynchronous and does not block manual support; if the provider fails, the operator can still review the complete transcript. Private briefs and internal notes are never included in the customer transcript.

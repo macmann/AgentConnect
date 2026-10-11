@@ -21,7 +21,7 @@ type Helpers = Pick<
   typeof import("../app.js"),
   "actor" | "audit" | "id" | "params" | "workspaceAccess"
 >;
-import { effectivePolicy } from "./policy.js";
+import { effectivePolicy, queueMissingHandoffBrief } from "./policy.js";
 import { agentConfig } from "@agentconnect/schemas/agents";
 import { restoreAI } from "./continuation.js";
 import { sql } from "../db.js";
@@ -339,8 +339,10 @@ export async function registerSupportRoutes(
                   : z.strictObject({}).parse(r.body ?? {});
         await sql.begin(async (tx) => {
           const s = await lockCase(tx, caseId, w.id);
-          if (action === "claim") await claimCase(tx, s, a);
-          else if (action === "assign")
+          if (action === "claim") {
+            await claimCase(tx, s, a);
+            await queueMissingHandoffBrief(tx, s.id);
+          } else if (action === "assign")
             await assignCase(
               tx,
               s,

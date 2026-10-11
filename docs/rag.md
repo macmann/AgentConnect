@@ -58,3 +58,15 @@ Advanced chunks use o200k token counts and retain complete table rows. Wide rows
 Extraction previews are read-authorized and scoped to the source's current revision. They show up to 100 table samples per document, up to 6,000 characters each, warning messages and provider-reported LLM usage. Sources flag processing-setting changes that require reingestion. Previewing does not approve or publish content automatically.
 
 Financial extraction remains heuristic: vertical Word merges, irregular PDF layouts and scanned tables need review. Excel display styles are not reconstructed and formulas are not recalculated. There is no structured financial-fact store or deterministic financial calculation engine in this change. See [the user guide](user-guide.md#advanced-document-processing-and-financial-tables).
+
+## Knowledge planning resilience
+
+Knowledge usage reuses `rag.usageMode`: Automatic (`automatic`), Always retrieve (`always`), and Never retrieve (`disabled`). Existing configurations retain their previous default of Always. Grounded answer policies continue to require Always and approved knowledge; their UI does not offer incompatible usage modes.
+
+Automatic planning uses the minimal strict `{ "retrieve": boolean }` schema. Query rewriting remains a separate, optional retrieval stage rather than adding a duplicate planner query. OpenAI and Gemini requests carry native JSON-schema constraints; compatible providers and Anthropic use the same prompt and portable parsing. Whitespace, markdown fences and harmless surrounding prose are accepted around exactly one object. Arrays, extra keys, non-booleans, duplicate keys and ambiguous objects are rejected.
+
+A syntactically or schema-invalid response gets exactly one bounded repair call. If that also fails, the customer request proceeds to normal retrieval using the original user message. The usual query rewrite, hybrid fusion, thresholds, selection limits and citation rules still apply. Attachment authorization, tenant/public boundaries, missing sources, unavailable releases, provider transport/authentication failures and cancellation remain authoritative failures; formatting fallback does not synthesize evidence.
+
+`agent_runs.context_breakdown.retrievalEnhancements` records planning status, attempts, query source (`planner`, `repair`, `raw_query_fallback`, `always_retrieve` or `disabled`), provider/model identity, rewrite/rerank outcomes and selected chunk count. Fallback emits a structured terminal warning with run/trace identity and `KNOWLEDGE_PLAN_INVALID`, without user messages, planner output, credentials or source content. OpenTelemetry adds knowledge planning, query rewrite, embedding, retrieval, ranking/fusion and reranking spans; the existing agent run/provider-call traces cover generation. Repair usage is included in model usage and quota accounting.
+
+For a dedicated password-recovery assistant, choose Always retrieve, hybrid search and required citations. This skips the relevance-planning call; source quality and answer faithfulness still need review against the approved password-recovery procedure.

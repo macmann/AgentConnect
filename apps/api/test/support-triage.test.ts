@@ -204,7 +204,7 @@ after(async () => {
   await app.close();
 });
 
-test("Default policy is controlled with two explicit requests; policies enforce roles and scoped references", async () => {
+test("Default policy is controlled and retains legacy threshold; policies enforce roles and scoped references", async () => {
   const r = await call("GET", base + "/policy");
   assert.equal(r.json().policy.humanEntryMode, "policy_controlled");
   assert.equal(r.json().policy.explicitRequestThreshold, 2);
@@ -264,46 +264,56 @@ test("Deployment overrides agent and workspace; deleting overrides restores dete
     404,
   );
 });
-test("Repeated explicit requests offer support without takeover; confirmation creates one queued triage case", async () => {
+test("One explicit request automatically creates one queued case and private handoff brief without another click or model reply", async () => {
   const c = await conversation();
-  assert.equal((await request(c)).statusCode, 409);
-  await chat(c, "I want a human");
-  assert.equal((await state(c)).access.canRequest, false);
-  await chat(c, "I need a human");
-  const offer = (await state(c)).access.offer;
-  assert.ok(offer.id);
-  assert.equal(
-    (await sql`SELECT conversation_mode FROM conversations WHERE id=${c}`)[0]!
-      .conversation_mode,
-    "ai",
+  await chat(c, "Help me with the duplicate charge");
+  providerFailure = true;
+  const response = await chat(
+    c,
+    "Please connect me with a customer service agent",
   );
-  assert.equal((await request(c)).statusCode, 201);
-  assert.equal((await request(c)).statusCode, 409);
+  assert.ok(response.body.includes("event: support"));
+  assert.equal((await state(c)).status, "pending");
+  assert.equal((await state(c)).access.offer, null);
   const [s] = await sql`SELECT * FROM support_cases WHERE conversation_id=${c}`;
   assert.equal(s!.triage_status, "pending");
   assert.equal(s!.reason_code, "explicit_request");
-  assert.equal((await state(c)).status, "pending");
+  assert.equal((await request(c)).statusCode, 409);
+  await processSupportTriage(triageFactory());
   assert.equal(
-    (await sql`SELECT status FROM support_offers WHERE id=${offer.id}`)[0]!
-      .status,
-    "confirmed",
+    (await sql`SELECT handoff_brief FROM support_cases WHERE id=${s!.id}`)[0]!
+      .handoff_brief.summary,
+    goodResult.summary,
+  );
+  assert.ok(
+    !(await state(c)).events.some((e: { content: string }) =>
+      e.content.includes(goodResult.summary),
+    ),
+  );
+  assert.equal(
+    (
+      await sql`SELECT count(*)::int AS n FROM support_cases WHERE conversation_id=${c}`
+    )[0]!.n,
+    1,
   );
 });
+async function loopOffer(c: string) {
+  for (let i = 0; i < 3; i++) await chat(c, "Why is my invoice still wrong?");
+}
 test("Dismissal keeps AI control and resets the repeated-request window", async () => {
   const c = await conversation();
-  await chat(c, "I want a human");
-  await chat(c, "I need a human");
+  await loopOffer(c);
   await call("POST", `/conversations/${c}/handoff`, { action: "dismiss" });
   assert.equal((await state(c)).access.canRequest, false);
-  await chat(c, "I want a human");
+  await chat(c, "Why is my invoice still wrong?");
   assert.equal((await state(c)).access.canRequest, false);
-  await chat(c, "I need a human");
+  await chat(c, "Why is my invoice still wrong?");
+  await chat(c, "Why is my invoice still wrong?");
   assert.ok((await state(c)).access.offer);
 });
 test("Disabled and expired offers cannot authorize a customer handoff; policy is rechecked at confirmation", async () => {
   const c = await conversation();
-  await chat(c, "I want a human");
-  await chat(c, "I need a human");
+  await loopOffer(c);
   await policy({ humanEntryMode: "disabled" });
   assert.equal((await request(c)).statusCode, 403);
   await policy({});
@@ -395,8 +405,7 @@ test("Malformed internal AI recommendations fail closed while deterministic expl
   await chat(c, "Check charge");
   assert.equal((await state(c)).access.offer, null);
   await chat(c, "I want a human");
-  await chat(c, "I need a human");
-  assert.ok((await state(c)).access.offer);
+  assert.equal((await state(c)).status, "pending");
 });
 test("Valid triage stores a private once-generated brief, provenance and scoped preferences without assigning arbitrary users", async () => {
   const q = await queue(),
@@ -596,7 +605,7 @@ test("Explicit-request detector avoids incidental mentions and handles configure
   );
 });
 
-test("Public customer endpoints enforce the same consent policy and never expose private triage", async () => {
+test("Public customer endpoints automatically honor explicit requests and never expose private triage", async () => {
   const raw = randomUUID(),
     c = await conversation(true);
   await sql`UPDATE conversations SET guest_token_hash=${digest(raw)} WHERE id=${c}`;
@@ -617,17 +626,17 @@ test("Public customer endpoints enforce the same consent policy and never expose
     (await guest("POST", path, { action: "request" })).statusCode,
     409,
   );
-  for (const message of ["I want a human", "I need a human"]) {
+  for (const message of ["I want a human"]) {
     const r = await guest("POST", `/public/deployments/${deployment}/chat`, {
       conversationId: c,
       message,
     });
     assert.equal(r.statusCode, 200, r.body);
   }
-  assert.ok((await guest("GET", path)).json().access.offer);
+  assert.equal((await guest("GET", path)).json().status, "pending");
   assert.equal(
     (await guest("POST", path, { action: "request" })).statusCode,
-    201,
+    409,
   );
   await processSupportTriage(triageFactory());
   const publicBody = (await guest("GET", path)).body;
@@ -761,21 +770,20 @@ test("A failed refresh preserves the last successful brief and its generation pr
   assert.ok(failed!.triage_provenance.errorCode);
   assert.ok(failed!.handoff_brief.provenance.generatedAt);
 });
-test("Declining after additional AI turns resets all earlier explicit requests", async () => {
+test("Declining after additional AI turns resets prior loop offers", async () => {
   const c = await conversation();
-  await chat(c, "I want a human");
-  await chat(c, "I need a human");
-  await chat(c, "I want a human");
+  await loopOffer(c);
+  await chat(c, "Why is my invoice still wrong?");
   await call("POST", `/conversations/${c}/handoff`, { action: "dismiss" });
-  await chat(c, "I need a human");
+  await chat(c, "Why is my invoice still wrong?");
   assert.equal((await state(c)).access.offer, null);
-  await chat(c, "I want a human");
+  await chat(c, "Why is my invoice still wrong?");
+  await chat(c, "Why is my invoice still wrong?");
   assert.ok((await state(c)).access.offer);
 });
 test("Concurrent customer confirmations create exactly one support case", async () => {
   const c = await conversation();
-  await chat(c, "I want a human");
-  await chat(c, "I need a human");
+  await loopOffer(c);
   const results = await Promise.all([request(c), request(c)]);
   assert.deepEqual(results.map((r) => r.statusCode).sort(), [201, 409]);
   assert.equal(
@@ -784,4 +792,76 @@ test("Concurrent customer confirmations create exactly one support case", async 
     )[0]!.n,
     1,
   );
+});
+
+test("Playground restoration checks the conversation owner and agent", async () => {
+  const c = await conversation();
+  await chat(c, "Remember my duplicate charge question");
+  const path = `/agents/${agent}/conversations/${c}`;
+  const saved = await call("GET", path);
+  assert.equal(saved.statusCode, 200);
+  assert.equal(
+    saved.json().messages[0].content,
+    "Remember my duplicate charge question",
+  );
+  assert.equal(
+    (await call("GET", path, undefined, "operator")).statusCode,
+    403,
+  );
+  await sql`INSERT INTO memberships(id,organization_id,workspace_id,user_id,role) VALUES (${randomUUID()},${org},${workspace},${users.outsider!},'builder')`;
+  assert.equal(
+    (await call("GET", path, undefined, "outsider")).statusCode,
+    404,
+  );
+  assert.equal(
+    (await call("GET", `/agents/${randomUUID()}/conversations/${c}`))
+      .statusCode,
+    404,
+  );
+});
+test("Disabled support and negative requests do not automatically hand off", async () => {
+  await policy({ humanEntryMode: "disabled" });
+  const c = await conversation();
+  await chat(c, "I want a human");
+  assert.equal((await state(c)).status, "none");
+  await policy({});
+  const other = await conversation();
+  await chat(other, "I don't want a human");
+  assert.equal((await state(other)).status, "none");
+  assert.equal(isHumanRequest("I want to talk to someone"), true);
+  assert.equal(isHumanRequest("I don't want AI, I want a human"), true);
+  assert.equal(isHumanRequest("Can I speak with customer support?"), true);
+  assert.equal(isHumanRequest("I don't want a human"), false);
+});
+
+test("Claiming a manual case queues a private summary-only job and public events name the specialist", async () => {
+  const c = await conversation();
+  await chat(c, "Please review the duplicate billing charge");
+  const created = await call("POST", base + "/cases", { conversationId: c });
+  assert.equal(created.statusCode, 201);
+  const s = created.json();
+  assert.equal(
+    (await call("POST", `${base}/cases/${s.id}/claim`, {}, "operator"))
+      .statusCode,
+    200,
+  );
+  const [queued] =
+    await sql`SELECT triage_status,policy_snapshot FROM support_cases WHERE id=${s.id}`;
+  assert.equal(queued!.triage_status, "pending");
+  assert.equal(queued!.policy_snapshot.policy.aiTriageEnabled, false);
+  await processSupportTriage(triageFactory());
+  const privateCase = await call(
+    "GET",
+    `${base}/cases/${s.id}`,
+    undefined,
+    "operator",
+  );
+  assert.equal(privateCase.json().handoff_brief.summary, goodResult.summary);
+  const visible = await state(c);
+  assert.equal(
+    visible.events.find((event: { kind: string }) => event.kind === "claimed")
+      .actor_name,
+    "operator",
+  );
+  assert.ok(!JSON.stringify(visible).includes(goodResult.summary));
 });

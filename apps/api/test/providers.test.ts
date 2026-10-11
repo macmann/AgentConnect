@@ -356,3 +356,59 @@ test("OAuth form transport sends exact encoded body without JSON quoting", async
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+test("Knowledge schema uses native OpenAI/Gemini output while compatible and Anthropic stay portable", async () => {
+  const responseSchema = {
+    name: "knowledge_decision",
+    schema: {
+      type: "object",
+      properties: { retrieve: { type: "boolean" } },
+      required: ["retrieve"],
+      additionalProperties: false,
+    },
+  };
+  for (const provider of [
+    "openai",
+    "gemini",
+    "openai-compatible",
+    "anthropic",
+  ] as const) {
+    let payload: Record<string, unknown> = {};
+    const frames =
+      provider === "gemini"
+        ? ['data: {"candidates":[{"finishReason":"STOP"}]}\n\n']
+        : provider === "anthropic"
+          ? ['data: {"type":"message_stop"}\n\n']
+          : ["data: [DONE]\n\n"];
+    const p = createProvider(
+      {
+        provider,
+        modelId: "fixture",
+        baseUrl: "https://example.com/v1",
+        apiKey: "fixture-only",
+        capabilities: { temperature: true, topP: true },
+      },
+      fixtureTransport(frames, (_u, _h, body) => {
+        payload = body as Record<string, unknown>;
+      }),
+    );
+    for await (const event of p.stream({ ...input, responseSchema }))
+      void event;
+    if (provider === "openai")
+      assert.deepEqual(
+        (payload.response_format as { json_schema: { schema: unknown } })
+          .json_schema.schema,
+        responseSchema.schema,
+      );
+    else if (provider === "gemini")
+      assert.deepEqual(
+        (payload.generationConfig as { responseJsonSchema: unknown })
+          .responseJsonSchema,
+        responseSchema.schema,
+      );
+    else {
+      assert.equal(payload.response_format, undefined);
+      assert.equal(payload.output_config, undefined);
+    }
+  }
+});
