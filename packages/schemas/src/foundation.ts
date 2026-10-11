@@ -35,6 +35,7 @@ export const resetInput = tokenInput.extend({
 });
 export const emailInput = z.object({ email: credentials.shape.email });
 export const capabilities = [
+  "knowledge:approve",
   "support:view",
   "support:operator:view",
   "support:reply",

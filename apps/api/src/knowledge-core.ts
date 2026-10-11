@@ -1,3 +1,4 @@
+import { HttpError } from "./http-error.js";
 import { sql } from "./db.js";
 import { config } from "./config.js";
 import { decrypt } from "./security.js";
@@ -31,6 +32,8 @@ export type KnowledgeBase = {
   chunk_overlap: number;
   chunk_strategy: string;
   public_access: boolean;
+  approval_required: boolean;
+  published_release_id: string | null;
   archived_at: Date | null;
   revision: number;
 };
@@ -100,6 +103,8 @@ export class PostgresRagTool implements RagTool {
       minScore: number;
       mode: "vector" | "hybrid";
       sourceIds?: string[];
+      contentMode?: "current" | "approved";
+      releasePins?: Record<string, string>;
     },
     context: RetrievalContext,
     signal: AbortSignal,
@@ -132,10 +137,22 @@ export class PostgresRagTool implements RagTool {
         vector = validateVectors(vectors, 1, kb.dimensions)[0]!;
         queries.set(kb.embedding_model_id, vector);
       }
+      const releaseId = options.releasePins?.[kb.id] ?? kb.published_release_id;
+      const approved =
+        !!options.releasePins?.[kb.id] ||
+        options.contentMode === "approved" ||
+        kb.approval_required;
+      if (approved) {
+        const [release] =
+          await sql`SELECT id FROM knowledge_releases WHERE id=${releaseId ?? null} AND knowledge_base_id=${kb.id} AND workspace_id=${context.workspaceId} AND organization_id=${context.organizationId} AND status='published'`;
+        if (!release) throw new KnowledgeError("KNOWLEDGE_RELEASE_UNAVAILABLE");
+      }
       const literal = vectorLiteral(vector, kb.dimensions);
       const dim = sql.unsafe(String(kb.dimensions));
       const filters = options.sourceIds ?? [];
-      const select = sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,d.title,d.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,s.kind FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id JOIN knowledge_documents d ON d.id=c.document_id WHERE c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status='ready' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`;
+      const select = approved
+        ? sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,c.title,c.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,c.kind FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=${releaseId!} AND c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status<>'deleted' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`
+        : sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,d.title,d.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,s.kind FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id JOIN knowledge_documents d ON d.id=c.document_id WHERE c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status='ready' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`;
       const semantic =
         await sql`${select} ORDER BY c.embedding::vector(${dim}) <=> ${literal}::vector(${dim}) LIMIT 30`;
       const lexical =
@@ -186,5 +203,45 @@ export class PostgresRagTool implements RagTool {
     return result
       .slice(0, options.topK)
       .map(({ fusion, ...r }, i) => (void fusion, { ...r, id: i + 1 }));
+  }
+}
+
+/** Pins are always validated; publishing also requires an available approved release. */
+export async function validateKnowledgeSelection(
+  rag: {
+    knowledgeBaseIds: string[];
+    contentMode?: string;
+    releasePins?: Record<string, string>;
+  },
+  workspaceId: string,
+  organizationId: string,
+  publicAccess = false,
+  requireReady = false,
+) {
+  await validateKnowledgeIds(
+    rag.knowledgeBaseIds,
+    workspaceId,
+    organizationId,
+    publicAccess,
+  );
+  for (const baseId of rag.knowledgeBaseIds) {
+    const [kb] =
+      await sql`SELECT approval_required,published_release_id FROM knowledge_bases WHERE id=${baseId} AND workspace_id=${workspaceId} AND organization_id=${organizationId} AND archived_at IS NULL`;
+    const pin = rag.releasePins?.[baseId];
+    if (
+      !pin &&
+      !(
+        requireReady &&
+        (rag.contentMode === "approved" || kb?.approval_required)
+      )
+    )
+      continue;
+    const [release] =
+      await sql`SELECT r.id FROM knowledge_releases r WHERE r.id=${pin ?? kb?.published_release_id ?? null} AND r.knowledge_base_id=${baseId} AND r.workspace_id=${workspaceId} AND r.organization_id=${organizationId} AND r.status='published' AND EXISTS(SELECT 1 FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=r.id AND s.status<>'deleted')`;
+    if (!release)
+      throw new HttpError(
+        400,
+        "Select a published knowledge release with available passages",
+      );
   }
 }

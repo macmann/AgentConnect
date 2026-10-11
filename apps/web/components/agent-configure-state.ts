@@ -17,6 +17,9 @@ export type KnowledgeOption = {
   public_access: boolean;
   source_count: number;
   ready_count: number;
+  approval_required?: boolean;
+  published_release_id?: string | null;
+  published_releases?: { id: string; available_sources: number }[];
   failed_count?: number;
   indexing_count?: number;
 };
@@ -54,10 +57,11 @@ const labels: Record<string, string> = {
 };
 export function fieldSection(field: string): ConfigureSection {
   if (field.startsWith("config.prompt")) return "prompt";
+  if (field.startsWith("config.answerPolicy")) return "knowledge";
   if (field.startsWith("config.rag")) return "knowledge";
   if (field.startsWith("config.tools")) return "tools";
   if (
-    /generative|welcomeMessage|fallbackResponse|conversationStarters/.test(
+    /generative|welcomeMessage|fallbackResponse|conversationStarters|quickActions|journeys/.test(
       field,
     )
   )
@@ -129,7 +133,23 @@ export function agentReadiness(
     tids = draft.config.tools.toolIds;
   const knowledgeReady =
     knowledge &&
-    kbs.every((id) => knowledge.some((k) => k.id === id && k.ready_count > 0));
+    kbs.every((id) =>
+      knowledge.some((k) => {
+        if (k.id !== id) return false;
+        const pin = draft.config.rag.releasePins?.[id];
+        const reviewed =
+          !!pin ||
+          draft.config.rag.contentMode === "approved" ||
+          k.approval_required;
+        return reviewed
+          ? !!k.published_releases?.some(
+              (r) =>
+                r.id === (pin ?? k.published_release_id) &&
+                r.available_sources > 0,
+            )
+          : k.ready_count > 0;
+      }),
+    );
   const toolsReady =
     tools && tids.every((id) => tools.some((t) => t.id === id && t.enabled));
   const invalid = configureIssues(draft, models);

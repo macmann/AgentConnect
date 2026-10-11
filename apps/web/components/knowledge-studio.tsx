@@ -1,4 +1,5 @@
 "use client";
+import { KnowledgeReleases } from "./knowledge-releases";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -18,6 +19,8 @@ type Base = {
   name: string;
   description: string;
   public_access: boolean;
+  approval_required: boolean;
+  published_release_id: string | null;
   revision: number;
   embedding_model_id: string;
   dimensions: number;
@@ -79,9 +82,9 @@ export function KnowledgeStudio({
   const canRetrieve = canManage || role === "analyst";
   const canModel = ["owner", "org_admin", "workspace_admin"].includes(role);
   const [selected, setSelected] = useState("");
-  const [tab, setTab] = useState<"sources" | "playground" | "settings">(
-    "sources",
-  );
+  const [tab, setTab] = useState<
+    "sources" | "playground" | "releases" | "settings"
+  >("sources");
   const [form, setForm] = useState<
     | "base"
     | "embedding"
@@ -769,20 +772,31 @@ export function KnowledgeStudio({
       {selected && base && (
         <>
           <div className="studio-tabs">
-            {(["sources", "playground", "settings"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => {
-                  setTab(t);
-                  setForm(null);
-                  setPreview(null);
-                }}
-                className={tab === t ? "active" : ""}
-              >
-                {t === "playground" ? "Retrieval playground" : t}
-              </button>
-            ))}
+            {(["sources", "playground", "releases", "settings"] as const).map(
+              (t) => (
+                <button
+                  key={t}
+                  onClick={() => {
+                    setTab(t);
+                    setForm(null);
+                    setPreview(null);
+                  }}
+                  className={tab === t ? "active" : ""}
+                >
+                  {t === "playground" ? "Retrieval playground" : t}
+                </button>
+              ),
+            )}
           </div>
+          {tab === "releases" && (
+            <KnowledgeReleases
+              key={selected}
+              baseId={selected}
+              role={role}
+              sources={sources.data ?? []}
+              publishedId={base.published_release_id}
+            />
+          )}
           {tab === "sources" && (
             <>
               <div className="knowledge-toolbar">
@@ -1071,6 +1085,12 @@ export function KnowledgeStudio({
                         name: String(d.get("name")),
                         description: String(d.get("description")),
                         publicAccess: d.get("publicAccess") === "on",
+                        ...(canModel
+                          ? {
+                              approvalRequired:
+                                d.get("approvalRequired") === "on",
+                            }
+                          : {}),
                         revision: base.revision,
                       });
                       setNotice("Knowledge settings saved");
@@ -1105,6 +1125,20 @@ export function KnowledgeStudio({
                   <p className="muted">
                     Turning this off blocks retrieval from existing public
                     deployments immediately.
+                  </p>
+                  {canModel && (
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        name="approvalRequired"
+                        defaultChecked={base.approval_required}
+                      />
+                      Require reviewed releases for retrieval
+                    </label>
+                  )}
+                  <p className="muted">
+                    When review is required, source edits stay out of agent
+                    answers until a release is reviewed and published.
                   </p>
                   <Button type="submit" disabled={busy}>
                     Save knowledge settings

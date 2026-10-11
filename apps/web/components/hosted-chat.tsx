@@ -9,6 +9,7 @@ export function HostedChat({ deploymentId }: { deploymentId: string }) {
     description: string;
     welcomeMessage: string;
     conversationStarters: string[];
+    quickActions?: import("@agentconnect/schemas/bank-experience").QuickAction[];
   } | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -43,6 +44,7 @@ export function HostedChat({ deploymentId }: { deploymentId: string }) {
             name={deployment.name}
             welcomeMessage={deployment.welcomeMessage}
             starters={deployment.conversationStarters}
+            quickActions={deployment.quickActions ?? []}
           />
         </>
       ) : (
