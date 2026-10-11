@@ -6,7 +6,7 @@ import {
 } from "@agentconnect/provider-sdk";
 import {
   oneDriveSelection,
-  oneDriveCredential,
+  microsoftConnectorCredential,
 } from "@agentconnect/schemas/connectors";
 import {
   ConnectorError,
@@ -84,7 +84,7 @@ const fingerprint = (item: Item) =>
   ]);
 export function createOneDriveAdapter(
   selection: z.infer<typeof oneDriveSelection>,
-  credential: z.infer<typeof oneDriveCredential>,
+  credential: z.infer<typeof microsoftConnectorCredential>,
   transport?: ReturnType<typeof safeHttpTransport>,
   sharedClient?: MicrosoftGraphClient,
 ): SourceAdapter {

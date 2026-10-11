@@ -168,3 +168,29 @@ export const connectorUpdate = z
   })
   .strict();
 export type S3Selection = z.infer<typeof s3Selection>;
+
+// OAuth envelopes are stored encrypted in workspace secrets, never returned by APIs.
+export const oauthProvider = z.enum([
+  "google-drive",
+  "onedrive",
+  "sharepoint",
+  "teams",
+  "slack",
+]);
+export const oauthAccessCredential = z.object({
+  auth: z.literal("oauth"),
+  provider: oauthProvider,
+  accessToken: z.string().min(1).max(30000),
+  tenantId: z.string().default("organizations"),
+});
+export const googleConnectorCredential = z.union([
+  googleDriveCredential,
+  oauthAccessCredential,
+]);
+export const microsoftConnectorCredential = z.union([
+  oneDriveCredential,
+  oauthAccessCredential,
+]);
+export const connectorSyncInput = z
+  .object({ mode: z.enum(["incremental", "full"]).default("incremental") })
+  .strict();

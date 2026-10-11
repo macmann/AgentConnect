@@ -3,6 +3,8 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
 import { requestJson } from "./agent-client";
+import { ConnectorSourceBrowser } from "./connector-source-browser";
+import { ConnectorSignIn } from "./connector-sign-in";
 import { Button } from "./button";
 type Connector = {
   id: string;
@@ -37,6 +39,7 @@ type Folder = { id: string; name: string; webUrl: string };
 type Sync = {
   id: string;
   status: string;
+  mode: "incremental" | "full";
   counts: Record<string, number>;
   error_code: string | null;
   created_at: string;
@@ -332,6 +335,14 @@ export function ConnectorsStudio({
                   Create a knowledge base
                 </Button>
               )}
+              {kind !== "s3" && (
+                <ConnectorSignIn
+                  key={kind + selected}
+                  workspaceId={workspaceId}
+                  provider={kind}
+                  onConnected={setSecret}
+                />
+              )}
               <label>
                 Workspace credential
                 <select
@@ -343,7 +354,9 @@ export function ConnectorsStudio({
                     if (!connector && kind === "sharepoint") resetDiscovery();
                   }}
                 >
-                  <option value="">Select JSON credential</option>
+                  <option value="">
+                    Select signed-in account or JSON credential
+                  </option>
                   {secrets.data?.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
@@ -366,6 +379,27 @@ export function ConnectorsStudio({
               <Button onClick={() => onNavigate("Secrets")}>
                 Open Secrets
               </Button>
+              {!connector &&
+                secret &&
+                ["google-drive", "onedrive", "teams", "slack"].includes(
+                  kind,
+                ) && (
+                  <ConnectorSourceBrowser
+                    key={kind + secret}
+                    workspaceId={workspaceId}
+                    provider={kind}
+                    secretId={secret}
+                    onSelect={(v) => {
+                      if (v.folderId) setFolderId(v.folderId);
+                      if (v.driveId) setDriveId(v.driveId);
+                      if (v.teamId) setTeamId(v.teamId);
+                      if (v.channelId) setChannelId(v.channelId);
+                      setNotice(
+                        "Source selected. Review the target knowledge base and save.",
+                      );
+                    }}
+                  />
+                )}
               {kind === "s3" ? (
                 <>
                   <label>
@@ -834,6 +868,11 @@ export function ConnectorsStudio({
                   : ""}
               </p>
               <p>
+                Incremental sync downloads and reindexes only new, changed or
+                previously failed content. A complete metadata scan checks
+                removals; provider delta feeds are not used.
+              </p>
+              <p>
                 Sync imports sources and queues document parsing/embedding
                 separately. Open Knowledge to check source readiness before
                 attaching it to an agent.
@@ -856,8 +895,51 @@ export function ConnectorsStudio({
                       })
                     }
                   >
-                    Sync now
+                    Sync changes now
                   </Button>
+                )}
+                {canManage && connector.kind !== "s3" && (
+                  <ConnectorSignIn
+                    workspaceId={workspaceId}
+                    provider={connector.kind}
+                    secretId={connector.secret_id}
+                    onConnected={setSecret}
+                  />
+                )}
+                {canSync && (
+                  <details className="workspace-advanced-settings">
+                    <summary>Recovery: full refresh</summary>
+                    <p>
+                      Download and reindex every supported source. This can
+                      increase embedding costs. Use only when incremental sync
+                      needs repair.
+                    </p>
+                    <Button
+                      disabled={
+                        busy ||
+                        !connector.enabled ||
+                        ["queued", "running"].includes(connector.status ?? "")
+                      }
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            "Reimport all supported sources? This can increase embedding costs.",
+                          )
+                        )
+                          return;
+                        void action(async () => {
+                          await requestJson(
+                            base + "/connectors/" + connector.id + "/sync",
+                            "POST",
+                            { mode: "full" },
+                          );
+                          setNotice("Full refresh queued.");
+                        });
+                      }}
+                    >
+                      Reimport all sources
+                    </Button>
+                  </details>
                 )}
                 <Button onClick={() => onNavigate("Knowledge")}>
                   Open Knowledge
@@ -937,7 +1019,9 @@ export function ConnectorsStudio({
             {history.data?.map((s) => (
               <article className="connector-run" key={s.id}>
                 <strong>
-                  {s.status} · {new Date(s.created_at).toLocaleString()}
+                  {s.status} ·{" "}
+                  {s.mode === "full" ? "Full refresh" : "Incremental sync"} ·{" "}
+                  {new Date(s.created_at).toLocaleString()}
                 </strong>
                 <p>
                   {Object.entries(s.counts)

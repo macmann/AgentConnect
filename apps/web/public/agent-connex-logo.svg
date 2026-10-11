@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 180" width="100%" height="100%">
+  <defs>
+    <!-- Dark Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090A0F"/>
+      <stop offset="100%" stop-color="#040406"/>
+    </linearGradient>
+
+    <!-- Neon Cyan to Violet Gradients -->
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00F2FE"/>
+      <stop offset="100%" stop-color="#4FACFE"/>
+    </linearGradient>
+    
+    <linearGradient id="violetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#B171F8"/>
+      <stop offset="100%" stop-color="#7F00FF"/>
+    </linearGradient>
+
+    <!-- Glow Effect -->
+    <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background Card -->
+  <rect width="520" height="180" rx="16" fill="url(#bgGrad)"/>
+
+  <!-- Subtle Developer Grid -->
+  <g stroke="#ffffff" stroke-opacity="0.03" stroke-width="1">
+    <line x1="0" y1="45" x2="520" y2="45"/>
+    <line x1="0" y1="90" x2="520" y2="90"/>
+    <line x1="0" y1="135" x2="520" y2="135"/>
+    <line x1="130" y1="0" x2="130" y2="180"/>
+    <line x1="260" y1="0" x2="260" y2="180"/>
+    <line x1="390" y1="0" x2="390" y2="180"/>
+  </g>
+
+  <!-- MULTI-AGENT GRAPH ICON (Left) -->
+  <g transform="translate(20, -10)">
+    <!-- Connection Edges -->
+    <path d="M50 100 L95 65" stroke="url(#cyanGrad)" stroke-width="3" opacity="0.7"/>
+    <path d="M50 100 L95 135" stroke="url(#violetGrad)" stroke-width="3" opacity="0.7"/>
+    <path d="M95 65 L140 100" stroke="url(#cyanGrad)" stroke-width="3" opacity="0.7"/>
+    <path d="M95 135 L140 100" stroke="url(#violetGrad)" stroke-width="3" opacity="0.7"/>
+    <path d="M95 65 L95 135" stroke="#ffffff" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.3"/>
+
+    <!-- Agent Nodes -->
+    <circle cx="50" cy="100" r="9" fill="#090A0F" stroke="url(#cyanGrad)" stroke-width="2.5" filter="url(#neonGlow)"/>
+    <circle cx="50" cy="100" r="3" fill="#00F2FE"/>
+
+    <circle cx="95" cy="65" r="9" fill="#090A0F" stroke="url(#cyanGrad)" stroke-width="2.5" filter="url(#neonGlow)"/>
+    <circle cx="95" cy="65" r="3" fill="#00F2FE"/>
+
+    <circle cx="95" cy="135" r="9" fill="#090A0F" stroke="url(#violetGrad)" stroke-width="2.5" filter="url(#neonGlow)"/>
+    <circle cx="95" cy="135" r="3" fill="#B171F8"/>
+
+    <!-- Orchestrator Core Node -->
+    <circle cx="140" cy="100" r="15" fill="#090A0F" stroke="url(#cyanGrad)" stroke-width="3.5" filter="url(#neonGlow)"/>
+    <circle cx="140" cy="100" r="5.5" fill="url(#cyanGrad)"/>
+    <circle cx="140" cy="100" r="21" fill="none" stroke="#00F2FE" stroke-width="1" stroke-dasharray="2 5" opacity="0.5"/>
+  </g>
+
+  <!-- WORDMARK (Right) -->
+  <g transform="translate(200, 0)">
+    <!-- AGENT -->
+    <text x="0" y="82" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="34" font-weight="300" letter-spacing="4" fill="#E4E4E7">AGENT</text>
+    
+    <!-- CONNEX -->
+    <text x="0" y="124" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="36" font-weight="800" letter-spacing="3" fill="#FFFFFF">CONNEX</text>
+    
+    <!-- Active Status Pulse -->
+    <circle cx="212" cy="113" r="4.5" fill="#00F2FE" filter="url(#neonGlow)"/>
+  </g>
+</svg>

@@ -14,6 +14,8 @@ import {
   s3Credential,
   googleDriveSelection,
   googleDriveCredential,
+  googleConnectorCredential,
+  microsoftConnectorCredential,
   oneDriveSelection,
   oneDriveCredential,
   sharePointSelection,
@@ -36,6 +38,7 @@ import {
 } from "./messaging-adapters.js";
 import { createPrivateKey } from "node:crypto";
 import { sql } from "./db.js";
+import { resolveOAuthCredential } from "./connector-oauth.js";
 import { decrypt } from "./security.js";
 import { config } from "./config.js";
 import { hosts } from "./knowledge-core.js";
@@ -91,7 +94,7 @@ export async function connectorCredentials(
   kind = "s3",
 ) {
   const [s] =
-    await sql`SELECT name,ciphertext FROM secrets WHERE id=${connector.secret_id} AND workspace_id=${connector.workspace_id} AND organization_id=${connector.organization_id}`;
+    await sql`SELECT id,name,ciphertext FROM secrets WHERE id=${connector.secret_id} AND workspace_id=${connector.workspace_id} AND organization_id=${connector.organization_id}`;
   if (!s) throw new ConnectorError("CONNECTOR_CREDENTIAL_UNAVAILABLE");
   try {
     const value = JSON.parse(
@@ -100,6 +103,16 @@ export async function connectorCredentials(
         `${connector.organization_id}:${connector.workspace_id}:${s.name}`,
       ),
     );
+    if (value.auth === "oauth") {
+      const access = await resolveOAuthCredential(
+        s as Parameters<typeof resolveOAuthCredential>[0],
+        `${connector.organization_id}:${connector.workspace_id}:${s.name}`,
+        kind,
+      );
+      return kind === "slack"
+        ? slackCredential.parse({ token: access.accessToken })
+        : access;
+    }
     if (kind === "google-drive") {
       const credential = googleDriveCredential.parse(value);
       const key = createPrivateKey(credential.private_key);
@@ -114,7 +127,8 @@ export async function connectorCredentials(
     if (kind === "onedrive" || kind === "sharepoint" || kind === "teams")
       return oneDriveCredential.parse(value);
     return s3Credential.parse(value);
-  } catch {
+  } catch (e) {
+    if (e instanceof ConnectorError) throw e;
     throw new ConnectorError("CONNECTOR_CREDENTIAL_INVALID");
   }
 }
@@ -146,7 +160,7 @@ export const createSourceAdapter: AdapterFactory = async (connector) => {
     return connector.kind === "teams"
       ? createTeamsAdapter(
           teamsSelection.parse(connector.selection),
-          oneDriveCredential.parse(credential),
+          microsoftConnectorCredential.parse(credential),
         )
       : createSlackAdapter(
           slackSelection.parse(connector.selection),
@@ -157,14 +171,14 @@ export const createSourceAdapter: AdapterFactory = async (connector) => {
     validateConnectorSelection(connector.kind, connector.selection);
     return createSharePointAdapter(
       sharePointSelection.parse(connector.selection),
-      oneDriveCredential.parse(
+      microsoftConnectorCredential.parse(
         await connectorCredentials(connector, connector.kind),
       ),
     );
   }
   if (connector.kind === "onedrive") {
     validateConnectorSelection(connector.kind, connector.selection);
-    const credential = oneDriveCredential.parse(
+    const credential = microsoftConnectorCredential.parse(
       await connectorCredentials(connector, connector.kind),
     );
     return createOneDriveAdapter(
@@ -174,7 +188,7 @@ export const createSourceAdapter: AdapterFactory = async (connector) => {
   }
   if (connector.kind === "google-drive") {
     validateConnectorSelection(connector.kind, connector.selection);
-    const credential = googleDriveCredential.parse(
+    const credential = googleConnectorCredential.parse(
       await connectorCredentials(connector, connector.kind),
     );
     return createGoogleDriveAdapter(

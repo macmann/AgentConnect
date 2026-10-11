@@ -368,6 +368,23 @@ test("incremental sync skips unchanged objects and updates changed source revisi
   });
   assert.match(search.json().results[0].content, /60 days/);
 });
+test("full refresh reimports unchanged sources while incremental remains the default", async () => {
+  const [before] =
+    await sql`SELECT revision FROM knowledge_sources WHERE id=${sourceId}`;
+  const r = await call("POST", base + "/connectors/" + connectorId + "/sync", {
+    mode: "full",
+  });
+  assert.equal(r.statusCode, 202, r.body);
+  await processConnectorSync();
+  const job = await run(r.json().id);
+  assert.equal(job.mode, "full");
+  assert.equal(job.counts.updated, 1);
+  assert.equal(job.counts.unchanged, 0);
+  const [after] =
+    await sql`SELECT revision FROM knowledge_sources WHERE id=${sourceId}`;
+  assert.equal(after!.revision, before!.revision + 1);
+  await processKnowledgeJob(embedding);
+});
 test("listing failure preserves existing sources and exposes a safe failure code", async () => {
   const job = await queue();
   const factory: AdapterFactory = async () => ({

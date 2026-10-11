@@ -5,7 +5,7 @@ import { safeHttpTransport } from "@agentconnect/provider-sdk";
 import {
   teamsSelection,
   slackSelection,
-  oneDriveCredential,
+  microsoftConnectorCredential,
   slackCredential,
 } from "@agentconnect/schemas/connectors";
 import {
@@ -104,7 +104,7 @@ const graphMessage = z.object({
 });
 export function createTeamsAdapter(
   selection: z.infer<typeof teamsSelection>,
-  credential: z.infer<typeof oneDriveCredential>,
+  credential: z.infer<typeof microsoftConnectorCredential>,
   transport?: GraphTransport,
 ): SourceAdapter {
   selection = teamsSelection.parse(selection);
@@ -176,7 +176,7 @@ export function createTeamsAdapter(
       text = $.root().text();
     }
     if (!text.trim()) return;
-    const url = `https://teams.microsoft.com/l/message/${encodeURIComponent(selection.channelId)}/${message.id}?groupId=${selection.teamId}&tenantId=${credential.tenantId}`;
+    const url = `https://teams.microsoft.com/l/message/${encodeURIComponent(selection.channelId)}/${message.id}?groupId=${selection.teamId}${/^[a-fA-F0-9-]{36}$/.test(credential.tenantId) ? "&tenantId=" + credential.tenantId : ""}`;
     snapshot.add(
       message.id,
       url,

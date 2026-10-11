@@ -270,6 +270,52 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   await expect(
     page.getByText("Draft saved. Start a new chat to use these changes."),
   ).toBeVisible();
+  if (process.env.PRODUCT_SCREENSHOTS) {
+    await page.setViewportSize({ width: 1440, height: 1400 });
+    await page.evaluate(() => {
+      document.activeElement?.blur();
+      window.scrollTo(0, 350);
+    });
+    await page.screenshot({
+      path: "docs/screenshots/rag-agent-knowledge.png",
+      fullPage: false,
+    });
+    await page
+      .getByRole("navigation", { name: "Configure sections" })
+      .getByRole("button", { name: "Overview", exact: true })
+      .click();
+    await page.evaluate(() => {
+      document.activeElement?.blur();
+      window.scrollTo(0, 0);
+    });
+    await page.screenshot({
+      path: "docs/screenshots/rag-agent-overview.png",
+      fullPage: false,
+    });
+    await page
+      .getByRole("button", { name: "Switch to dark theme", exact: true })
+      .click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await page.screenshot({
+      path: "docs/screenshots/rag-agent-dark.png",
+      fullPage: false,
+    });
+    await page
+      .getByRole("button", { name: "Switch to light theme", exact: true })
+      .click();
+    await page
+      .getByRole("navigation", { name: "Configure sections" })
+      .getByRole("button", { name: "Prompt", exact: true })
+      .click();
+    await page.evaluate(() => {
+      document.activeElement?.blur();
+      window.scrollTo(0, 350);
+    });
+    await page.screenshot({
+      path: "docs/screenshots/rag-agent-prompt.png",
+      fullPage: false,
+    });
+  }
   await page.getByRole("button", { name: "playground", exact: true }).click();
   await page
     .getByLabel("Message", { exact: true })
@@ -311,6 +357,13 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
         )
         .last(),
     ).toBeVisible();
+    if (process.env.PRODUCT_SCREENSHOTS) {
+      await chat.setViewportSize({ width: 1280, height: 900 });
+      await chat.screenshot({
+        path: "docs/screenshots/rag-agent-chat.png",
+        fullPage: true,
+      });
+    }
     await chat.setViewportSize({ width: 390, height: 844 });
     expect(
       await chat.evaluate(

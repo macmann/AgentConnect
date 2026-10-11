@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { safeHttpTransport, ProviderError } from "@agentconnect/provider-sdk";
-import { oneDriveCredential } from "@agentconnect/schemas/connectors";
+import { microsoftConnectorCredential } from "@agentconnect/schemas/connectors";
 import { ConnectorError } from "./connector-adapters.js";
 import { config } from "./config.js";
 import { hosts } from "./knowledge-core.js";
@@ -61,7 +61,7 @@ export async function safeGraphOperation<T>(
   }
 }
 export function createMicrosoftGraphClient(
-  credential: z.infer<typeof oneDriveCredential>,
+  credential: z.infer<typeof microsoftConnectorCredential>,
   transport: GraphTransport = safeHttpTransport(
     hosts(config.CONNECTOR_ALLOWED_HOSTS),
     hosts(config.CONNECTOR_PRIVATE_HOSTS),
@@ -83,6 +83,11 @@ export function createMicrosoftGraphClient(
   }
   async function authenticate(signal: AbortSignal) {
     if (token && expiresAt > Date.now() + 60000) return;
+    if ("auth" in credential) {
+      token = credential.accessToken;
+      expiresAt = Date.now() + 300000;
+      return;
+    }
     const response = await transport(
       `${microsoftGraphEndpoints[1]}/${credential.tenantId}/oauth2/v2.0/token`,
       { "content-type": "application/x-www-form-urlencoded" },

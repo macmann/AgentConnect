@@ -1,6 +1,6 @@
-# AgentConnect architecture
+# Agent Connex architecture
 
-AgentConnect is a greenfield, provider-neutral enterprise platform. The supplied specification is retained verbatim in product-spec.md. Implementation proceeds by vertical slices; UI alone does not establish feature completion.
+Agent Connex is a greenfield, provider-neutral enterprise platform. The supplied specification is retained verbatim in product-spec.md. Implementation proceeds by vertical slices; UI alone does not establish feature completion.
 
 ## Foundation boundaries
 

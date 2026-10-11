@@ -37,9 +37,9 @@ The worker claims deliveries with PostgreSQL leases, sends with a 10-second dead
 The signing secret is encrypted and displayed only on creation or explicit rotation. Receivers must verify the exact raw body:
 
 ```text
-X-AgentConnect-Id: <delivery UUID>
-X-AgentConnect-Timestamp: <Unix seconds>
-X-AgentConnect-Signature: sha256=<hex HMAC-SHA256>
+X-Agent Connex-Id: <delivery UUID>
+X-Agent Connex-Timestamp: <Unix seconds>
+X-Agent Connex-Signature: sha256=<hex HMAC-SHA256>
 
 signed bytes = timestamp + "." + raw JSON request body
 ```

@@ -80,7 +80,7 @@ export async function registerCustomerReports(app: FastifyInstance) {
             )
             .header(
               "content-disposition",
-              'attachment; filename="agentconnect-insights.xlsx"',
+              'attachment; filename="agent-connex-insights.xlsx"',
             )
             .header("cache-control", "no-store")
             .send(

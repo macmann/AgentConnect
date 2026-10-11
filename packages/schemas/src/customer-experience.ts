@@ -23,7 +23,7 @@ export const branding = z
     primaryColor: z
       .string()
       .regex(/^#[0-9a-fA-F]{6}$/)
-      .default("#256c55"),
+      .default("#6d43cc"),
     backgroundColor: z
       .string()
       .regex(/^#[0-9a-fA-F]{6}$/)
@@ -31,7 +31,7 @@ export const branding = z
     textColor: z
       .string()
       .regex(/^#[0-9a-fA-F]{6}$/)
-      .default("#172820"),
+      .default("#182033"),
   })
   .strict();
 export type Branding = z.infer<typeof branding>;
