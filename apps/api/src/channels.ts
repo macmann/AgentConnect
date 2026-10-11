@@ -19,6 +19,7 @@ import { actor, audit, id, params, workspaceAccess } from "./app.js";
 import { sql } from "./db.js";
 import { digest } from "./security.js";
 import { HttpError } from "./http-error.js";
+import { productLogo } from "./brand-assets.js";
 import { widgetBundle } from "./widget-bundle.js";
 export function widgetDeploymentPath(r: FastifyRequest) {
   return /^\/public\/widgets\/([0-9a-f-]{36})(?:\/(?:messages\/[0-9a-f-]{36}\/actions\/[a-z][a-z0-9_]{0,39}|artifacts\/[0-9a-f-]{36}\/grant|chat|sessions|history(?:\/[0-9a-f-]{36})?|conversations(?:\/[0-9a-f-]{36}\/(?:handoff(?:\/stream)?|feedback|workflows(?:\/[0-9a-f-]{36})?))?))?$/.exec(
@@ -90,6 +91,17 @@ export async function conversationAccess(
 }
 export async function registerChannelRoutes(app: FastifyInstance) {
   await registerCustomerSessions(app);
+  app.get("/brand/agent-connex-logo.svg", async (_r, reply) =>
+    reply
+      .type("image/svg+xml")
+      .header("Cross-Origin-Resource-Policy", "cross-origin")
+      .header("cache-control", "public, max-age=3600")
+      .header(
+        "content-security-policy",
+        "default-src 'none'; style-src 'unsafe-inline'",
+      )
+      .send(productLogo),
+  );
   app.get("/widget.js", async (_r, reply) =>
     reply
       .type("application/javascript; charset=utf-8")

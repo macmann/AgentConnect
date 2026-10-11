@@ -58,7 +58,7 @@ const provider = createServer(async (req, res) => {
   }
   const content = JSON.stringify({
     version: 1,
-    message: "Approved fixture response.",
+    message: "Here are our branch hours and support options.",
     blocks,
   });
   res.writeHead(200, { "content-type": "text/event-stream" });
@@ -74,7 +74,7 @@ const provider = createServer(async (req, res) => {
 const site = createServer((_req, res) => {
   res.writeHead(200, { "content-type": "text/html" });
   res.end(
-    `<html><body><h1>Customer fixture</h1><script src="http://localhost:4000/widget.js" data-deployment="${deployment}"></script></body></html>`,
+    `<html><body><h1>Customer Support</h1><script src="http://localhost:4000/widget.js" data-deployment="${deployment}"></script></body></html>`,
   );
 });
 const graph = {
@@ -99,7 +99,7 @@ const capabilities = { streaming: true, temperature: true, topP: true };
 const c = {
   modelId: model,
   generative: { enabled: true, allowPublicForms: true },
-  welcomeMessage: "Customer welcome",
+  welcomeMessage: "How can we help you today?",
   quickActions: [
     {
       id: "lookup",
@@ -117,15 +117,15 @@ test.beforeAll(async () => {
   await new Promise((r) => provider.listen(4568, "127.0.0.1", r));
   await new Promise((r) => site.listen(4569, "127.0.0.1", r));
   await sql.begin(async (tx) => {
-    await tx`INSERT INTO users(id,email,name,password_hash,verified_at) VALUES(${owner},${owner + "@example.com"},'Customer fixture','not-login',now())`;
+    await tx`INSERT INTO users(id,email,name,password_hash,verified_at) VALUES(${owner},${owner + "@example.com"},'Customer Support','not-login',now())`;
     await tx`INSERT INTO sessions(id_hash,user_id,expires_at) VALUES(${createHash("sha256").update(session).digest("hex")},${owner},now()+interval '1 hour')`;
     await tx`INSERT INTO organizations(id,name) VALUES(${org},'Customer browser fixture')`;
-    await tx`INSERT INTO workspaces(id,organization_id,name) VALUES(${workspace},${org},'Customer fixture')`;
+    await tx`INSERT INTO workspaces(id,organization_id,name) VALUES(${workspace},${org},'Customer Support')`;
     await tx`INSERT INTO memberships(id,organization_id,user_id,role) VALUES(${randomUUID()},${org},${owner},'owner')`;
     await tx`INSERT INTO model_configurations(id,workspace_id,organization_id,name,provider,model_id,base_url,context_window,max_output_tokens,capabilities) VALUES(${model},${workspace},${org},'Fixture','openai-compatible','fixture','http://127.0.0.1:4568/v1',32768,4096,${tx.json(capabilities)})`;
     await tx`INSERT INTO workflows(id,workspace_id,organization_id,name,description,draft_graph,created_by) VALUES(${workflow},${workspace},${org},'Customer lookup','',${tx.json(graph)},${owner})`;
     await tx`INSERT INTO workflow_versions(id,workflow_id,workspace_id,organization_id,version,name,graph,published_by) VALUES(${workflowVersion},${workflow},${workspace},${org},1,'Customer lookup',${tx.json(graph)},${owner})`;
-    await tx`INSERT INTO agents(id,workspace_id,organization_id,name,description,public_description,draft_config,created_by) VALUES(${agent},${workspace},${org},'Customer fixture','','',${tx.json(c)},${owner})`;
+    await tx`INSERT INTO agents(id,workspace_id,organization_id,name,description,public_description,draft_config,created_by) VALUES(${agent},${workspace},${org},'Customer Support','','',${tx.json(c)},${owner})`;
     const snapshot = {
       id: model,
       provider: "openai-compatible",
@@ -136,8 +136,8 @@ test.beforeAll(async () => {
       contextWindow: 32768,
       maxOutputTokens: 4096,
     };
-    await tx`INSERT INTO agent_versions(id,agent_id,workspace_id,organization_id,version,name,public_description,config,model_snapshot,model_id,published_by) VALUES(${version},${agent},${workspace},${org},1,'Customer fixture','',${tx.json(c)},${tx.json(snapshot)},${model},${owner})`;
-    await tx`INSERT INTO deployments(id,workspace_id,organization_id,agent_id,version_id,name,environment,widget_settings) VALUES(${deployment},${workspace},${org},${agent},${version},'Customer fixture','development',${tx.json({ enabled: true, access: "restricted", allowedOrigins: ["http://localhost:4569"], theme: "light", position: "right", launcher: "Chat", greeting: "Customer welcome", width: 380, height: 560, language: "en" })})`;
+    await tx`INSERT INTO agent_versions(id,agent_id,workspace_id,organization_id,version,name,public_description,config,model_snapshot,model_id,published_by) VALUES(${version},${agent},${workspace},${org},1,'Customer Support','',${tx.json(c)},${tx.json(snapshot)},${model},${owner})`;
+    await tx`INSERT INTO deployments(id,workspace_id,organization_id,agent_id,version_id,name,environment,widget_settings) VALUES(${deployment},${workspace},${org},${agent},${version},'Customer Support','development',${tx.json({ enabled: true, access: "restricted", allowedOrigins: ["http://localhost:4569"], theme: "light", position: "right", launcher: "Chat", greeting: "How can we help you today?", width: 420, height: 720, language: "en" })})`;
   });
 });
 test.afterAll(async () => {
@@ -216,6 +216,30 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("http://localhost:4569");
   await page.getByRole("button", { name: "Chat", exact: true }).click();
+  await expect(
+    page.getByRole("img", { name: "Agent Connex", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Switch to dark theme", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Switch to light theme", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Chat", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Switch to light theme", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Switch to light theme", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page
+        .getByRole("img", { name: "Agent Connex", exact: true })
+        .evaluate((img) => img.complete && img.naturalWidth > 0),
+    )
+    .toBe(true);
   await page.getByRole("button", { name: "Start lookup", exact: true }).click();
   await expect(page.getByLabel("Reference", { exact: true })).toBeVisible();
   await page.getByLabel("Reference", { exact: true }).fill("REF-BROWSER");
@@ -292,6 +316,32 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
     page.getByText("Workflow · completed", { exact: true }),
   ).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("widget-desktop.png") });
+  if (process.env.PRODUCT_SCREENSHOTS) {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.getByText("Rate this conversation", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Close chat", exact: true })
+      .locator("..")
+      .locator("..")
+      .screenshot({ path: "docs/screenshots/chat-widget-desktop.png" });
+  }
+  await page
+    .getByRole("button", { name: "Switch to dark theme", exact: true })
+    .click();
+  await expect(page.locator("section.dark .rich-block").first()).toHaveCSS(
+    "background-color",
+    "rgb(18, 22, 32)",
+  );
+  await expect(page.locator("section.dark table").first()).toHaveCSS(
+    "color",
+    "rgb(238, 240, 250)",
+  );
+  if (process.env.PRODUCT_SCREENSHOTS)
+    await page
+      .getByRole("button", { name: "Close chat", exact: true })
+      .locator("..")
+      .locator("..")
+      .screenshot({ path: "docs/screenshots/chat-widget-dark.png" });
   await page.setViewportSize({ width: 360, height: 800 });
   expect(
     await page.evaluate(
@@ -302,6 +352,8 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
     page.getByRole("button", { name: "Close chat", exact: true }),
   ).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("widget-mobile.png") });
+  if (process.env.PRODUCT_SCREENSHOTS)
+    await page.screenshot({ path: "docs/screenshots/chat-widget-mobile.png" });
   expect(errors).toEqual([]);
   const hosted = await browser.newContext();
   const chat = await hosted.newPage();
@@ -346,6 +398,10 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
       page.getByText(/Credentials stay encrypted on the server/),
     ).toBeVisible();
   }
+  await page
+    .getByRole("button", { name: "Switch to dark theme", exact: true })
+    .click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
   await page
     .getByRole("button", { name: "Assisted answer", exact: true })
@@ -404,4 +460,34 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
       return rows.length;
     })
     .toBe(1);
+  if (process.env.PRODUCT_SCREENSHOTS)
+    await page.screenshot({
+      path: "docs/screenshots/workflow-dark.png",
+      fullPage: true,
+    });
+  for (const view of [
+    "Models",
+    "Knowledge",
+    "Tools",
+    "Connectors",
+    "Operations",
+    "Quality",
+    "Secrets",
+  ]) {
+    await page.getByRole("button", { name: view, exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await expect(
+      page.getByRole("heading", { name: view, exact: true }).first(),
+    ).toBeVisible();
+  }
+  await page.setViewportSize({ width: 360, height: 800 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await expect(
+    page.getByRole("button", { name: "Switch to light theme", exact: true }),
+  ).toBeVisible();
+  expect(errors).toEqual([]);
 });

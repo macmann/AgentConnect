@@ -101,6 +101,7 @@ export async function processConnectorSync(
         await sql`SELECT i.*,s.revision,s.status,s.knowledge_base_id FROM connector_items i JOIN knowledge_sources s ON s.id=i.source_id WHERE i.connector_id=${connector.id} AND i.external_key=${document.key}`;
       const item = mapped?.status === "deleted" ? undefined : mapped;
       if (
+        job.mode !== "full" &&
         item &&
         item.fingerprint === document.fingerprint &&
         !["deleted", "failed"].includes(item.status)

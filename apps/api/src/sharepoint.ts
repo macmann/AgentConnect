@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  oneDriveCredential,
+  microsoftConnectorCredential,
   oneDriveSelection,
   sharePointSelection,
   sharePointSiteId,
@@ -67,10 +67,10 @@ export interface SharePointClient {
   close(): void;
 }
 export type SharePointClientFactory = (
-  credential: z.infer<typeof oneDriveCredential>,
+  credential: z.infer<typeof microsoftConnectorCredential>,
 ) => SharePointClient;
 export function createSharePointClient(
-  credential: z.infer<typeof oneDriveCredential>,
+  credential: z.infer<typeof microsoftConnectorCredential>,
   transport?: GraphTransport,
   sharedGraph?: MicrosoftGraphClient,
 ): SharePointClient {
@@ -274,7 +274,7 @@ export function createSharePointClient(
 }
 export function createSharePointAdapter(
   selection: z.infer<typeof sharePointSelection>,
-  credential: z.infer<typeof oneDriveCredential>,
+  credential: z.infer<typeof microsoftConnectorCredential>,
   transport?: GraphTransport,
 ): SourceAdapter {
   const graph = createMicrosoftGraphClient(credential, transport);

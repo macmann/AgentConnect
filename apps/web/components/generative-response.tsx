@@ -104,7 +104,7 @@ function Chart({
 }) {
   const max = Math.max(1, ...block.data.map((d) => d.value)),
     sum = block.data.reduce((s, d) => s + d.value, 0) || 1,
-    colors = ["#256c55", "#6a9e7e", "#b3caaa", "#d6ad58", "#9c7fba", "#6e9cad"];
+    colors = ["#7955d9", "#0891b2", "#a78bfa", "#f59e0b", "#4facfe", "#b171f8"];
   const points = block.data
     .map(
       (d, i) =>
@@ -181,7 +181,7 @@ function Chart({
           </>
         ) : (
           <>
-            <line x1={25} y1={180} x2={385} y2={180} stroke="#b3caaa" />
+            <line x1={25} y1={180} x2={385} y2={180} stroke="var(--line)" />
             {block.chartType === "bar" ? (
               block.data.map((d, i) => (
                 <rect
@@ -200,7 +200,10 @@ function Chart({
             ) : (
               <>
                 {block.chartType === "area" && (
-                  <polygon points={`35,180 ${points} 365,180`} fill="#e2eee5" />
+                  <polygon
+                    points={`35,180 ${points} 365,180`}
+                    fill="var(--accent-soft)"
+                  />
                 )}
                 {block.chartType !== "scatter" && (
                   <polyline
@@ -225,13 +228,19 @@ function Chart({
                 ))}
               </>
             )}
-            <text x={25} y={15} fontSize={11} fill="#57635c">
+            <text x={25} y={15} fontSize={11} fill="var(--muted)">
               {max.toLocaleString()}
             </text>
-            <text x={30} y={205} fontSize={11} fill="#57635c">
+            <text x={30} y={205} fontSize={11} fill="var(--muted)">
               {block.data[0]?.label}
             </text>
-            <text x={380} y={205} textAnchor="end" fontSize={11} fill="#57635c">
+            <text
+              x={380}
+              y={205}
+              textAnchor="end"
+              fontSize={11}
+              fill="var(--muted)"
+            >
               {block.data.at(-1)?.label}
             </text>
           </>

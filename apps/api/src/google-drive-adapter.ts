@@ -3,7 +3,7 @@ import { z } from "zod";
 import { safeHttpTransport, ProviderError } from "@agentconnect/provider-sdk";
 import {
   googleDriveSelection,
-  googleDriveCredential,
+  googleConnectorCredential,
 } from "@agentconnect/schemas/connectors";
 import {
   ConnectorError,
@@ -61,7 +61,7 @@ const fingerprint = (f: File) =>
   ]);
 export function createGoogleDriveAdapter(
   selection: z.infer<typeof googleDriveSelection>,
-  credential: z.infer<typeof googleDriveCredential>,
+  credential: z.infer<typeof googleConnectorCredential>,
   transport: ReturnType<typeof safeHttpTransport> = safeHttpTransport(
     hosts(config.CONNECTOR_ALLOWED_HOSTS),
     hosts(config.CONNECTOR_PRIVATE_HOSTS),
@@ -121,6 +121,11 @@ export function createGoogleDriveAdapter(
   }
   async function authenticate(signal: AbortSignal) {
     if (token && expiresAt > Date.now() + 60000) return;
+    if ("auth" in credential) {
+      token = credential.accessToken;
+      expiresAt = Date.now() + 300000;
+      return;
+    }
     const now = Math.floor(Date.now() / 1000);
     const encode = (v: unknown) =>
       Buffer.from(JSON.stringify(v)).toString("base64url");

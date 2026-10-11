@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Boxes } from "lucide-react";
+import { ProductBrand } from "./product-brand";
 import { ChatPanel } from "./chat-panel";
 import { requestJson } from "./agent-client";
 export function HostedChat({ deploymentId }: { deploymentId: string }) {
@@ -50,9 +50,9 @@ export function HostedChat({ deploymentId }: { deploymentId: string }) {
             referrerPolicy="no-referrer"
           />
         ) : (
-          <Boxes />
+          <ProductBrand />
         )}
-        {deployment?.branding?.name || "AgentConnect"}
+        {deployment?.branding?.name || ""}
       </a>
       {error ? (
         <div className="error-banner" role="alert">
@@ -74,7 +74,7 @@ export function HostedChat({ deploymentId }: { deploymentId: string }) {
         <p className="empty">Loading published agent…</p>
       )}
       <p className="fine">
-        Powered by AgentConnect · Conversations are saved by this agent’s
+        Powered by Agent Connex · Conversations are saved by this agent’s
         workspace.
       </p>
     </main>

@@ -1,4 +1,5 @@
 "use client";
+import { ProductBrand } from "./product-brand";
 import { SupportStudio } from "./support-studio";
 import { RetentionStudio } from "./retention-studio";
 import { ConnectorsStudio } from "./connectors-studio";
@@ -145,7 +146,7 @@ function Auth({ onDone }: { onDone: () => void }) {
     <div className="auth">
       <div className="auth-story">
         <div className="brand">
-          <Boxes /> AgentConnect
+          <ProductBrand />
         </div>
         <span className="eyebrow">THE ENTERPRISE AGENT WORKSPACE</span>
         <h1>
@@ -166,7 +167,7 @@ function Auth({ onDone }: { onDone: () => void }) {
         <small>YOUR AI WORKSPACE</small>
       </div>
       <div className="auth-form">
-        <div className="eyebrow">WELCOME TO AGENTCONNECT</div>
+        <div className="eyebrow">WELCOME TO AGENT CONNEX</div>
         <h2>
           {mode === "register"
             ? "Create your account"
@@ -550,10 +551,7 @@ function Studio() {
   const navigation = (
     <div className="sidebar-body">
       <a className="brand" href="/">
-        <div className="brand-icon">
-          <Boxes size={21} />
-        </div>
-        AgentConnect
+        <ProductBrand />
       </a>
       <div className="org-picker">
         <div className="org-avatar">{(org?.name ?? "W").slice(0, 1)}</div>
@@ -1309,7 +1307,7 @@ function Studio() {
           )}
           <footer>
             <span>
-              AgentConnect{" "}
+              Agent Connex{" "}
               <span className="muted">/ Enterprise AI, connected.</span>
             </span>
             <span>

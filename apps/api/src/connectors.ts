@@ -4,7 +4,8 @@ import {
   connectorInput,
   connectorUpdate,
   sharePointDiscoveryInput,
-  oneDriveCredential,
+  microsoftConnectorCredential,
+  connectorSyncInput,
 } from "@agentconnect/schemas/connectors";
 import { actor, workspaceAccess, id, params, audit } from "./app.js";
 import { sql } from "./db.js";
@@ -40,7 +41,7 @@ export async function registerConnectorRoutes(
       const d = sharePointDiscoveryInput.parse(r.body);
       for (const endpoint of oneDriveEndpoints)
         validateConnectorEndpoint(endpoint);
-      const credential = oneDriveCredential.parse(
+      const credential = microsoftConnectorCredential.parse(
         await connectorCredentials(
           {
             secret_id: d.secretId,
@@ -166,6 +167,7 @@ export async function registerConnectorRoutes(
     async (r, reply) => {
       const { u, w } = await access(r, "connector:sync");
       await workspaceAccess(u.id, w.id, "knowledge:manage");
+      const { mode } = connectorSyncInput.parse(r.body ?? {});
       const syncId = randomUUID();
       await sql.begin(async (tx) => {
         const [c] =
@@ -176,7 +178,7 @@ export async function registerConnectorRoutes(
           await tx`SELECT id FROM connector_syncs WHERE connector_id=${c.id} AND status IN ('queued','running')`;
         if (existing)
           throw new HttpError(409, "A sync is already queued or running");
-        await tx`INSERT INTO connector_syncs(id,connector_id,organization_id,workspace_id,requested_by,connector_revision,status) VALUES (${syncId},${c.id},${w.organization_id},${w.id},${u.id},${c.revision},'queued')`;
+        await tx`INSERT INTO connector_syncs(id,connector_id,organization_id,workspace_id,requested_by,connector_revision,status,mode) VALUES (${syncId},${c.id},${w.organization_id},${w.id},${u.id},${c.revision},'queued',${mode})`;
         await audit(
           tx,
           r,
@@ -197,7 +199,7 @@ export async function registerConnectorRoutes(
       const [c] =
         await sql`SELECT id FROM enterprise_connectors WHERE id=${id(params(r).connectorId)} AND workspace_id=${w.id} AND archived_at IS NULL`;
       if (!c) throw new HttpError(404, "Connector unavailable");
-      return sql`SELECT id,status,attempts,counts,error_code,created_at,finished_at FROM connector_syncs WHERE connector_id=${c.id} ORDER BY created_at DESC,id DESC LIMIT 50`;
+      return sql`SELECT id,status,mode,attempts,counts,error_code,created_at,finished_at FROM connector_syncs WHERE connector_id=${c.id} ORDER BY created_at DESC,id DESC LIMIT 50`;
     },
   );
   app.post(

@@ -1,14 +1,14 @@
-# AgentConnect — Human Support, Intelligent Handoff & AI Copilot
+# Agent Connex — Human Support, Intelligent Handoff & AI Copilot
 
 ## Implementation-Grade Product Requirements Specification
 
 ### Objective
 
-Extend the existing AgentConnect human handoff capability into a production-grade Human Support and Intelligent Handoff module suitable for enterprise customer service, contact centers, internal service desks, banking, healthcare, government and other support-oriented deployments.
+Extend the existing Agent Connex human handoff capability into a production-grade Human Support and Intelligent Handoff module suitable for enterprise customer service, contact centers, internal service desks, banking, healthcare, government and other support-oriented deployments.
 
 This is NOT a separate support application.
 
-It must be a native AgentConnect capability tightly integrated with:
+It must be a native Agent Connex capability tightly integrated with:
 
 - Conversations
 - AI agents
@@ -745,7 +745,7 @@ Make feature configurable.
 
 ## Confidence-based escalation
 
-If AgentConnect has meaningful confidence signals available, allow policy thresholds.
+If Agent Connex has meaningful confidence signals available, allow policy thresholds.
 
 Do not fabricate numeric confidence from LLM prose if no reliable signal exists.
 
@@ -1644,7 +1644,7 @@ Where the operator has permission:
 - require operator confirmation for mutating actions
 - record tool usage
 
-Do not let copilot bypass AgentConnect tool permissions.
+Do not let copilot bypass Agent Connex tool permissions.
 
 ---
 
@@ -2829,7 +2829,7 @@ Reuse schemas server/client where appropriate.
 
 Do not implement support intelligence specifically for OpenAI.
 
-Use AgentConnect's existing provider/model abstractions.
+Use Agent Connex's existing provider/model abstractions.
 
 Allow workspace-configured model selection for:
 
@@ -3984,7 +3984,7 @@ That is the core design requirement.
 
 # 112. FINAL PRODUCT OUTCOME
 
-The implemented AgentConnect Human Support module should function as:
+The implemented Agent Connex Human Support module should function as:
 
 ```text
 AI Customer Service
@@ -4024,4 +4024,4 @@ Make that human significantly more productive with AI
 Return routine follow-up back to AI
 ```
 
-Implement the feature according to this specification while preserving AgentConnect's existing provider-neutral, multi-tenant, schema-driven and enterprise-oriented architecture.
+Implement the feature according to this specification while preserving Agent Connex's existing provider-neutral, multi-tenant, schema-driven and enterprise-oriented architecture.

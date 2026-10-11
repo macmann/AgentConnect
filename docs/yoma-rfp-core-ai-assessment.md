@@ -1,6 +1,6 @@
 # Yoma Bank RFP — core AI capability assessment
 
-Assessment date: 2026-10-11. Repository: AgentConnect, branch `feat/release-monitoring`, commit `4774814`.
+Assessment date: 2026-10-11. Repository: Agent Connex, branch `feat/release-monitoring`, commit `4774814`.
 
 ## Scope and conclusion
 
@@ -8,7 +8,7 @@ Reviewed both supplied documents: **Yoma AI Assistant RFP Final September 2026**
 
 Excluded: mobile SDKs, enterprise identity/security/compliance certifications, residency, encryption/KMS, SIEM integration, commercial proposals and contractual availability/DR obligations. Included: grounding and hallucination control, safe AI action capability, model/runtime optimization and measurable response performance because these directly affect AI behavior.
 
-**Conclusion:** AgentConnect has a substantial PoC foundation: document RAG, independent knowledge administration, streaming chat, visual workflows, versioned agents, conversation review/evaluations and a mature AI-to-human-to-AI support journey. It is **not yet fully compliant with the core AI requirements**. Major gaps are Myanmar-language acceptance, approved/versioned knowledge releases, banking-specific grounded fallback/clarification and escalation, channel-consistent quick actions, the specified analytics/CSAT, dynamic model routing and token optimization.
+**Conclusion:** Agent Connex has a substantial PoC foundation: document RAG, independent knowledge administration, streaming chat, visual workflows, versioned agents, conversation review/evaluations and a mature AI-to-human-to-AI support journey. It is **not yet fully compliant with the core AI requirements**. Major gaps are Myanmar-language acceptance, approved/versioned knowledge releases, banking-specific grounded fallback/clarification and escalation, channel-consistent quick actions, the specified analytics/CSAT, dynamic model routing and token optimization.
 
 This is a source review, not a new live-provider or bank-data acceptance test. Existing validation largely uses explicit protocol fixtures. A configurable language/model field is not evidence of language accuracy, and a displayed citation is not proof of factual entailment.
 
@@ -40,7 +40,7 @@ Statuses: **Implemented** = concrete code/UI path exists; **Partial** = narrower
 | Social Media Messenger; optional Viber                  | Missing                  | No working Messenger or Viber conversation adapter. Teams/Slack knowledge-source connectors are not these customer messaging channels.                                                                                                          |
 | Failed-question review and improvement                  | Implemented / Partial    | Conversation reviews/corrections, dataset import, judge/deterministic evaluations, source recall and publication gates exist. Corrections do not automatically update knowledge; operators must perform approved edits.                         |
 | CSAT/customer satisfaction                              | Missing                  | Internal reviewer likes/dislikes exist, but are not customer CSAT surveys, scores or rates.                                                                                                                                                     |
-| Yoma branding                                           | Partial                  | Agent name/welcome and widget theme/greeting/launcher are configurable. No shared Yoma logo/custom color configuration; hosted shell still displays AgentConnect.                                                                               |
+| Yoma branding                                           | Partial                  | Agent name/welcome and widget theme/greeting/launcher are configurable. No shared Yoma logo/custom color configuration; hosted shell still displays Agent Connex.                                                                               |
 
 ## Analytics requirements
 

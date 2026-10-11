@@ -20,6 +20,17 @@ const schema = z.object({
       );
     }, "Use the public HTTPS API origin")
     .optional(),
+  CONNECTOR_OAUTH_API_ORIGIN: z.url().optional(),
+  GOOGLE_CONNECTOR_CLIENT_ID: z.string().min(1).optional(),
+  GOOGLE_CONNECTOR_CLIENT_SECRET: z.string().min(1).optional(),
+  MICROSOFT_CONNECTOR_CLIENT_ID: z.string().min(1).optional(),
+  MICROSOFT_CONNECTOR_CLIENT_SECRET: z.string().min(1).optional(),
+  MICROSOFT_CONNECTOR_TENANT: z
+    .string()
+    .regex(/^(organizations|common|[a-fA-F0-9-]{36})$/)
+    .default("organizations"),
+  SLACK_CONNECTOR_CLIENT_ID: z.string().min(1).optional(),
+  SLACK_CONNECTOR_CLIENT_SECRET: z.string().min(1).optional(),
   MONITORING_TOKEN: z.string().min(32).max(256).optional(),
   WORKER_HEALTH_HOST: z.enum(["127.0.0.1", "0.0.0.0"]).default("127.0.0.1"),
   WORKER_HEALTH_PORT: z.coerce.number().int().min(1).max(65535).default(4100),

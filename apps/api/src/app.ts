@@ -9,6 +9,8 @@ import { registerCustomerWorkflows } from "./customer-workflows.js";
 import { registerMonitoring } from "./monitoring.js";
 import { registerSupportRoutes } from "./support/routes.js";
 import { registerRetentionRoutes } from "./retention.js";
+import { registerConnectorDiscovery } from "./connector-discovery.js";
+import { registerConnectorOAuth } from "./connector-oauth.js";
 import { registerConnectorRoutes, connectorHttpError } from "./connectors.js";
 import { registerQualityRoutes } from "./quality.js";
 import {
@@ -160,6 +162,7 @@ export async function buildApp(
     embeddingFactory?: import("@agentconnect/provider-sdk/embeddings").EmbeddingFactory;
     runMessagingWorker?: boolean;
     messagingHttp?: import("./customer-messaging-adapters.js").MessagingHttp;
+    connectorOAuthHttp?: import("./connector-oauth.js").OAuthHttp;
     sharePointClientFactory?: import("./sharepoint.js").SharePointClientFactory;
   } = {},
 ) {
@@ -220,7 +223,7 @@ export async function buildApp(
   await app.register(rateLimit, { max: 300, timeWindow: "1 minute", redis });
   await app.register(swagger, {
     openapi: {
-      info: { title: "AgentConnect Foundation API", version: "0.1.0" },
+      info: { title: "Agent Connex Foundation API", version: "0.1.0" },
       servers: [{ url: "http://localhost:4000" }],
     },
   });
@@ -256,9 +259,21 @@ export async function buildApp(
               properties: Object.fromEntries(
                 names.map((name) => [
                   name,
-                  name === "blockId"
-                    ? { type: "string", pattern: "^[a-z][a-z0-9_]{0,39}$" }
-                    : { type: "string", format: "uuid" },
+                  name === "provider" &&
+                  route.url === "/connectors/oauth/callback/:provider"
+                    ? {
+                        type: "string",
+                        enum: [
+                          "google-drive",
+                          "onedrive",
+                          "sharepoint",
+                          "teams",
+                          "slack",
+                        ],
+                      }
+                    : name === "blockId"
+                      ? { type: "string", pattern: "^[a-z][a-z0-9_]{0,39}$" }
+                      : { type: "string", format: "uuid" },
                 ]),
               ),
               required: names,
@@ -734,6 +749,8 @@ export async function buildApp(
   );
   await registerQualityRoutes(app);
   await registerConnectorRoutes(app, options.sharePointClientFactory);
+  await registerConnectorOAuth(app, options.connectorOAuthHttp);
+  await registerConnectorDiscovery(app, options.connectorOAuthHttp);
   await registerRetentionRoutes(app);
   await registerAgentRoutes(
     app,

@@ -1,0 +1,201 @@
+# Agent Connex user guide
+
+This guide takes a workspace administrator or builder from an empty workspace to a grounded assistant and a customer chat deployment. Menu visibility and actions depend on your workspace role. Use an administrator account for models, credentials, connectors and publication policies.
+
+## Understand the three building blocks
+
+| Building block | What it does                                                      | Example                                    |
+| -------------- | ----------------------------------------------------------------- | ------------------------------------------ |
+| Agent          | Responds using a model, instructions and approved knowledge/tools | Product policy assistant                   |
+| Workflow       | Runs a graph of agents, tools, branches and approvals             | Research → review → approve → final answer |
+| Deployment     | Makes a published agent available to a channel                    | Website widget or hosted chat              |
+
+A RAG agent is an agent with attached knowledge and retrieval settings. It is not a separate data model or a workflow requirement. You can create a grounded agent without building a workflow.
+
+## Sign in and create your workspace
+
+1. Register or sign in.
+2. Complete email verification when required. For a local development installation, the operator can use the documented development bypass; users cannot configure SMTP from the agent page.
+3. Create or select an organization and workspace.
+4. Invite teammates and assign appropriate roles.
+
+The organization/workspace selectors define where your models, knowledge, tools and agents live. If a resource seems missing, check your selected workspace and role first.
+
+## Connect a model
+
+1. Open **Secrets** and save your provider API key. Give it a recognizable name such as `OPENAI_API_KEY`.
+2. Open **Models** and register a model.
+3. Select the actual provider and its exact API model identifier. A display name is only a label.
+4. Select the workspace credential you saved. Saving a secret does not automatically attach it to a model.
+5. Set model context/output capacities and supported sampling capabilities according to the provider.
+6. Save and use **Test connection**.
+
+If the provider rejects temperature or top-p, disable that unsupported capability. If an endpoint is not approved, ask the installation administrator to update the API and worker endpoint grants and restart them. Do not replace an entire allowlist when adding one host.
+
+An embedding model is configured separately in Knowledge. Chat and embedding models can use different credentials and providers.
+
+## Prepare knowledge
+
+1. Open **Knowledge** and register an embedding model with its supported dimension count.
+2. Create a knowledge base and select that embedding model.
+3. Add a supported document, pasted text, Q&A entries or approved website source.
+4. Wait for parsing and embedding to finish. A source must be **Ready** before it can reliably ground responses.
+5. Inspect source/chunk previews and test a knowledge search.
+6. Set access for the intended audience. Public customer deployments require compatible public knowledge access.
+
+A queued source needs the background worker. A failed source needs its error resolved before retrying/reingesting. A connector sync marked completed means ingestion was queued; it does not mean every source is already ready.
+
+For approval-required knowledge, review and publish a knowledge release. Reviewed content is a snapshot; changing a source does not silently replace an approved release. See [RAG](rag.md) and [banking AI](bank-core-ai.md) for review settings and limitations.
+
+## Create a RAG agent
+
+1. Open **Agents** and create an agent.
+2. In **Configure → Overview**, set the name, descriptions, category, model and locale. Choose the content classification that fits your use case; attachments and retrieval policy control actual grounding.
+3. In **Prompt**, describe its role, objective, instructions and boundaries. For example:
+
+   > You are a product support assistant. Answer policy questions from approved knowledge. Cite the evidence you use. If the available sources do not support an answer, say so and offer human support. Do not invent fees, eligibility rules or deadlines.
+
+4. In **Knowledge**, attach the prepared knowledge base. Select hybrid/vector/text retrieval and enable citations if your answers must show evidence.
+5. Set the knowledge usage policy. **Automatic** decides relevance using your instructions; **Always** searches attached knowledge for every message; **Disabled** retains the attachment but skips retrieval.
+6. Add usage instructions such as: “Search knowledge for policies and procedures; skip greetings and thanks.”
+7. In **Behavior**, choose response creativity and conversation memory. Use advanced settings only when needed; respect the configured model’s supported values and output budget.
+8. In **Experience**, configure the welcome message, fallback response and conversation starters. Enable rich response components only for the formats you want.
+9. Save the draft, then use **Save and test in Playground** or open Playground.
+
+![RAG agent overview](screenshots/rag-agent-overview.png)
+
+![Knowledge attachment and retrieval configuration](screenshots/rag-agent-knowledge.png)
+
+Subsection navigation preserves unsaved form edits. The save bar shows actual dirty state. If someone updates the draft elsewhere, reload the latest revision rather than overwriting it. New Playground chats snapshot the saved draft, so start a new chat after changing settings.
+
+### Test grounding
+
+Ask a question whose answer is in your uploaded document. Check that the answer is supported and its citations identify the relevant source. Then ask an unsupported question and verify that it does not invent an answer.
+
+Test greetings and irrelevant questions if you configured automatic knowledge use. Inspect private run details to understand retrieval, tool calls, selected model and token/context usage. A connection test proves only a small provider request succeeded; it does not prove all prompt settings or agent behaviors work.
+
+![Grounded customer answer with citations](screenshots/rag-agent-chat.png)
+
+## Attach tools deliberately
+
+Open **Configure → Tools** and select approved, enabled tools from your workspace. If there are no tools, follow the empty-state link to Tools and register one with an administrator.
+
+- **Automatic:** the model may select a relevant tool or skip tool use.
+- **Required/always policy:** requires a valid tool selection within the call limit; it does not call every attached tool blindly.
+- **Disabled:** preserves attachments but skips planning/execution.
+
+Use instructions such as “Use search for current information; do not use it for greetings or questions answered by approved knowledge.” Existing tools are read-only. Knowledge and tool usage have separate planning decisions; do not assume a deterministic knowledge-first fallback chain.
+
+Review tool arguments, access, descriptions and traces before exposing them publicly. See [tools](tools.md).
+
+## Connect external knowledge with sign-in
+
+Your installation administrator must first configure the provider OAuth app. You can then:
+
+1. Open **Connectors**, choose **Add connector** and select Google Drive, OneDrive, SharePoint, Teams or Slack.
+2. Choose the target knowledge base.
+3. Use **Sign in with Google/Microsoft/Slack**. Allow the popup, sign in and grant the requested read permissions.
+4. Return to Agent Connex. The signed-in credential is selected automatically; raw token values are never shown.
+5. Use **Choose a folder or channel** to browse available sources. Open a folder and use **Use current folder**, or choose a channel. SharePoint uses its site/library/folder browser.
+6. Review the populated source IDs. If a source is beyond the first 100 browse results, use its exact ID or a narrower folder.
+7. Set the sync limit and optional schedule, then save.
+8. Use **Sync changes now** and inspect sync history, then check readiness in Knowledge.
+
+For S3, use access-key JSON, an approved endpoint and bucket/prefix. Existing service-account/application/token credentials remain supported through the credential selector. See [connector setup](connectors.md).
+
+### Incremental sync and recovery
+
+Normal sync downloads and reindexes new, changed or previously failed supported content; unchanged content is skipped. A complete metadata listing checks deletions. This is content-level incremental synchronization, not a provider delta/change-feed subscription.
+
+- **Pause** stops future syncs while retaining imported knowledge.
+- **Cancel sync** stops an active job; content already imported can remain.
+- **Disconnect** retains imported sources. Remove them in Knowledge if the content must no longer be available.
+- **Reconnect** refreshes an existing OAuth credential after revocation/expiry failure. For a legacy credential, sign in while editing and select the new OAuth secret.
+- **Recovery → full refresh** downloads/reindexes every supported source and may increase embedding costs.
+
+Choose source content suitable for the knowledge base’s audience: source permissions are not automatically mirrored per customer or workspace user. Narrow the source rather than raising limits blindly.
+
+## Publish and deploy
+
+1. Save and test the draft.
+2. Open **Publish**, resolve configuration/readiness warnings and satisfy any configured evaluation gate.
+3. Publish an immutable version.
+4. Create a deployment for that version, giving it a suitable name and environment.
+5. Open the hosted chat link and run a customer-facing test.
+
+A saved draft does not update an existing published version. To release changes, publish another version and explicitly update the deployment. Optional knowledge/tools are not mandatory, but attached resources must meet readiness and access requirements.
+
+## Put the widget on a website
+
+1. Open **Channels** for the deployment.
+2. Enable the widget and configure access and exact allowed website origins where required.
+3. Set the chatbot name, logo, colors, launcher, greeting, size and position.
+4. Copy the embed snippet generated by the application and place it on the website.
+5. Open the actual allowed website and test sending a message, citations, refresh/resume and mobile layout.
+
+An origin includes scheme, hostname and port. `https://example.com` and `https://www.example.com` are different origins. The widget deployment must permit the public access needed by its model attachments. Do not copy a development API URL into a production site.
+
+![Desktop chat widget](screenshots/chat-widget-desktop.png)
+
+[View the mobile widget](screenshots/chat-widget-mobile.png).
+
+Where enabled, customers can see tables/charts, submit confirmed forms, download generated artifacts, invoke approved workflow quick actions and rate their conversation. Browser storage/session behavior supports return visits in the same browser; it is not a verified cross-device customer identity.
+
+## Configure messaging channels
+
+Messenger, Viber, Telegram and Teams customer adapters are configured separately from knowledge connectors. A Teams knowledge connector imports channel content; a Teams customer bot receives customer messages. They are different integrations.
+
+Use the channel-specific credentials and webhook setup in [customer engagement](customer-engagement.md). Configure a public callback origin and complete provider-side registration/verification. Test with a real provider account before inviting customers; entering credentials alone cannot bypass provider approval, permissions or public HTTPS requirements.
+
+## Build a workflow
+
+1. Open **Workflows** and choose a starter template or create a graph.
+2. Select real published agent versions for agent nodes.
+3. Configure mappings between inputs and outputs.
+4. Add condition/router paths, supported parallel/merge paths, approved read-only tools or human approval as needed.
+5. Optionally enable bounded retries on agent/tool nodes. Only transient failures retry; authentication/validation failures need a configuration change.
+6. Give the output a title and select text, automatic structured output or JSON presentation.
+7. Save, validate, run and inspect the trace. Publish when ready.
+8. Attach an approved published workflow as a customer quick action where supported.
+
+**Create reusable copy** creates an independent draft; published snapshots stay unchanged. Cancelling during retry backoff prevents the next attempt. Retries can incur additional provider/tool costs. See [workflows](workflows.md) for supported graph shapes and future extensions.
+
+## Operate human support
+
+Configure escalation policy and operator routing before inviting customers to request help. Administrators manage queues, skills and schedules; operators set availability and work assigned cases in the support inbox.
+
+Operators can review conversation history, send human replies, use private copilot suggestions and resolve cases. Copilot suggestions are not automatically sent to customers. Approved continuation can return a case to AI according to policy. Supervisors use case timelines and reporting to review outcomes. See [human support](human-support.md).
+
+## Improve quality and monitor usage
+
+- Use **Quality** to create datasets, evaluate saved configurations and compare against a baseline.
+- Use publication gates when versions must pass an evaluation policy.
+- Use **Operations** for customer insights, enquiry categories, failed searches, trends and exports.
+- Review knowledge gaps and corrected answers; approved corrections can become knowledge drafts for review.
+- Configure token/context budgeting, history summarization and quotas before scaling usage.
+- Use lighter-model routing and controlled fallback only after testing suitable queries and failure cases.
+
+Reports reflect retained data and the definitions in [customer insights](customer-insights-context.md). Token estimates and configured cost reports are not provider invoices. Knowledge-gap grouping uses normalized question text rather than semantic clustering.
+
+## Common problems
+
+| Problem                            | Action                                                                                |
+| ---------------------------------- | ------------------------------------------------------------------------------------- |
+| No model/knowledge/tool choices    | Check workspace, permissions and resource status; use the page’s create/manage link   |
+| Model test fails                   | Confirm credential selection, exact API identifier, endpoint and supported parameters |
+| Knowledge remains queued           | Ask the operator to check worker, storage and embedding access                        |
+| Agent says model unavailable       | Inspect private run diagnostics/API failure code; test the agent’s model parameters   |
+| No citations                       | Check that relevant ready knowledge was attached and retrieval actually ran           |
+| Sign-in button unavailable         | Administrator must configure the OAuth app and exact callback URL                     |
+| Sign-in popup does not open        | Allow popups, then try again                                                          |
+| Source missing from browser        | Check account permissions; use an exact source ID if outside the browse limit         |
+| Connector requests reconnection    | Reauthorize the same source account and verify consent/access                         |
+| Widget not visible                 | Check enabled state, script URL, deployment and allowed origin                        |
+| New settings not reflected in chat | Save/start a new draft chat or publish/update deployment, as appropriate              |
+| Cannot save due to conflict        | Reload the latest draft and reapply changes                                           |
+
+For installation/runtime failures, use [deployment](deployment.md), [connector setup](connectors.md) and [runtime diagnostics](agent-runtime.md).
+
+## Choose your display theme
+
+Use the **Dark / Light** switcher at the top of any product page. The initial theme follows your device preference; your selection is saved in this browser and retained across refreshes. Hosted chat uses the same switcher. The embedded widget has its own header switcher and remembers the customer’s preference per deployment, without changing the surrounding website. Customer-configured logos, names and accent colors remain available in deployment branding.

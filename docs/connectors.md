@@ -1,8 +1,8 @@
-# Enterprise connectors — S3, Google Drive, OneDrive and SharePoint
+# Enterprise knowledge connectors
 
-Phase 9 starts with a reusable source adapter (`list`, conditional `read`, `close`) and a durable sync pipeline. Adapters read S3/S3-compatible buckets, Google Drive, OneDrive for Business and SharePoint library folders into existing knowledge bases. CRM, support and messaging adapters remain subsequent implementations.
+Adapters read S3/S3-compatible buckets, Google Drive, OneDrive for Business, SharePoint library folders, Teams and Slack into existing knowledge bases through a durable sync pipeline. Customer messaging bots are separate integrations.
 
-Run `pnpm db:migrate` for migrations 0011–0014 and restart API, worker and web. Open **Connectors** in a workspace. Administrators register/change connections; builders can sync approved connections. Operators and analysts can inspect status. Sync requires current knowledge-management permission as well as connector-sync permission.
+Run `pnpm db:migrate` through migration 0030 and restart API, worker and web. Open **Connectors** in a workspace. Administrators register/change connections; builders can sync approved connections. Operators and analysts can inspect status. Sync requires current knowledge-management permission as well as connector-sync permission.
 
 ## Configure S3
 
@@ -119,3 +119,58 @@ Each message and reply becomes a separate TXT knowledge source with channel/thre
 Snapshots are imported from the same bounded in-memory scan; unchanged content hashes skip ingestion. Edits update managed source revisions. Successfully completed inventories reconcile missing messages; incomplete/rejected/over-limit scans retain existing sources. Provider history may reflect retention or concurrent changes; there is no cross-request atomic provider snapshot. Imported content inherits knowledge-base access rather than mirroring channel membership. Choose an appropriately restricted knowledge base before importing. Pausing/disconnecting retains knowledge, and source workspace/channel identifiers cannot be edited after creation.
 
 Teams/Slack tests use explicit provider-protocol fixtures; real account acceptance requires your app credentials, permissions and approved egress.
+
+## Guided OAuth setup
+
+OAuth is optional. Existing JSON credentials continue to work. S3 continues to use access credentials. Configure the following on API and worker, keeping client secrets in private environment settings:
+
+```dotenv
+CONNECTOR_OAUTH_API_ORIGIN=https://api.example.com
+GOOGLE_CONNECTOR_CLIENT_ID=your-google-client-id
+GOOGLE_CONNECTOR_CLIENT_SECRET=your-google-client-secret
+MICROSOFT_CONNECTOR_CLIENT_ID=your-entra-client-id
+MICROSOFT_CONNECTOR_CLIENT_SECRET=your-entra-client-secret
+MICROSOFT_CONNECTOR_TENANT=organizations
+SLACK_CONNECTOR_CLIENT_ID=your-slack-client-id
+SLACK_CONNECTOR_CLIENT_SECRET=your-slack-client-secret
+```
+
+Enable only providers you use; omit unused variables. The origin must be the API origin without a path, query or credentials. Development permits `http://localhost:4000`; production requires HTTPS. Provider callback registration must exactly match the URI shown by `/workspaces/:workspaceId/connectors/oauth/providers`:
+
+| Source          | Callback path                             | Requested read scopes                                                                       |
+| --------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Google Drive    | `/connectors/oauth/callback/google-drive` | `https://www.googleapis.com/auth/drive.readonly`, offline access                            |
+| OneDrive        | `/connectors/oauth/callback/onedrive`     | `offline_access Files.Read.All Sites.Read.All`                                              |
+| SharePoint      | `/connectors/oauth/callback/sharepoint`   | `offline_access Files.Read.All Sites.Read.All`                                              |
+| Teams knowledge | `/connectors/oauth/callback/teams`        | `offline_access User.Read Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All` |
+| Slack knowledge | `/connectors/oauth/callback/slack`        | User scopes `channels:read`, `channels:history`, `groups:read`, `groups:history`            |
+
+### Provider app registration
+
+- **Google:** enable Drive API, create a Web application OAuth client, configure its consent screen and exact redirect URI. Add test users while the app is in testing. Drive read access may require Google verification; testing-mode/offline token lifetimes are provider-controlled. Sign-in requests consent and offline access; grants without a refresh token are rejected so scheduled sync cannot silently depend on a short-lived token.
+- **Microsoft:** create an Entra app registration with Web redirect URIs for each enabled Microsoft source and a client secret. Configure the delegated scopes above and administrator consent where required. Use organizational accounts. `organizations` supports eligible organizational tenants; use a tenant GUID for a single-tenant application. Account, app audience and tenant settings must agree. Personal OneDrive remains unsupported by the existing adapter.
+- **Slack:** create an app, register the callback and configure the listed user token scopes under OAuth & Permissions. The sign-in requests user authorization, not bot message-send scopes. Only accessible joined channels are shown. Slack distribution, installation policies and API rate limits still apply. If token rotation is enabled, access and refresh tokens are retained encrypted and rotated server-side.
+
+Approve API destinations on both API and worker: Google needs `www.googleapis.com,oauth2.googleapis.com`; Microsoft needs `graph.microsoft.com,login.microsoftonline.com` plus exact trusted tenant download hosts; Slack needs `slack.com`. Preserve other hosts. Browser authorization uses `accounts.google.com`, `login.microsoftonline.com` or `slack.com` in the user's browser; environment outbound policy must separately allow server-side API/token destinations.
+
+Restart the services, then open Connectors, select the provider and use **Sign in**. After consent, the popup shows completion and the application selects the encrypted credential. Browse a folder/channel, review the target knowledge base, save and run **Sync changes now**. SharePoint uses its existing site/library/folder discovery. Browsing shows at most 100 results; exact source IDs remain available rather than treating a truncated browser list as a complete sync scan.
+
+### Credential lifecycle
+
+Each ten-minute OAuth attempt uses random hashed state, is bound to the initiating user/workspace/provider and can be exchanged only once. Google/Microsoft use PKCE. The callback requires the initiating browser session and current connector-management permission. Access/refresh tokens and the PKCE verifier are encrypted. The callback page is no-store and does not render codes/tokens. Failure logs contain only provider and fixed error codes.
+
+Refreshable credentials renew before an expired-token sync and use a database lock to serialize rotation across API/worker processes. A sync obtains an access token when creating its adapter; very long provider operations can still require another sync if that token expires. Slack tokens without expiration remain usable until revoked. A failed refresh reports `CONNECTOR_RECONNECT_REQUIRED`; denied consent reports `CONNECTOR_CONSENT_DENIED`. Configuration/provider failures do not return raw provider response bodies.
+
+**Reconnect** replaces the same OAuth secret so attached connectors keep their reference. Existing JSON credentials cannot be overwritten by that shortcut: sign in while editing, select the new OAuth credential and save instead. Delete an unused credential in Secrets when no connector references it; remove consent in the provider account if remote revocation is required. Disconnecting a connector does not revoke provider consent or remove imported knowledge.
+
+## Incremental sync and full refresh
+
+Default manual and scheduled runs use `incremental` mode. Full metadata/message scans remain bounded by the selected maximum. Unchanged managed fingerprints skip download and ingestion; changed/new/failed sources queue ingestion. A complete successful scan reconciles removals. Failed/incomplete/cancelled scans never use missing items to infer deletions, though files already imported before cancellation/failure can remain.
+
+For repair, open **Recovery: full refresh → Reimport all sources**. Confirmation is required in the UI because this downloads and reindexes unchanged content too. The endpoint accepts `{ "mode": "full" }`; the no-body/default request remains incremental. Sync history records the mode and import/update/unchanged/removal counts. Full refresh uses the same permission, revision, lease, cancellation and deletion-safety checks as normal sync.
+
+This is content-level incremental synchronization. Native Google Changes, Microsoft delta and messaging event feeds are future optimizations; no cursor-based API-request reduction is claimed.
+
+## Validation boundaries
+
+Local tests cover OAuth URL/state/PKCE construction, replay and tenant restrictions, denied/expired consent, encrypted credentials, refresh rotation, discovery and existing sync regressions using explicit provider fixtures. Real consent screens, enterprise administrator policies, app verification, provider rate limits and tenant download hosts require acceptance with your configured provider accounts.
