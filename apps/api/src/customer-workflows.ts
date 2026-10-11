@@ -5,6 +5,7 @@ import { workflowGraph } from "@agentconnect/schemas/workflows";
 import { conversationAccess } from "./channels.js";
 import { actor, workspaceAccess, id, params } from "./app.js";
 import { sql } from "./db.js";
+import { workflowPresentation } from "@agentconnect/schemas/workflow-results";
 import { HttpError } from "./http-error.js";
 import { validateWorkflowDependencies } from "./workflow-runtime.js";
 
@@ -53,11 +54,38 @@ export async function registerCustomerWorkflows(app: FastifyInstance) {
     app.get(base + "/:runId", async (r) => {
       const { c } = await conversationAccess(r, true);
       const [run] =
-        await sql`SELECT id,status,output,error_code FROM workflow_runs WHERE id=${id(params(r).runId)} AND conversation_id=${c.id}`;
+        await sql`SELECT id,status,output,error_code,graph_snapshot,customer_action_id FROM workflow_runs WHERE id=${id(params(r).runId)} AND conversation_id=${c.id}`;
       if (!run) throw new HttpError(404, "Workflow unavailable");
       const steps =
-        await sql`SELECT label,status FROM workflow_node_runs WHERE run_id=${run.id} ORDER BY started_at,node_id`;
-      return { ...run, steps };
+        await sql`SELECT node_id,label,status,attempts,retry_at FROM workflow_node_runs WHERE run_id=${run.id} ORDER BY started_at,node_id`;
+      const graph = workflowGraph.parse(run.graph_snapshot),
+        output = graph.nodes.find((n) => n.type === "output")!;
+      const name =
+        agentConfig
+          .parse(c.config_snapshot)
+          .quickActions.find((a) => a.id === run.customer_action_id)?.label ??
+        "Workflow";
+      return {
+        id: run.id,
+        status: run.status,
+        output: run.output,
+        error_code: run.error_code,
+        name,
+        steps,
+        resultTitle: output.data.resultTitle || "Result",
+        resultSummary: output.data.resultSummary,
+        resultFormat: output.data.resultFormat,
+        presentation:
+          run.status === "completed"
+            ? workflowPresentation(run.output, output.data.resultFormat)
+            : undefined,
+        progress: {
+          completed: steps.filter((s) => s.status === "completed").length,
+          active: steps
+            .filter((s) => s.status === "running")
+            .map((s) => s.label),
+        },
+      };
     });
     app.post(
       base,

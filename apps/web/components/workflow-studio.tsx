@@ -26,6 +26,12 @@ import {
   type WorkflowGraph,
   type WorkflowNode,
 } from "@agentconnect/schemas/workflows";
+import { WorkflowNodeDepth } from "./workflow-node-depth";
+import { WorkflowResult } from "./workflow-result";
+import {
+  workflowTemplates,
+  workflowFromTemplate,
+} from "@agentconnect/schemas/workflow-templates";
 import { Button } from "./button";
 import { requestJson } from "./agent-client";
 import { ToolTraces, type ToolTrace } from "./tool-studio";
@@ -56,6 +62,14 @@ type NodeTrace = {
   input_tokens: number | null;
   output_tokens: number | null;
   citations: Citation[];
+  attempts: number;
+  retry_history: {
+    attempt: number;
+    code: string;
+    durationMs: number;
+    willRetry: boolean;
+  }[];
+  retry_at: string | null;
 };
 type Run = {
   id: string;
@@ -417,11 +431,26 @@ export function WorkflowStudio({
       setVersion("");
     });
   }
-  function create() {
+  function create(templateId?: string, copy = false) {
+    if (
+      dirty &&
+      !window.confirm("Discard unsaved workflow changes and start a new draft?")
+    )
+      return;
+    const template = workflowTemplates.find((t) => t.id === templateId);
     const fresh = {
-      name: "",
-      description: "",
-      graph: emptyGraph(),
+      name:
+        copy && draft
+          ? draft.name.slice(0, 95) + " copy"
+          : (template?.name ?? ""),
+      description:
+        copy && draft ? draft.description : (template?.description ?? ""),
+      graph:
+        copy && draft
+          ? workflowGraph.parse(draft.graph)
+          : template
+            ? workflowFromTemplate(template.id)
+            : emptyGraph(),
       revision: 1,
     };
     setDraft(fresh);
@@ -699,7 +728,7 @@ export function WorkflowStudio({
             workflow.
           </p>
         </div>
-        {build && <Button onClick={create}>Create workflow</Button>}
+        {build && <Button onClick={() => create()}>Create workflow</Button>}
       </div>
       {error && (
         <p className="error-banner" role="alert">
@@ -715,6 +744,25 @@ export function WorkflowStudio({
           </Button>
         ))}
       </div>
+      {build && (
+        <details className="configure-group" open={!draft}>
+          <summary>Start from a template</summary>
+          <p>
+            Editable starting points. Select published agent versions before
+            testing or publishing.
+          </p>
+          <div className="workflow-picker">
+            {workflowTemplates.map((t) => (
+              <div key={t.id}>
+                <Button className="secondary" onClick={() => create(t.id)}>
+                  {t.name}
+                </Button>
+                <p>{t.description}</p>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
       {!draft ? (
         <p className="empty">
           Choose a workflow or create a new one. Publish agents in Agents before
@@ -746,6 +794,13 @@ export function WorkflowStudio({
           </div>
           {build && (
             <div className="workflow-toolbar">
+              <Button
+                className="secondary"
+                disabled={busy || !!selectedRun}
+                onClick={() => create(undefined, true)}
+              >
+                Create reusable copy
+              </Button>
               <Button disabled={busy || !draft.name.trim()} onClick={save}>
                 Save workflow
               </Button>
@@ -943,11 +998,13 @@ export function WorkflowStudio({
                       />
                     </label>
                     <small>Node ID: {current.id}</small>
+                    <WorkflowNodeDepth node={current} onChange={updateNode} />
                     {current.type === "agent" && (
                       <>
                         <label>
                           Published agent version
                           <select
+                            aria-label="Published agent version"
                             disabled={!build}
                             value={current.data.agentVersionId ?? ""}
                             onChange={(e) =>
@@ -1355,6 +1412,25 @@ export function WorkflowStudio({
                               ? `Reported tokens: ${trace.input_tokens ?? "unavailable"} input / ${trace.output_tokens ?? "unavailable"} output`
                               : n.type}
                           </small>
+                          {!!trace.attempts && (
+                            <p>
+                              {trace.attempts} attempt(s)
+                              {trace.retry_at ? " · Waiting to retry" : ""}.
+                              Token usage below covers successful completion;
+                              failed-attempt usage may be unavailable.
+                            </p>
+                          )}
+                          {!!trace.retry_history?.length && (
+                            <ul>
+                              {trace.retry_history.map((a, i) => (
+                                <li key={i}>
+                                  Attempt {a.attempt}: {a.code} · {a.durationMs}{" "}
+                                  ms ·{" "}
+                                  {a.willRetry ? "Retry scheduled" : "Stopped"}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                           <h4>Input</h4>
                           <pre>{json(trace.input)}</pre>
                           <h4>Output</h4>
@@ -1369,8 +1445,24 @@ export function WorkflowStudio({
               <ToolTraces traces={run.data.tools} />
               {run.data.status === "completed" && (
                 <div className="workflow-final-output">
-                  <h4>Final output</h4>
-                  <pre>{json(run.data.output)}</pre>
+                  <WorkflowResult
+                    output={run.data.output}
+                    title={
+                      run.data.graph_snapshot.nodes.find(
+                        (n) => n.type === "output",
+                      )?.data.resultTitle || "Final output"
+                    }
+                    summary={
+                      run.data.graph_snapshot.nodes.find(
+                        (n) => n.type === "output",
+                      )?.data.resultSummary
+                    }
+                    format={
+                      run.data.graph_snapshot.nodes.find(
+                        (n) => n.type === "output",
+                      )?.data.resultFormat
+                    }
+                  />
                 </div>
               )}
             </section>

@@ -230,9 +230,7 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
     .filter({ has: page.getByText("Workflow · completed", { exact: true }) });
   if (!(await result.evaluate((n) => n.open)))
     await page.getByText("Workflow · completed", { exact: true }).click();
-  await expect(
-    page.locator("pre").filter({ hasText: "REF-BROWSER" }),
-  ).toBeVisible();
+  await expect(page.getByText("REF-BROWSER", { exact: true })).toBeVisible();
   await page
     .getByLabel("Message", { exact: true })
     .fill("Show rich information");
@@ -348,4 +346,62 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
       page.getByText(/Credentials stay encrypted on the server/),
     ).toBeVisible();
   }
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Assisted answer", exact: true })
+    .click();
+  await page.getByText("Prepare answer", { exact: true }).click();
+  await page
+    .getByLabel("Published agent version", { exact: true })
+    .selectOption(version);
+  await page.getByText("Failure recovery", { exact: true }).click();
+  await page.getByLabel("Total attempts", { exact: true }).fill("2");
+  await page
+    .getByLabel("Initial retry delay (milliseconds)", { exact: true })
+    .fill("100");
+  await page
+    .getByTestId("rf__node-output")
+    .getByText("Answer", { exact: true })
+    .click();
+  await page.getByLabel("Result title", { exact: true }).fill("Lookup summary");
+  await page
+    .getByRole("button", { name: "Save workflow", exact: true })
+    .click();
+  await expect(
+    page.getByText("Workflow draft saved.", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Publish workflow", exact: true })
+    .click();
+  await expect
+    .poll(async () => {
+      const rows =
+        await sql`SELECT v.graph FROM workflow_versions v JOIN workflows w ON w.id=v.workflow_id WHERE w.workspace_id=${workspace} AND w.name='Assisted answer'`;
+      return rows.length;
+    })
+    .toBe(1);
+  const [published] =
+    await sql`SELECT v.graph FROM workflow_versions v JOIN workflows w ON w.id=v.workflow_id WHERE w.workspace_id=${workspace} AND w.name='Assisted answer'`;
+  expect(
+    published.graph.nodes.find((n) => n.id === "answer").data.retry.maxAttempts,
+  ).toBe(2);
+  expect(
+    published.graph.nodes.find((n) => n.id === "output").data.resultTitle,
+  ).toBe("Lookup summary");
+  await page
+    .getByRole("button", { name: "Create reusable copy", exact: true })
+    .click();
+  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
+    "Assisted answer copy",
+  );
+  await page
+    .getByRole("button", { name: "Save workflow", exact: true })
+    .click();
+  await expect
+    .poll(async () => {
+      const rows =
+        await sql`SELECT draft_graph FROM workflows WHERE workspace_id=${workspace} AND name='Assisted answer copy'`;
+      return rows.length;
+    })
+    .toBe(1);
 });
