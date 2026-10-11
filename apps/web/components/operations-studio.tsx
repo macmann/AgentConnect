@@ -1,4 +1,6 @@
 "use client";
+import { CustomerInsights } from "./customer-insights";
+import { KnowledgeGaps } from "./knowledge-gaps";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
@@ -95,6 +97,10 @@ export function OperationsStudio({
     canManage = permitted(role as Role, "operations:manage");
   const [tab, setTab] = useWorkspaceSection("operationsSection", "Analytics", [
     "Analytics",
+    "Insights",
+    ...(permitted(role as Role, "conversation:review")
+      ? ["Knowledge gaps"]
+      : []),
     "Pricing",
     ...(canManage ? ["API keys", "Webhooks", "Members"] : []),
     "Deployments",
@@ -257,6 +263,21 @@ export function OperationsStudio({
               "Review usage, cost estimates and runtime performance.",
           },
           {
+            id: "Insights",
+            label: "Customer insights",
+            description: "Date-ranged trends, utilization and Excel reports.",
+          },
+          ...(permitted(role as Role, "conversation:review")
+            ? [
+                {
+                  id: "Knowledge gaps",
+                  label: "Knowledge gaps",
+                  description:
+                    "Review unanswered questions and improve approved knowledge.",
+                },
+              ]
+            : []),
+          {
             id: "Pricing",
             label: "Model pricing",
             description:
@@ -321,6 +342,10 @@ export function OperationsStudio({
               Dismiss secret
             </Button>
           </div>
+        )}
+        {tab === "Insights" && <CustomerInsights workspaceId={workspaceId} />}
+        {tab === "Knowledge gaps" && (
+          <KnowledgeGaps workspaceId={workspaceId} role={role as Role} />
         )}
         {tab === "Analytics" && (
           <>

@@ -91,6 +91,9 @@ export type Config = {
   topP: number | null;
   maxOutputTokens: number;
   historyWindow: number;
+  contextControls?: import("zod").infer<
+    typeof import("@agentconnect/schemas/customer-experience").contextControls
+  >;
   language: string;
   timezone: string;
   welcomeMessage: string;

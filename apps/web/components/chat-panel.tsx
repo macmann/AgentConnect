@@ -15,7 +15,13 @@ import { Citations, type Citation } from "./citations";
 import { ToolTraces, type ToolTrace } from "./tool-studio";
 import { VoiceControls } from "./voice-controls";
 import { HandoffPanel } from "./handoff-panel";
-import { streamChat } from "./agent-client";
+import {
+  openCustomerSession,
+  customerRequest,
+  writeMemory,
+  type CustomerMemory,
+} from "./customer-session";
+import { streamChat, requestJson } from "./agent-client";
 function diagnosticHint(code: string): string {
   switch (code) {
     case "PROVIDER_HTTP_ERROR":
@@ -53,11 +59,21 @@ export function ChatPanel({
       content: string;
       actionsEnabled?: boolean;
       messageId?: string;
+      created_at?: string;
       blocks?: RenderedBlock[];
       citations?: Citation[];
       tools?: ToolTrace[];
     }[]
   >([]);
+  const customer = useRef<CustomerMemory | null>(null);
+  const [restoring, setRestoring] = useState(endpoint.startsWith("/public/"));
+  const [olderMessages, setOlderMessages] = useState(false);
+  const [history, setHistory] = useState<
+    { id: string; title: string; created_at: string; handoff_status: string }[]
+  >([]);
+  const publicBase = endpoint.startsWith("/public/")
+    ? endpoint.replace(/\/chat$/, "")
+    : null;
   const [handoffOpen, setHandoffOpen] = useState(false);
   const handoffStatus = useCallback(
     (open: boolean) => setHandoffOpen(open),
@@ -68,6 +84,7 @@ export function ChatPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [traceId, setTraceId] = useState("");
+  const [contextPreview, setContextPreview] = useState<unknown>(null);
   const conversation = useRef<string | undefined>(undefined);
   const guest = useRef<string | undefined>(undefined);
   const controller = useRef<AbortController | null>(null);
@@ -76,8 +93,63 @@ export function ChatPanel({
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
   }, [messages]);
+  async function loadHistory(memory: CustomerMemory) {
+    if (!publicBase) return;
+    setHistory(await customerRequest(publicBase, memory, "/history"));
+  }
+  async function resume(id: string, memory: CustomerMemory) {
+    if (!publicBase || busy) return;
+    const saved = await customerRequest<{
+      messages: typeof messages;
+      hasMore?: boolean;
+    }>(publicBase, memory, "/history/" + id);
+    controller.current?.abort();
+    conversation.current = id;
+    guest.current = memory.token;
+    customer.current = { ...memory, active: id };
+    writeMemory(publicBase, customer.current);
+    setMessages(saved.messages);
+    setOlderMessages(saved.hasMore ?? false);
+    setError("");
+    setTraceId("");
+    setHandoffOpen(false);
+  }
+  useEffect(() => {
+    if (!publicBase) return;
+    let active = true;
+    setRestoring(true);
+    openCustomerSession(publicBase)
+      .then(async (memory) => {
+        if (!active) return;
+        customer.current = memory;
+        await loadHistory(memory);
+        if (memory.active && active) {
+          try {
+            await resume(memory.active, memory);
+          } catch {
+            if (active) {
+              customer.current = { ...memory, active: undefined };
+              writeMemory(publicBase, customer.current);
+              setError(
+                "The previous conversation is no longer available. You can start a new chat.",
+              );
+            }
+          }
+        }
+      })
+      .catch((e) => {
+        if (active) setError(e.message);
+      })
+      .finally(() => {
+        if (active) setRestoring(false);
+      });
+    return () => {
+      active = false;
+    };
+    // Session restores only when the deployment changes.
+  }, [publicBase]);
   async function send(text: string, quickActionId?: string) {
-    if (!text.trim() || busy || handoffOpen) return;
+    if (!text.trim() || busy || handoffOpen || restoring) return;
     setBusy(true);
     setError("");
     setInput("");
@@ -102,6 +174,13 @@ export function ChatPanel({
             conversation.current = data.conversationId;
             guest.current = data.guestToken ?? guest.current;
             setTraceId(data.traceId ?? "");
+            if (publicBase && customer.current) {
+              customer.current = {
+                ...customer.current,
+                active: data.conversationId,
+              };
+              writeMemory(publicBase, customer.current);
+            }
           }
           if (event === "tool")
             setMessages((m) =>
@@ -158,6 +237,7 @@ export function ChatPanel({
             );
         },
         guest.current,
+        customer.current?.token,
       );
     } catch (e) {
       setError(
@@ -166,6 +246,7 @@ export function ChatPanel({
     } finally {
       setBusy(false);
       controller.current = null;
+      if (customer.current) void loadHistory(customer.current).catch(() => {});
     }
   }
   function submit(e: FormEvent) {
@@ -176,7 +257,12 @@ export function ChatPanel({
     controller.current?.abort();
     conversation.current = undefined;
     guest.current = undefined;
+    if (publicBase && customer.current) {
+      customer.current = { ...customer.current, active: undefined };
+      writeMemory(publicBase, customer.current);
+    }
     setMessages([]);
+    setOlderMessages(false);
     setError("");
     setTraceId("");
     setHandoffOpen(false);
@@ -200,13 +286,101 @@ export function ChatPanel({
           New chat
         </button>
       </div>
+      {publicBase && (
+        <details className="customer-history">
+          <summary>Previous conversations ({history.length})</summary>
+          <p className="muted">
+            Saved on this browser for up to 30 days. Anyone using this browser
+            can reopen these chats.
+          </p>
+          {restoring && <p role="status">Restoring conversation…</p>}
+          {history.map((item) => (
+            <button
+              key={item.id}
+              className="text-button"
+              disabled={busy || restoring}
+              onClick={() =>
+                customer.current &&
+                void resume(item.id, customer.current).catch((e) =>
+                  setError(e.message),
+                )
+              }
+            >
+              {item.title || "Conversation"} ·{" "}
+              {new Date(item.created_at).toLocaleDateString()} ·{" "}
+              {item.handoff_status}
+            </button>
+          ))}
+          {history.length >= 30 && (
+            <Button
+              type="button"
+              className="secondary"
+              disabled={busy || restoring}
+              onClick={async () => {
+                if (!customer.current) return;
+                const last = history.at(-1)!;
+                setRestoring(true);
+                try {
+                  const q = new URLSearchParams({
+                    before: last.created_at,
+                    beforeId: last.id,
+                  });
+                  const older = await customerRequest<typeof history>(
+                    publicBase,
+                    customer.current,
+                    "/history?" + q,
+                  );
+                  setHistory((h) => [
+                    ...h,
+                    ...older.filter((o) => !h.some((i) => i.id === o.id)),
+                  ]);
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setRestoring(false);
+                }
+              }}
+            >
+              Load older conversations
+            </Button>
+          )}
+          <Button
+            type="button"
+            className="secondary"
+            disabled={busy || restoring}
+            onClick={async () => {
+              if (!customer.current) return;
+              try {
+                await customerRequest(
+                  publicBase,
+                  customer.current,
+                  "/sessions",
+                  "DELETE",
+                );
+                writeMemory(publicBase, null);
+                reset();
+                customer.current = null;
+                setHistory([]);
+                setRestoring(true);
+                customer.current = await openCustomerSession(publicBase);
+              } catch (e) {
+                setError((e as Error).message);
+              } finally {
+                setRestoring(false);
+              }
+            }}
+          >
+            Forget this browser session
+          </Button>
+        </details>
+      )}
       {!!quickActions.length && (
         <div className="quick-action-list" aria-label="Quick actions">
           {quickActions.map((a) => (
             <Button
               key={a.id}
               className="secondary"
-              disabled={busy || handoffOpen}
+              disabled={busy || handoffOpen || restoring}
               onClick={() => {
                 if (a.behavior === "populate") {
                   setInput(a.message);
@@ -220,6 +394,45 @@ export function ChatPanel({
         </div>
       )}
       <div className="chat-messages" aria-live="polite">
+        {olderMessages && publicBase && (
+          <Button
+            type="button"
+            className="secondary"
+            disabled={busy || restoring}
+            onClick={async () => {
+              if (
+                !customer.current ||
+                !conversation.current ||
+                !messages[0]?.created_at ||
+                !messages[0]?.messageId
+              )
+                return;
+              setRestoring(true);
+              try {
+                const q = new URLSearchParams({
+                  before: messages[0].created_at,
+                  beforeId: messages[0].messageId,
+                });
+                const older = await customerRequest<{
+                  messages: typeof messages;
+                  hasMore: boolean;
+                }>(
+                  publicBase,
+                  customer.current,
+                  "/history/" + conversation.current + "?" + q,
+                );
+                setMessages((m) => [...older.messages, ...m]);
+                setOlderMessages(older.hasMore);
+              } catch (e) {
+                setError((e as Error).message);
+              } finally {
+                setRestoring(false);
+              }
+            }}
+          >
+            Load older messages
+          </Button>
+        )}
         {!messages.length && (
           <div className="chat-welcome">
             <Sparkles size={30} />
@@ -270,7 +483,7 @@ export function ChatPanel({
             ?.content ?? ""
         }
         onTranscript={setInput}
-        disabled={busy || handoffOpen}
+        disabled={busy || handoffOpen || restoring}
       />
       {conversation.current && (
         <HandoffPanel
@@ -300,7 +513,7 @@ export function ChatPanel({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           maxLength={12000}
-          disabled={busy || handoffOpen}
+          disabled={busy || handoffOpen || restoring}
         />
         {busy ? (
           <Button
@@ -320,6 +533,25 @@ export function ChatPanel({
           </Button>
         )}
       </form>
+      {diagnostics && conversation.current && !busy && (
+        <details>
+          <summary>Token and context breakdown</summary>
+          <Button
+            type="button"
+            className="secondary"
+            onClick={() =>
+              void requestJson(`/conversations/${conversation.current}/context`)
+                .then(setContextPreview)
+                .catch((e) => setError(e.message))
+            }
+          >
+            Load run token counts
+          </Button>
+          {contextPreview !== null && (
+            <pre>{JSON.stringify(contextPreview, null, 2)}</pre>
+          )}
+        </details>
+      )}
       {traceId && (
         <div className="chat-trace">
           Trace {traceId.slice(0, 12)} · {busy ? "Streaming" : "Saved"}

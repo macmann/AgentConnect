@@ -1,4 +1,5 @@
 "use client";
+import { ContextControls } from "./context-controls";
 import { BankExperienceEditor } from "./bank-experience-editor";
 import { AgentKnowledgeRelease } from "./agent-knowledge-releases";
 import { useState, type MutableRefObject } from "react";
@@ -1096,6 +1097,7 @@ export function AdvancedSection(p: SectionProps) {
         </div>
       </Group>
       <PromptPreview draft={p.draft} />
+      <ContextControls draft={p.draft} update={p.update} />
       <Group title="Draft metadata">
         <dl className="configure-metadata">
           <dt>Draft revision</dt>

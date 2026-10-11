@@ -4506,3 +4506,16 @@ footer {
   max-width: 100%;
   white-space: normal;
 }
+
+.customer-history {padding: 12px 20px; border-bottom: 1px solid var(--border);}
+.customer-history summary {cursor:pointer;font-weight:600;}
+.customer-history .text-button {display:block;text-align:left;margin:8px 0;max-width:100%;overflow-wrap:anywhere;}
+.hosted-shell .brand img {object-fit:contain;}
+.hosted-shell .chat-panel {background:inherit;color:inherit;}
+.hosted-shell .chat-panel button:not(.text-button) {background:var(--brand);}
+.customer-insights .report-range {display:flex;flex-wrap:wrap;align-items:end;gap:12px;}
+.customer-insights .report-range label {min-width:160px;flex:1;}
+.customer-insights table {width:100%;border-collapse:collapse;}
+.customer-insights td,.customer-insights th {padding:9px;text-align:left;border-bottom:1px solid var(--border);}
+.customer-insights .table-wrap {overflow-x:auto;}
+.knowledge-gap-row {padding:16px 0;border-bottom:1px solid var(--border);}

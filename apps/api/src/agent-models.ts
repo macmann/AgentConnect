@@ -39,6 +39,20 @@ export async function connection(
   return { ...model, apiKey };
 }
 export function validateAgentModel(c: AgentConfig, m: ModelSnapshot) {
+  if (
+    c.contextControls.enabled &&
+    c.contextControls.summarize &&
+    c.contextControls.summaryMaxTokens > m.maxOutputTokens
+  )
+    throw new HttpError(400, "Summary output limit exceeds the model limit");
+  if (
+    c.contextControls.inputBudget &&
+    c.contextControls.inputBudget > m.contextWindow - c.maxOutputTokens
+  )
+    throw new HttpError(
+      400,
+      "Input budget must fit alongside the agent output limit in the model context window",
+    );
   if (c.maxOutputTokens > m.maxOutputTokens)
     throw new HttpError(400, "Agent output limit exceeds the model limit");
   if (c.maxOutputTokens >= m.contextWindow)

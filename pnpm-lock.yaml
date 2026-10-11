@@ -128,6 +128,9 @@ importers:
       ioredis:
         specifier: ^5.8.2
         version: 5.11.1(supports-color@7.2.0)
+      js-tiktoken:
+        specifier: 1.0.21
+        version: 1.0.21
       nodemailer:
         specifier: ^7.0.12
         version: 7.0.13

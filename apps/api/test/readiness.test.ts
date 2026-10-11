@@ -52,7 +52,7 @@ test("readiness deadlines abort hung probes, sanitize errors and recover after a
         ),
       );
   };
-  const probe = createReadinessProbe(dependencies, 25, 0);
+  const probe = createReadinessProbe(dependencies, 26, 0);
   const start = Date.now();
   assert.deepEqual(await probe(), {
     status: "unavailable",
@@ -81,8 +81,8 @@ test("readiness returns deterministic service codes for simultaneous dependency 
   });
 });
 test("release schema and vector requirements reject missing and unsupported extension versions", () => {
-  assert.equal(requiredMigrations.length, 24);
-  assert.equal(requiredMigrations.at(-1), "0024");
+  assert.equal(requiredMigrations.length, 26);
+  assert.equal(requiredMigrations.at(-1), "0026");
   for (const v of [
     undefined,
     "",

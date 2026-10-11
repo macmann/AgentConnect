@@ -1,3 +1,6 @@
+import { registerCustomerReports } from "./customer-reports.js";
+import { registerKnowledgeGaps } from "./knowledge-gaps.js";
+import { dateRange } from "./customer-reports.js";
 import { agentConfig } from "@agentconnect/schemas/agents";
 import { validateKnowledgeIds } from "./knowledge-core.js";
 import { validateToolIds } from "./tool-runtime.js";
@@ -29,6 +32,8 @@ async function context(
   return { u, w };
 }
 export async function registerOperationsRoutes(app: FastifyInstance) {
+  await registerCustomerReports(app);
+  await registerKnowledgeGaps(app);
   app.get("/workspaces/:workspaceId/operations/audit", async (r) => {
     const { u, w } = await context(r);
     await workspaceAccess(u.id, w.id, "audit:view");
@@ -45,18 +50,16 @@ export async function registerOperationsRoutes(app: FastifyInstance) {
   });
   app.get("/workspaces/:workspaceId/operations/analytics", async (r) => {
     const { w } = await context(r);
-    const { days } = z
-      .object({ days: z.coerce.number().int().min(1).max(90).default(30) })
-      .parse(r.query);
-    const from = new Date(Date.now() - days * 86400000).toISOString();
+    const { from, to } = dateRange(r.query);
+    const days = Math.ceil((Date.parse(to) - Date.parse(from)) / 86400000);
     const [summary] =
-      await sql`SELECT count(*)::int AS runs,count(*) FILTER(WHERE status='completed')::int AS completed,count(*) FILTER(WHERE status='failed')::int AS failed,count(DISTINCT conversation_id)::int AS conversations,sum(input_tokens)::float8 AS input_tokens,sum(output_tokens)::float8 AS output_tokens,count(*) FILTER(WHERE input_tokens IS NULL OR output_tokens IS NULL)::int AS unknown_usage,avg(extract(epoch FROM (finished_at-started_at))*1000)::float8 AS average_latency_ms,sum((input_tokens*input_usd_per_million+output_tokens*output_usd_per_million)/1000000)::float8 AS estimated_cost_usd,count(*) FILTER(WHERE input_tokens IS NULL OR output_tokens IS NULL OR input_usd_per_million IS NULL OR output_usd_per_million IS NULL)::int AS unpriced_runs FROM agent_runs WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND started_at>=${from}`;
+      await sql`SELECT count(*)::int AS runs,count(*) FILTER(WHERE status='completed')::int AS completed,count(*) FILTER(WHERE status='failed')::int AS failed,count(DISTINCT conversation_id)::int AS conversations,sum(input_tokens)::float8 AS input_tokens,sum(output_tokens)::float8 AS output_tokens,count(*) FILTER(WHERE input_tokens IS NULL OR output_tokens IS NULL)::int AS unknown_usage,avg(extract(epoch FROM (finished_at-started_at))*1000)::float8 AS average_latency_ms,sum((input_tokens*input_usd_per_million+output_tokens*output_usd_per_million)/1000000)::float8 AS estimated_cost_usd,count(*) FILTER(WHERE input_tokens IS NULL OR output_tokens IS NULL OR input_usd_per_million IS NULL OR output_usd_per_million IS NULL)::int AS unpriced_runs FROM agent_runs WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND started_at>=${from} AND started_at<${to}`;
     const agents =
-      await sql`SELECT a.id,a.name,count(*)::int AS runs,count(*) FILTER(WHERE ar.status='failed')::int AS failed,sum(ar.input_tokens)::float8 AS input_tokens,sum(ar.output_tokens)::float8 AS output_tokens,sum((ar.input_tokens*ar.input_usd_per_million+ar.output_tokens*ar.output_usd_per_million)/1000000)::float8 AS estimated_cost_usd FROM agent_runs ar JOIN conversations c ON c.id=ar.conversation_id JOIN agents a ON a.id=c.agent_id WHERE ar.workspace_id=${w.id} AND ar.started_at>=${from} GROUP BY a.id,a.name ORDER BY count(*) DESC LIMIT 100`;
+      await sql`SELECT a.id,a.name,count(*)::int AS runs,count(*) FILTER(WHERE ar.status='failed')::int AS failed,sum(ar.input_tokens)::float8 AS input_tokens,sum(ar.output_tokens)::float8 AS output_tokens,sum((ar.input_tokens*ar.input_usd_per_million+ar.output_tokens*ar.output_usd_per_million)/1000000)::float8 AS estimated_cost_usd FROM agent_runs ar JOIN conversations c ON c.id=ar.conversation_id JOIN agents a ON a.id=c.agent_id WHERE ar.workspace_id=${w.id} AND ar.started_at>=${from} AND ar.started_at<${to} GROUP BY a.id,a.name ORDER BY count(*) DESC LIMIT 100`;
     const workflows =
-      await sql`SELECT w.id,w.name,count(*)::int AS runs,count(*) FILTER(WHERE wr.status='completed')::int AS completed,count(*) FILTER(WHERE wr.status='failed')::int AS failed,avg(extract(epoch FROM (wr.finished_at-wr.created_at))*1000)::float8 AS average_latency_ms FROM workflow_runs wr JOIN workflows w ON w.id=wr.workflow_id WHERE wr.workspace_id=${w.id} AND wr.created_at>=${from} GROUP BY w.id,w.name ORDER BY count(*) DESC LIMIT 100`;
+      await sql`SELECT w.id,w.name,count(*)::int AS runs,count(*) FILTER(WHERE wr.status='completed')::int AS completed,count(*) FILTER(WHERE wr.status='failed')::int AS failed,avg(extract(epoch FROM (wr.finished_at-wr.created_at))*1000)::float8 AS average_latency_ms FROM workflow_runs wr JOIN workflows w ON w.id=wr.workflow_id WHERE wr.workspace_id=${w.id} AND wr.created_at>=${from} AND wr.created_at<${to} GROUP BY w.id,w.name ORDER BY count(*) DESC LIMIT 100`;
     const [feedback] =
-      await sql`SELECT count(*)::int AS reviews,count(*) FILTER(WHERE cr.rating='like')::int AS likes,count(*) FILTER(WHERE cr.rating='dislike')::int AS dislikes,count(*) FILTER(WHERE cr.corrected_response IS NOT NULL)::int AS corrections FROM conversation_reviews cr WHERE cr.workspace_id=${w.id} AND cr.created_at>=${from}`;
+      await sql`SELECT count(*)::int AS reviews,count(*) FILTER(WHERE cr.rating='like')::int AS likes,count(*) FILTER(WHERE cr.rating='dislike')::int AS dislikes,count(*) FILTER(WHERE cr.corrected_response IS NOT NULL)::int AS corrections FROM conversation_reviews cr WHERE cr.workspace_id=${w.id} AND cr.created_at>=${from} AND cr.created_at<${to}`;
     return { days, summary, agents, workflows, feedback };
   });
   app.get("/workspaces/:workspaceId/operations/conversations", async (r) => {

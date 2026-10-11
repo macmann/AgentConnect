@@ -115,3 +115,7 @@ Transactional banking actions need a separately agreed scope. Most September sup
 ## Implementation follow-up: priorities 1–4
 
 The `feat/bank-core-ai` implementation adds reviewed immutable knowledge releases and rollback/pins, approved-knowledge-only answer/clarify/no-answer handling, eight editable channel-consistent banking quick actions, and four configurable support journeys with existing consent-based handoff. See [configuration and limits](bank-core-ai.md). The assessment above records the earlier repository baseline rather than bank acceptance of these additions. Myanmar-language validation, live-bank correctness, provider performance and the other roadmap priorities remain outside this implementation.
+
+## User-defined priorities 6–10
+
+The follow-up feature list uses a separate numbering from the six delivery groups above: **6 Analytics and reports; 7 Knowledge-gap improvement; 8 Consistent branding; 9 Persistent customer conversations; 10 Token and context optimization**. These additions are implemented on `feat/customer-insights-context`; see [configuration and metric definitions](customer-insights-context.md). They do not claim verified customer identity, semantic gap clustering, AI resolution success, productive handling-time utilization or exact provider tokenization across every model.

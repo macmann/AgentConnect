@@ -1,3 +1,8 @@
+import {
+  registerCustomerSessions,
+  customerOwnsConversation,
+  customerConversationActive,
+} from "./customer-sessions.js";
 import { supportStream } from "./support/live.js";
 import {
   customerHandoffState,
@@ -16,7 +21,7 @@ import { digest } from "./security.js";
 import { HttpError } from "./http-error.js";
 import { widgetBundle } from "./widget-bundle.js";
 export function widgetDeploymentPath(r: FastifyRequest) {
-  return /^\/public\/widgets\/([0-9a-f-]{36})(?:\/(?:chat|conversations\/[0-9a-f-]{36}\/handoff(?:\/stream)?))?$/.exec(
+  return /^\/public\/widgets\/([0-9a-f-]{36})(?:\/(?:chat|sessions|history(?:\/[0-9a-f-]{36})?|conversations\/[0-9a-f-]{36}\/handoff(?:\/stream)?))?$/.exec(
     r.url.split("?")[0]!,
   )?.[1];
 }
@@ -51,18 +56,21 @@ async function conversationAccess(r: FastifyRequest, publicRoute: boolean) {
     await sql`SELECT * FROM conversations WHERE id=${id(params(r).conversationId)}`;
   if (!c) throw new HttpError(404, "Conversation not found");
   if (publicRoute) {
+    if (!(await customerConversationActive(c)))
+      throw new HttpError(404, "Conversation not found");
     const [d] =
       await sql`SELECT d.id FROM deployments d JOIN agents a ON a.id=d.agent_id WHERE d.id=${id(params(r).deploymentId)} AND d.enabled AND a.archived_at IS NULL`;
     const raw = r.headers.authorization?.replace(/^Bearer /, "") ?? "";
     if (
       !d ||
       c.deployment_id !== d.id ||
-      !c.guest_token_hash ||
-      raw.length > 128 ||
-      !timingSafeEqual(
-        Buffer.from(digest(raw)),
-        Buffer.from(c.guest_token_hash),
-      )
+      (!(await customerOwnsConversation(r, c)) &&
+        (!c.guest_token_hash ||
+          raw.length > 128 ||
+          !timingSafeEqual(
+            Buffer.from(digest(raw)),
+            Buffer.from(c.guest_token_hash),
+          )))
     )
       throw new HttpError(404, "Conversation not found");
     if (c.channel === "widget") {
@@ -78,6 +86,7 @@ async function conversationAccess(r: FastifyRequest, publicRoute: boolean) {
   return { c, userId: u.id };
 }
 export async function registerChannelRoutes(app: FastifyInstance) {
+  await registerCustomerSessions(app);
   app.get("/widget.js", async (_r, reply) =>
     reply
       .type("application/javascript")
@@ -92,7 +101,7 @@ export async function registerChannelRoutes(app: FastifyInstance) {
         id(params(r).workspaceId),
         "operations:view",
       );
-    return sql`SELECT d.id,d.name,d.enabled,d.widget_settings,a.name AS agent_name FROM deployments d JOIN agents a ON a.id=d.agent_id WHERE d.workspace_id=${w.id} AND d.organization_id=${w.organization_id} ORDER BY d.created_at DESC LIMIT 100`;
+    return sql`SELECT d.id,d.name,d.enabled,d.widget_settings,d.branding,a.name AS agent_name FROM deployments d JOIN agents a ON a.id=d.agent_id WHERE d.workspace_id=${w.id} AND d.organization_id=${w.organization_id} ORDER BY d.created_at DESC LIMIT 100`;
   });
   app.put("/workspaces/:workspaceId/channels/:deploymentId", async (r) => {
     const u = await actor(r),
