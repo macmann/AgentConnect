@@ -199,3 +199,15 @@ For installation/runtime failures, use [deployment](deployment.md), [connector s
 ## Choose your display theme
 
 Use the **Dark / Light** switcher at the top of any product page. The initial theme follows your device preference; your selection is saved in this browser and retained across refreshes. Hosted chat uses the same switcher. The embedded widget has its own header switcher and remembers the customer’s preference per deployment, without changing the surrounding website. Customer-configured logos, names and accent colors remain available in deployment branding.
+
+## Crawl a website into knowledge
+
+1. Create a knowledge base with an embedding model, then open its **Sources** tab and choose **Ingest website**.
+2. Enter the main website URL. Choose **Built-in (Cheerio)** for static HTML; it requires no API key. Choose **Firecrawl** for JavaScript-rendered pages. Save a Firecrawl API key in workspace **Secrets**, then select that credential in the crawl form. Firecrawl uses your external account credits and receives the starting URL.
+3. Set the page limit and crawl depth. Defaults discover up to 20 pages at depth 2; supported bounds are 100 pages and depth 5. Depth 0 means just the starting page. Use comma-separated allowed/blocked path prefixes to focus on useful content, for example `/help,/products` and `/login,/account`.
+4. Start the crawl and wait for **Ready**. The source shows indexed page count. Inspect chunks or use the **Retrieval playground** to verify an answer and its page URL before using the content.
+5. In **Agents → Configure → Knowledge**, attach the knowledge base, save the draft and test in **Playground**. Website passages use the same RAG settings, citations, knowledge approval rules and public-access checks as uploaded documents. Publish normally when ready.
+
+Both API and worker must approve the website hostname in `KNOWLEDGE_ALLOWED_HOSTS`, preserving existing entries. Firecrawl requires public HTTPS targets and outbound access to `api.firecrawl.dev`; the service endpoint is fixed and the key is sent only there. Built-in crawling stays on the starting origin, respects robots.txt, blocks redirects, discovers menu links, removes navigation text and preserves tables. Firecrawl results are checked against the same origin/path scope before indexing.
+
+Use **Reingest** on a website source to recrawl using its saved settings and current credential; replacement is atomic after successful indexing. To change URL, crawler or crawl limits, create a replacement website source and remove the old one. Removing a source removes its searchable content. A Firecrawl key cannot be deleted while an active website source references it; rotate the key in Secrets or remove the source first. Automatic scheduled recrawls are not included.

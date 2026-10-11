@@ -46,6 +46,10 @@ type Source = {
   revision: number;
   chunk_count: number;
   metadata: {
+    crawler?: string;
+    maxPages?: number;
+    crawlPageCount?: number;
+    maxDepth?: number;
     ocrPages?: number;
     unrecognizedPages?: number;
     question?: string;
@@ -100,6 +104,7 @@ export function KnowledgeStudio({
   >(null);
   const [editing, setEditing] = useState<Source | null>(null);
   const [provider, setProvider] = useState("openai");
+  const [crawler, setCrawler] = useState("builtin");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -231,6 +236,9 @@ export function KnowledgeStudio({
       if (form === "website") {
         await requestJson(path + "/website", "POST", {
           url: value("url"),
+          crawler,
+          secretId:
+            crawler === "firecrawl" ? value("crawlSecretId") || null : null,
           maxPages: number("maxPages"),
           maxDepth: number("maxDepth"),
           allowedPaths: value("allowedPaths")
@@ -242,7 +250,9 @@ export function KnowledgeStudio({
             .map((s) => s.trim())
             .filter(Boolean),
         });
-        setNotice("Website queued for ingestion");
+        setNotice(
+          "Website crawl queued. Once Ready, attach this knowledge base in Agent Configure → Knowledge.",
+        );
       }
       if (form === "import") {
         const file = data.get("file") as File;
@@ -575,10 +585,69 @@ export function KnowledgeStudio({
             )}
             {form === "website" && (
               <>
+                <p className="muted">
+                  Enter the main URL to discover linked pages, extract their
+                  content and index it for RAG. Ingestion runs in the
+                  background; data becomes searchable when the source is Ready.
+                </p>
+                <label>
+                  Crawler
+                  <select
+                    aria-label="Crawler"
+                    value={crawler}
+                    onChange={(event) => setCrawler(event.target.value)}
+                  >
+                    <option value="builtin">
+                      Built-in (Cheerio) — no API key
+                    </option>
+                    <option value="firecrawl">
+                      Firecrawl — rendered websites
+                    </option>
+                  </select>
+                </label>
+                {crawler === "firecrawl" && (
+                  <>
+                    <label>
+                      Firecrawl credential
+                      <select
+                        name="crawlSecretId"
+                        aria-label="Firecrawl credential"
+                        required
+                      >
+                        <option value="">Select workspace API key</option>
+                        {secrets.data?.map((secret) => (
+                          <option key={secret.id} value={secret.id}>
+                            {secret.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <p className="muted">
+                      Save your Firecrawl API key in workspace Secrets first.
+                      Firecrawl is an external service and uses your account
+                      credits. It renders JavaScript and receives the starting
+                      URL; use public HTTPS websites.
+                    </p>
+                    <a
+                      className="text-button"
+                      href={`/#view=Secrets&workspace=${workspaceId}`}
+                    >
+                      Manage workspace secrets
+                    </a>
+                  </>
+                )}
                 <div className="form-grid">
                   <label>
                     Website URL
-                    <input name="url" type="url" required maxLength={1000} />
+                    <input
+                      name="url"
+                      type="url"
+                      required
+                      maxLength={1000}
+                      pattern={
+                        crawler === "firecrawl" ? "https://.*" : undefined
+                      }
+                    />
                   </label>
                   <label>
                     Page limit
@@ -586,8 +655,8 @@ export function KnowledgeStudio({
                       name="maxPages"
                       type="number"
                       min={1}
-                      max={20}
-                      defaultValue={1}
+                      max={100}
+                      defaultValue={20}
                       required
                     />
                   </label>
@@ -597,8 +666,8 @@ export function KnowledgeStudio({
                       name="maxDepth"
                       type="number"
                       min={0}
-                      max={3}
-                      defaultValue={0}
+                      max={5}
+                      defaultValue={2}
                       required
                     />
                   </label>
@@ -612,8 +681,12 @@ export function KnowledgeStudio({
                   </label>
                 </div>
                 <p className="muted">
-                  Only approved server destinations are fetched. Crawls stay on
-                  this origin, respect robots.txt and block redirects.
+                  Crawl only this website, within the page and depth limits.
+                  Path prefixes are comma-separated (for example /help,
+                  /products). Website hosts must be approved in the API and
+                  worker KNOWLEDGE_ALLOWED_HOSTS settings. The built-in crawler
+                  respects robots.txt, blocks redirects and extracts static
+                  HTML; use Firecrawl for rendered content.
                 </p>
               </>
             )}
@@ -638,7 +711,9 @@ export function KnowledgeStudio({
                     ? "Save knowledge base"
                     : form === "upload"
                       ? "Upload and ingest"
-                      : "Queue ingestion"}
+                      : form === "website"
+                        ? "Start website crawl"
+                        : "Queue ingestion"}
             </Button>
           </fieldset>
         </form>
@@ -875,7 +950,11 @@ export function KnowledgeStudio({
                           <td>
                             <strong>{s.title}</strong>
                             <small>
-                              {s.metadata.connectorId ? "S3 connector" : s.kind}{" "}
+                              {s.metadata.connectorId
+                                ? "S3 connector"
+                                : s.kind === "website"
+                                  ? `Website crawl · ${s.metadata.crawler === "firecrawl" ? "Firecrawl" : "Built-in"}`
+                                  : s.kind}{" "}
                               · revision {s.revision}
                             </small>
                             {s.metadata.connectorId && (
@@ -904,10 +983,30 @@ export function KnowledgeStudio({
                               </small>
                             )}
                             {s.error_code && (
-                              <small className="error">{s.error_code}</small>
+                              <small className="error">
+                                {s.error_code}
+                                {s.error_code?.startsWith(
+                                  "FIRECRAWL_AUTHENTICATION",
+                                )
+                                  ? ": Check the selected workspace Firecrawl key."
+                                  : s.error_code ===
+                                      "FIRECRAWL_CREDITS_REQUIRED"
+                                    ? ": Add credits to your Firecrawl account."
+                                    : s.error_code === "EMPTY_DOCUMENT"
+                                      ? ": Try Firecrawl for JavaScript-rendered pages."
+                                      : ""}
+                              </small>
                             )}
                           </td>
-                          <td>{s.chunk_count}</td>
+                          <td>
+                            {s.chunk_count}
+                            {s.kind === "website" &&
+                              s.metadata.crawlPageCount !== undefined && (
+                                <small>
+                                  {s.metadata.crawlPageCount} pages indexed
+                                </small>
+                              )}
+                          </td>
                           <td>
                             <div className="studio-actions">
                               <button

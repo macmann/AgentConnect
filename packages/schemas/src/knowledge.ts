@@ -47,16 +47,39 @@ export const qaInput = z.object({
   answer: z.string().trim().min(1).max(20000),
   tags: z.array(z.string().trim().min(1).max(50)).max(20).default([]),
 });
-export const websiteInput = z.object({
-  url: z.url().max(1000),
-  maxPages: z.number().int().min(1).max(20).default(1),
-  maxDepth: z.number().int().min(0).max(3).default(0),
-  allowedPaths: z
-    .array(z.string().regex(/^\//).max(200))
-    .max(20)
-    .default(["/"]),
-  blockedPaths: z.array(z.string().regex(/^\//).max(200)).max(20).default([]),
-});
+export const websiteInput = z
+  .object({
+    url: z.url().max(1000),
+    crawler: z.enum(["builtin", "firecrawl"]).default("builtin"),
+    secretId: z.uuid().nullable().default(null),
+    maxPages: z.number().int().min(1).max(100).default(20),
+    maxDepth: z.number().int().min(0).max(5).default(2),
+    allowedPaths: z
+      .array(z.string().regex(/^\//).max(200))
+      .max(20)
+      .default(["/"]),
+    blockedPaths: z.array(z.string().regex(/^\//).max(200)).max(20).default([]),
+  })
+  .superRefine((data, ctx) => {
+    if (data.crawler === "firecrawl" && !/^https:\/\//i.test(data.url))
+      ctx.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: "Firecrawl requires a public HTTPS website",
+      });
+    if (data.crawler === "firecrawl" && !data.secretId)
+      ctx.addIssue({
+        code: "custom",
+        path: ["secretId"],
+        message: "Select a workspace Firecrawl API key",
+      });
+    if (data.crawler === "builtin" && data.secretId)
+      ctx.addIssue({
+        code: "custom",
+        path: ["secretId"],
+        message: "Built-in crawling does not use a credential",
+      });
+  });
 export const retrievalInput = z.object({
   query: z.string().trim().min(1).max(4000),
   topK: z.number().int().min(1).max(10).default(5),

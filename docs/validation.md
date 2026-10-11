@@ -344,3 +344,10 @@ Deployment automation and additional monitoring are paused; the new A–G roadma
 - Four browser scenarios passed: connector sign-in, RAG creation/ingestion/cited chat, rich widget/customer workflows, and theme persistence/device preference/mobile layout. Checks include switching themes across Models, Knowledge, Tools, Connectors, Operations, Quality and Secrets, plus dark rich-card/table contrast and widget persistence after refresh.
 - All **382 API tests passed**, with no failures or skips. Lint, all-package type checking and the production build passed. Updated application screenshots use sample data and are linked in [the screenshot index](screenshots/README.md).
 - Normal development startup was restored without temporary fixture endpoint grants. Existing repository identifiers and stored customer branding remain compatible.
+
+## Website knowledge crawling (2026-10-11)
+
+- Full API suite: **392 passed, 0 failed, 0 skipped**. Added coverage for Firecrawl v2 polling/pagination, scoped pages, bounded responses, cancellation cleanup, sanitized provider failures and workspace credential isolation. Integration checks verify indexing, retrieval citations and protection against deleting a credential referenced by an active website source.
+- The Knowledge browser scenario passed: a main URL discovers navigation links, indexes two pages, and an attached published agent cites website content. Built-in HTML fixtures and model/embedding protocol fixtures use temporary private-host grants; these are not persisted in environment configuration.
+- Lint, all-package type checking and the production build passed. No database migration or new dependency is required.
+- Firecrawl's current v2 request format was checked against its official SDK source and exercised with protocol fixtures. A live Firecrawl account was not tested; it requires a workspace key, account credits and outbound access to api.firecrawl.dev. Reingestion is manual, and the existing ingestion job deadline applies.

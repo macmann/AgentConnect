@@ -686,6 +686,13 @@ export async function buildApp(
     const secretId = id(params(r).secretId);
     try {
       await sql.begin(async (tx) => {
+        const [website] =
+          await tx`SELECT id FROM knowledge_sources WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND status<>'deleted' AND kind='website' AND metadata->>'secretId'=${secretId} LIMIT 1`;
+        if (website)
+          throw new HttpError(
+            409,
+            "This credential is used by a website crawl. Delete the website source before removing it.",
+          );
         const rows =
           await tx`DELETE FROM secrets WHERE id=${secretId} AND workspace_id=${w.id} AND organization_id=${w.organization_id} RETURNING id`;
         if (!rows.length) throw new HttpError(404, "Secret not found");

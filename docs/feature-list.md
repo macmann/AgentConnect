@@ -120,3 +120,10 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 - Consistent semantic colors across workspace screens, authentication, hosted chat and workflow canvases.
 - Light/dark display modes, a top theme switcher, device preference defaults and saved browser preferences.
 - Independent light/dark widget switching, with customer deployment branding preserved.
+
+## Website crawling
+
+- Built-in Cheerio extraction with homepage/menu link discovery, robots.txt compliance, same-origin path filters and bounded page/depth/response budgets.
+- Optional Firecrawl v2 API integration for rendered sites, using encrypted workspace secrets, asynchronous polling, pagination, cancellation and sanitized failures.
+- Crawl output flows through existing storage, embedding, table-aware parsing and RAG citation/approval/publication controls.
+- Page counts, background ingestion status, chunk inspection, retrieval testing and explicit recrawl through Reingest.
