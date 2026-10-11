@@ -1,4 +1,6 @@
 "use client";
+import { BankExperienceEditor } from "./bank-experience-editor";
+import { AgentKnowledgeRelease } from "./agent-knowledge-releases";
 import { useState, type MutableRefObject } from "react";
 import { renderPrompt } from "@agentconnect/schemas/agent-prompt";
 import { blockNames } from "@agentconnect/schemas/generative";
@@ -41,6 +43,17 @@ function config<K extends keyof Config>(
   key: K,
   value: Config[K],
 ) {
+  if (key === "rag") {
+    const rag = value as Config["rag"];
+    value = {
+      ...rag,
+      releasePins: Object.fromEntries(
+        Object.entries(rag.releasePins ?? {}).filter(([id]) =>
+          rag.knowledgeBaseIds.includes(id),
+        ),
+      ),
+    } as Config[K];
+  }
   p.update({ ...p.draft, config: { ...p.draft.config, [key]: value } });
 }
 function scalar(
@@ -433,6 +446,135 @@ export function KnowledgeSection(p: SectionProps) {
   const c = p.draft.config;
   return (
     <>
+      <Group title="Approved knowledge and answer policy">
+        <label>
+          Answer policy
+          <select
+            aria-label="Answer policy"
+            value={p.draft.config.answerPolicy?.mode ?? "standard"}
+            onChange={(e) => {
+              const grounded = e.target.value === "grounded";
+              const c = p.draft.config;
+              p.update({
+                ...p.draft,
+                config: {
+                  ...c,
+                  answerPolicy: {
+                    mode: grounded ? "grounded" : "standard",
+                    noAnswerResponse:
+                      c.answerPolicy?.noAnswerResponse ??
+                      "I couldn't find approved guidance. Please clarify or connect with customer care.",
+                    offerHumanOnNoAnswer:
+                      c.answerPolicy?.offerHumanOnNoAnswer ?? true,
+                  },
+                  rag: {
+                    ...c.rag,
+                    ...(grounded
+                      ? {
+                          contentMode: "approved" as const,
+                          usageMode: "always" as const,
+                          requireCitations: true,
+                        }
+                      : {}),
+                  },
+                  ...(grounded
+                    ? {
+                        generative: {
+                          enabled: false,
+                          allowedBlocks: c.generative?.allowedBlocks ?? [
+                            ...blockNames,
+                          ],
+                          allowPublicForms:
+                            c.generative?.allowPublicForms ?? false,
+                        },
+                      }
+                    : {}),
+                },
+              });
+            }}
+          >
+            <option value="standard">Standard — existing model behavior</option>
+            <option value="grounded">
+              Approved knowledge only — answer, clarify or escalate
+            </option>
+          </select>
+        </label>
+        <p className="muted">
+          Grounded mode retrieves published knowledge and validates a complete
+          text response before showing it. It does not use tools or rich
+          components for factual answers. Citations do not independently prove
+          every claim.
+        </p>
+        <label>
+          Knowledge content
+          <select
+            aria-label="Knowledge content"
+            value={p.draft.config.rag.contentMode ?? "current"}
+            onChange={(e) =>
+              config(p, "rag", {
+                ...p.draft.config.rag,
+                contentMode: e.target.value as "current" | "approved",
+              })
+            }
+          >
+            <option value="current">
+              Current sources (approval still enforced by governed bases)
+            </option>
+            <option value="approved">Published reviewed releases only</option>
+          </select>
+        </label>
+        {p.draft.config.rag.knowledgeBaseIds.map((id) => (
+          <AgentKnowledgeRelease
+            key={id}
+            baseId={id}
+            name={
+              p.knowledge.find((k) => k.id === id)?.name ?? "Knowledge base"
+            }
+            value={p.draft.config.rag.releasePins?.[id]}
+            onChange={(value) => {
+              const pins = { ...p.draft.config.rag.releasePins };
+              if (value) pins[id] = value;
+              else delete pins[id];
+              config(p, "rag", { ...p.draft.config.rag, releasePins: pins });
+            }}
+          />
+        ))}
+        {p.draft.config.answerPolicy?.mode === "grounded" && (
+          <>
+            <label>
+              No-answer response
+              <textarea
+                value={p.draft.config.answerPolicy.noAnswerResponse}
+                maxLength={1000}
+                onChange={(e) =>
+                  config(p, "answerPolicy", {
+                    ...p.draft.config.answerPolicy!,
+                    noAnswerResponse: e.target.value,
+                  })
+                }
+              />
+            </label>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={p.draft.config.answerPolicy.offerHumanOnNoAnswer}
+                onChange={(e) =>
+                  config(p, "answerPolicy", {
+                    ...p.draft.config.answerPolicy!,
+                    offerHumanOnNoAnswer: e.target.checked,
+                  })
+                }
+              />
+              Offer customer care when approved knowledge cannot answer
+            </label>
+            <p className="muted">
+              Offers respect the current human-support policy and require
+              customer confirmation.
+            </p>
+          </>
+        )}
+      </Group>
+
       <AgentAttachments
         kind="knowledge"
         items={p.knowledge}
@@ -785,10 +927,17 @@ export function ExperienceSection(p: SectionProps) {
           <p>{c.welcomeMessage || "No welcome message configured."}</p>
         </div>
       </Group>
+      <BankExperienceEditor
+        actions={c.quickActions ?? []}
+        journeys={c.journeys ?? []}
+        onChange={(quickActions, journeys) =>
+          p.update({ ...p.draft, config: { ...c, quickActions, journeys } })
+        }
+      />
       <Group title="Conversation starters">
         <p className="muted">
           Suggested messages customers can send to start a conversation. Up to
-          six starters.
+          twenty starters.
         </p>
         {!c.conversationStarters.length && (
           <p>No conversation starters configured.</p>
@@ -838,7 +987,7 @@ export function ExperienceSection(p: SectionProps) {
         <Button
           type="button"
           className="secondary"
-          disabled={c.conversationStarters.length >= 6}
+          disabled={c.conversationStarters.length >= 20}
           onClick={() =>
             config(p, "conversationStarters", [...c.conversationStarters, ""])
           }

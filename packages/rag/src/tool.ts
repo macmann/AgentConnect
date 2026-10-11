@@ -27,6 +27,8 @@ export interface RagTool {
       minScore: number;
       mode: "vector" | "hybrid";
       sourceIds?: string[];
+      contentMode?: "current" | "approved";
+      releasePins?: Record<string,string>;
     },
     context: RetrievalContext,
     signal: AbortSignal,

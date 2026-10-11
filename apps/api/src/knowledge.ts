@@ -1,3 +1,4 @@
+import { registerKnowledgeReleases } from "./knowledge-releases.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import multipart from "@fastify/multipart";
@@ -95,6 +96,7 @@ export async function registerKnowledgeRoutes(
   await app.register(multipart, {
     limits: { fileSize: 10000000, files: 1, fields: 3, parts: 4 },
   });
+  await registerKnowledgeReleases(app, ownedKnowledge);
   const factory = override ?? defaultEmbeddingFactory;
   const rag = new PostgresRagTool(factory);
   const schema = (body: z.ZodType) => ({
@@ -179,7 +181,7 @@ export async function registerKnowledgeRoutes(
       id(params(r).workspaceId),
       "knowledge:read",
     );
-    return sql`SELECT k.id,k.name,k.description,k.public_access,k.revision,k.embedding_model_id,k.dimensions,k.chunk_size,k.chunk_overlap,k.chunk_strategy,count(s.id) FILTER(WHERE s.status<>'deleted')::int AS source_count,count(s.id) FILTER(WHERE s.status='ready')::int AS ready_count FROM knowledge_bases k LEFT JOIN knowledge_sources s ON s.knowledge_base_id=k.id WHERE k.workspace_id=${w.id} AND k.organization_id=${w.organization_id} AND k.archived_at IS NULL GROUP BY k.id ORDER BY k.created_at DESC`;
+    return sql`SELECT k.id,k.name,k.description,k.public_access,k.approval_required,k.published_release_id,k.revision,k.embedding_model_id,k.dimensions,k.chunk_size,k.chunk_overlap,k.chunk_strategy,count(s.id) FILTER(WHERE s.status<>'deleted')::int AS source_count,count(s.id) FILTER(WHERE s.status='ready')::int AS ready_count,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',r.id,'available_sources',(SELECT count(DISTINCT rc.source_id)::int FROM knowledge_release_chunks rc JOIN knowledge_sources rs ON rs.id=rc.source_id WHERE rc.release_id=r.id AND rs.status<>'deleted'))) FROM knowledge_releases r WHERE r.knowledge_base_id=k.id AND r.status='published'),'[]'::jsonb) AS published_releases FROM knowledge_bases k LEFT JOIN knowledge_sources s ON s.knowledge_base_id=k.id WHERE k.workspace_id=${w.id} AND k.organization_id=${w.organization_id} AND k.archived_at IS NULL GROUP BY k.id ORDER BY k.created_at DESC`;
   });
   app.post(
     "/workspaces/:workspaceId/knowledge-bases",
@@ -202,7 +204,7 @@ export async function registerKnowledgeRoutes(
       await embeddingConnection(data.embeddingModelId, w.id, w.organization_id);
       const kbId = randomUUID();
       await sql.begin(async (tx) => {
-        await tx`INSERT INTO knowledge_bases(id,workspace_id,organization_id,name,description,embedding_model_id,dimensions,chunk_size,chunk_overlap,chunk_strategy,public_access) VALUES (${kbId},${w.id},${w.organization_id},${data.name},${data.description},${data.embeddingModelId},${model.dimensions},${data.chunkSize},${data.chunkOverlap},${data.chunkStrategy},${data.publicAccess})`;
+        await tx`INSERT INTO knowledge_bases(id,workspace_id,organization_id,name,description,embedding_model_id,dimensions,chunk_size,chunk_overlap,chunk_strategy,public_access,approval_required) VALUES (${kbId},${w.id},${w.organization_id},${data.name},${data.description},${data.embeddingModelId},${model.dimensions},${data.chunkSize},${data.chunkOverlap},${data.chunkStrategy},${data.publicAccess},${data.approvalRequired})`;
         // UUID is generated here; dimensions is constrained by embedding_models.
         await tx.unsafe(
           `CREATE INDEX kb_${kbId.replaceAll("-", "")} ON knowledge_chunks USING hnsw ((embedding::vector(${Number(model.dimensions)})) vector_cosine_ops) WHERE knowledge_base_id='${kbId}'`,
@@ -230,9 +232,14 @@ export async function registerKnowledgeRoutes(
     async (r) => {
       const { u, kb } = await ownedKnowledge(r, "knowledge:manage");
       const data = knowledgeUpdate.parse(r.body);
+      if (
+        data.approvalRequired !== undefined &&
+        data.approvalRequired !== kb.approval_required
+      )
+        await workspaceAccess(u.id, kb.workspace_id, "knowledge:approve");
       return sql.begin(async (tx) => {
         const [saved] =
-          await tx`UPDATE knowledge_bases SET name=${data.name},description=${data.description},public_access=${data.publicAccess},revision=revision+1 WHERE id=${kb.id} AND revision=${data.revision} RETURNING revision`;
+          await tx`UPDATE knowledge_bases SET name=${data.name},description=${data.description},public_access=${data.publicAccess},approval_required=${data.approvalRequired ?? kb.approval_required},revision=revision+1 WHERE id=${kb.id} AND revision=${data.revision} RETURNING revision`;
         if (!saved)
           throw new HttpError(409, "Knowledge base changed; reload first");
         await audit(

@@ -1,3 +1,4 @@
+import { generateGroundedAnswer } from "./bank-runtime.js";
 import { planKnowledgeUsage } from "./knowledge-usage.js";
 import { agentConfig } from "@agentconnect/schemas/agents";
 import {
@@ -17,7 +18,7 @@ import {
 } from "./agent-models.js";
 import {
   PostgresRagTool,
-  validateKnowledgeIds,
+  validateKnowledgeSelection,
   hosts,
 } from "./knowledge-core.js";
 import {
@@ -37,11 +38,7 @@ export async function workflowAgentVersion(
   const c = agentConfig.parse(v.config),
     model = modelSnapshotSchema.parse(v.model_snapshot);
   validateAgentModel(c, model);
-  await validateKnowledgeIds(
-    c.rag.knowledgeBaseIds,
-    ctx.workspaceId,
-    ctx.organizationId,
-  );
+  await validateKnowledgeSelection(c.rag, ctx.workspaceId, ctx.organizationId);
   await validateToolIds(c.tools.toolIds, ctx);
   const conn = await connection(model, ctx.workspaceId, ctx.organizationId);
   return { c, model, conn };
@@ -75,11 +72,7 @@ export async function executeAgentSnapshot(
   embeddingOverride?: EmbeddingFactory,
 ) {
   validateAgentModel(c, model);
-  await validateKnowledgeIds(
-    c.rag.knowledgeBaseIds,
-    ctx.workspaceId,
-    ctx.organizationId,
-  );
+  await validateKnowledgeSelection(c.rag, ctx.workspaceId, ctx.organizationId);
   await validateToolIds(c.tools.toolIds, ctx);
   const conn = await connection(model, ctx.workspaceId, ctx.organizationId);
   const provider = providerOverride
@@ -116,6 +109,23 @@ export async function executeAgentSnapshot(
         signal,
       )
     : [];
+  if (c.answerPolicy.mode === "grounded") {
+    const result = await generateGroundedAnswer(
+      c,
+      provider,
+      [{ role: "user", content: input }],
+      sources,
+      signal,
+      model.contextWindow - c.maxOutputTokens,
+    );
+    return {
+      output: result.message,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      citations: citedSources(result.message, sources),
+      sources,
+    };
+  }
   if (knowledgePlan.retrieve && !sources.length)
     throw new KnowledgeError("NO_RELEVANT_SOURCES");
   const tools = await runAgentTools(

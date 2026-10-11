@@ -54,6 +54,13 @@ export type Prompt = {
   advanced: string | null;
 };
 export type Config = {
+  quickActions?: import("@agentconnect/schemas/bank-experience").QuickAction[];
+  journeys?: import("@agentconnect/schemas/bank-experience").SupportJourney[];
+  answerPolicy?: {
+    mode: "standard" | "grounded";
+    noAnswerResponse: string;
+    offerHumanOnNoAnswer: boolean;
+  };
   generative?: {
     enabled: boolean;
     allowedBlocks: (typeof blockNames)[number][];
@@ -72,6 +79,8 @@ export type Config = {
     minScore: number;
     mode: "vector" | "hybrid";
     requireCitations: boolean;
+    contentMode?: "current" | "approved";
+    releasePins?: Record<string, string>;
     usageMode?: "automatic" | "always" | "disabled";
     usageInstructions?: string;
   };
@@ -1065,6 +1074,7 @@ export function AgentStudio({
                 name={draft.name}
                 welcomeMessage={draft.config.welcomeMessage}
                 starters={draft.config.conversationStarters}
+                quickActions={draft.config.quickActions ?? []}
               />
             )}{" "}
             {tab === "playground" && !canBuild && (

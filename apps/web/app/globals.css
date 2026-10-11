@@ -4492,3 +4492,17 @@ footer {
 .workspace-section-body .retention-fields label {
   margin: 0;
 }
+
+.quick-action-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+  max-height: 180px;
+  overflow: auto;
+  border-bottom: 1px solid var(--border, #d9e2dc);
+}
+.quick-action-list button {
+  max-width: 100%;
+  white-space: normal;
+}

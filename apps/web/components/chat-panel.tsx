@@ -6,6 +6,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import type { QuickAction } from "@agentconnect/schemas/bank-experience";
 import { ArrowUp, Square, RefreshCw, Sparkles } from "lucide-react";
 import { GenerativeResponse } from "./generative-response";
 import type { RenderedBlock } from "@agentconnect/schemas/generative";
@@ -36,12 +37,14 @@ export function ChatPanel({
   name,
   welcomeMessage,
   starters = [],
+  quickActions = [],
   diagnostics = false,
 }: {
   endpoint: string;
   name: string;
   welcomeMessage: string;
   starters?: string[];
+  quickActions?: QuickAction[];
   diagnostics?: boolean;
 }) {
   const [messages, setMessages] = useState<
@@ -60,6 +63,7 @@ export function ChatPanel({
     (open: boolean) => setHandoffOpen(open),
     [],
   );
+  const composer = useRef<HTMLTextAreaElement | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -72,7 +76,7 @@ export function ChatPanel({
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
   }, [messages]);
-  async function send(text: string) {
+  async function send(text: string, quickActionId?: string) {
     if (!text.trim() || busy || handoffOpen) return;
     setBusy(true);
     setError("");
@@ -87,7 +91,11 @@ export function ChatPanel({
     try {
       await streamChat(
         endpoint,
-        { message: text, conversationId: conversation.current },
+        {
+          message: text,
+          conversationId: conversation.current,
+          ...(quickActionId ? { quickActionId } : {}),
+        },
         abort.signal,
         (event, data) => {
           if (event === "meta") {
@@ -192,6 +200,25 @@ export function ChatPanel({
           New chat
         </button>
       </div>
+      {!!quickActions.length && (
+        <div className="quick-action-list" aria-label="Quick actions">
+          {quickActions.map((a) => (
+            <Button
+              key={a.id}
+              className="secondary"
+              disabled={busy || handoffOpen}
+              onClick={() => {
+                if (a.behavior === "populate") {
+                  setInput(a.message);
+                  composer.current?.focus();
+                } else void send(a.message, a.id);
+              }}
+            >
+              {a.label}
+            </Button>
+          ))}
+        </div>
+      )}
       <div className="chat-messages" aria-live="polite">
         {!messages.length && (
           <div className="chat-welcome">
@@ -266,6 +293,7 @@ export function ChatPanel({
           Message
         </label>
         <textarea
+          ref={composer}
           id={`chat-${name}`}
           aria-label="Message"
           placeholder="Ask your agent…"

@@ -1,4 +1,4 @@
-export const requiredMigrations = Array.from({ length: 23 }, (_, i) =>
+export const requiredMigrations = Array.from({ length: 24 }, (_, i) =>
   String(i + 1).padStart(4, "0"),
 );
 export function supportedVectorVersion(value: unknown) {

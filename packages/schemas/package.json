@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./*": "./src/*.ts"
+    "./*": "./src/*.ts",
+    "./bank-experience": "./src/bank-experience.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
