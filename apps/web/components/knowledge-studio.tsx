@@ -1,4 +1,10 @@
 "use client";
+import {
+  AdvancedKnowledgeSettings,
+  processingFromForm,
+  processingChanged,
+  type ProcessingSettings,
+} from "./advanced-knowledge-settings";
 import { KnowledgeReleases } from "./knowledge-releases";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,6 +27,8 @@ type Base = {
   public_access: boolean;
   approval_required: boolean;
   ocr_enabled: boolean;
+  advanced_processing: ProcessingSettings;
+  parent_context: boolean;
   published_release_id: string | null;
   revision: number;
   embedding_model_id: string;
@@ -46,6 +54,8 @@ type Source = {
   revision: number;
   chunk_count: number;
   metadata: {
+    processing?: ProcessingSettings;
+    processingWarnings?: string[];
     crawler?: string;
     maxPages?: number;
     crawlPageCount?: number;
@@ -102,6 +112,30 @@ export function KnowledgeStudio({
     | "import"
     | null
   >(null);
+  const [extraction, setExtraction] = useState<{
+    status: string;
+    revision: number;
+    documents: {
+      id: string;
+      title: string;
+      extraction: {
+        warnings: string[];
+        tables: {
+          heading: string | null;
+          page: number | null;
+          columns: string[];
+          rowCount: number;
+          preview: string;
+        }[];
+        llm: {
+          status: string;
+          calls: number;
+          inputTokens: number;
+          outputTokens: number;
+        };
+      } | null;
+    }[];
+  } | null>(null);
   const [editing, setEditing] = useState<Source | null>(null);
   const [provider, setProvider] = useState("openai");
   const [crawler, setCrawler] = useState("builtin");
@@ -110,7 +144,14 @@ export function KnowledgeStudio({
   const [notice, setNotice] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [preview, setPreview] = useState<
-    { id: string; content: string; page: number | null; title: string }[] | null
+    | {
+        id: string;
+        content: string;
+        page: number | null;
+        title: string;
+        chunk_metadata?: { tokenCount?: number; tokenizer?: string };
+      }[]
+    | null
   >(null);
   const bases = useQuery({
     queryKey: ["knowledge", workspaceId],
@@ -123,6 +164,14 @@ export function KnowledgeStudio({
     queryFn: () =>
       requestJson<Embedding[]>(`/workspaces/${workspaceId}/embedding-models`),
     enabled: canRead,
+  });
+  const processingModels = useQuery({
+    queryKey: ["knowledge-processing-models", workspaceId],
+    queryFn: () =>
+      requestJson<{ id: string; name: string }[]>(
+        `/workspaces/${workspaceId}/models`,
+      ),
+    enabled: canManage,
   });
   const secrets = useQuery({
     queryKey: ["knowledge-secrets", workspaceId],
@@ -193,6 +242,8 @@ export function KnowledgeStudio({
             chunkStrategy: value("chunkStrategy"),
             publicAccess: data.get("publicAccess") === "on",
             ocrEnabled: data.get("ocrEnabled") === "on",
+            advancedProcessing: processingFromForm(data),
+            parentContext: data.get("parentContext") === "on",
           },
         );
         setSelected(created.id);
@@ -308,6 +359,7 @@ export function KnowledgeStudio({
                 setForm(null);
                 setResult(null);
                 setPreview(null);
+                setExtraction(null);
               }}
             >
               <ChevronLeft size={14} /> All knowledge bases
@@ -513,6 +565,9 @@ export function KnowledgeStudio({
                   Supports English scans, up to 20 scanned pages per document.
                   Review recognition accuracy before publishing.
                 </p>
+                <AdvancedKnowledgeSettings
+                  models={processingModels.data ?? []}
+                />
 
                 <label className="checkbox-label">
                   <input name="publicAccess" type="checkbox" /> Allow knowledge
@@ -760,6 +815,7 @@ export function KnowledgeStudio({
                       setTab("sources");
                       setResult(null);
                       setPreview(null);
+                      setExtraction(null);
                     }}
                   >
                     <div>
@@ -869,6 +925,7 @@ export function KnowledgeStudio({
                     setTab(t);
                     setForm(null);
                     setPreview(null);
+                    setExtraction(null);
                   }}
                   className={tab === t ? "active" : ""}
                 >
@@ -1024,6 +1081,35 @@ export function KnowledgeStudio({
                               >
                                 Inspect chunks
                               </button>
+                              <button
+                                className="text-button"
+                                disabled={busy || s.status !== "ready"}
+                                onClick={() =>
+                                  action(async () =>
+                                    setExtraction(
+                                      await requestJson(
+                                        path + `/sources/${s.id}/extraction`,
+                                      ),
+                                    ),
+                                  )
+                                }
+                              >
+                                Extraction preview
+                              </button>
+                              {!!s.metadata.processingWarnings?.length && (
+                                <span className="muted">
+                                  Extraction needs review
+                                </span>
+                              )}
+                              {s.status === "ready" &&
+                                processingChanged(
+                                  s.metadata.processing,
+                                  base.advanced_processing,
+                                ) && (
+                                  <span className="muted">
+                                    Processing changed · Reingest to apply
+                                  </span>
+                                )}
                               {canManage && (
                                 <>
                                   <button
@@ -1073,6 +1159,7 @@ export function KnowledgeStudio({
                                             "DELETE",
                                           );
                                           setPreview(null);
+                                          setExtraction(null);
                                         });
                                     }}
                                   >
@@ -1096,6 +1183,91 @@ export function KnowledgeStudio({
                   </p>
                 </div>
               )}
+              {extraction && (
+                <section
+                  className="chunk-preview"
+                  aria-label="Extraction preview"
+                >
+                  <div className="panel-header">
+                    <h3>Extraction preview · revision {extraction.revision}</h3>
+                    <button
+                      className="text-button"
+                      onClick={() => setExtraction(null)}
+                    >
+                      Close extraction preview
+                    </button>
+                  </div>
+                  {extraction.documents.map((d) => (
+                    <div key={d.id}>
+                      <h4>{d.title}</h4>
+                      {!d.extraction ? (
+                        <p className="muted">
+                          This source used standard processing. Enable advanced
+                          processing and Reingest to see detected tables.
+                          Inspect chunks to review its current text.
+                        </p>
+                      ) : (
+                        <>
+                          <p className="muted">
+                            LLM assistance: {d.extraction.llm.status} ·{" "}
+                            {d.extraction.llm.calls} calls · Reported usage:{" "}
+                            {d.extraction.llm.inputTokens} input /{" "}
+                            {d.extraction.llm.outputTokens} output tokens
+                          </p>
+                          {d.extraction.warnings.length > 0 && (
+                            <div role="status">
+                              <strong>Review before publishing</strong>
+                              <ul>
+                                {d.extraction.warnings.map((w) => (
+                                  <li key={w}>{w}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {!d.extraction.tables.length && (
+                            <p className="muted">
+                              No tables detected. Inspect chunks to review the
+                              extracted narrative.
+                            </p>
+                          )}
+                          {d.extraction.tables.map((t, i) => (
+                            <details key={i}>
+                              <summary>
+                                {t.heading || `Table ${i + 1}`} · {t.rowCount}{" "}
+                                {t.rowCount === 1 ? "row" : "rows"}
+                                {t.page ? ` · page ${t.page}` : ""}
+                              </summary>
+                              <p className="muted">
+                                Columns: {t.columns.join(" | ")}
+                              </p>
+                              <pre
+                                style={{
+                                  whiteSpace: "pre-wrap",
+                                  overflowWrap: "anywhere",
+                                }}
+                              >
+                                {t.preview}
+                              </pre>
+                            </details>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  ))}
+                  {!extraction.documents.length && (
+                    <p className="muted">
+                      No current extraction is available. Wait for ingestion to
+                      finish.
+                    </p>
+                  )}
+                  <p className="muted">
+                    Preview is bounded to 100 tables per document and 6,000
+                    characters per table. Use Inspect chunks for the indexed
+                    passages. Verify financial values against the original
+                    document.
+                  </p>
+                </section>
+              )}
               {preview && (
                 <div className="chunk-preview">
                   <div className="panel-header">
@@ -1113,6 +1285,12 @@ export function KnowledgeStudio({
                         {c.title}
                         {c.page ? ` · Page ${c.page}` : ""}
                       </summary>
+                      {c.chunk_metadata?.tokenCount !== undefined && (
+                        <p className="muted">
+                          {c.chunk_metadata.tokenCount} tokens ·{" "}
+                          {c.chunk_metadata.tokenizer}
+                        </p>
+                      )}
                       <p className="source-snippet">{c.content}</p>
                     </details>
                   ))}
@@ -1212,6 +1390,8 @@ export function KnowledgeStudio({
                         description: String(d.get("description")),
                         publicAccess: d.get("publicAccess") === "on",
                         ocrEnabled: d.get("ocrEnabled") === "on",
+                        advancedProcessing: processingFromForm(d),
+                        parentContext: d.get("parentContext") === "on",
                         ...(canModel
                           ? {
                               approvalRequired:
@@ -1267,6 +1447,12 @@ export function KnowledgeStudio({
                     chunks do not change automatically. English OCR is limited
                     to 20 scanned pages per document.
                   </p>
+                  <AdvancedKnowledgeSettings
+                    key={base.revision}
+                    initial={base.advanced_processing}
+                    parentContext={base.parent_context}
+                    models={processingModels.data ?? []}
+                  />
                   {canModel && (
                     <label className="checkbox-label">
                       <input

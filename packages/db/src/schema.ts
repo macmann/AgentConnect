@@ -225,6 +225,15 @@ export const embeddingModels = pgTable("embedding_models", {
 });
 
 export const knowledgeBases = pgTable("knowledge_bases", {
+  advancedProcessing: jsonb("advanced_processing")
+    .notNull()
+    .default({
+      enabled: false,
+      llmAssisted: false,
+      modelId: null,
+      chunkTokens: 500,
+    }),
+  parentContext: boolean("parent_context").notNull().default(false),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
   workspaceId: uuid("workspace_id").notNull(),

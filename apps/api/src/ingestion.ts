@@ -2,6 +2,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { sql } from "./db.js";
 import {
   parseDocument,
+  parseHTML,
   KnowledgeError,
   type ParsedDocument,
 } from "@agentconnect/rag/parsers";
@@ -26,6 +27,15 @@ import { decrypt } from "./security.js";
 import { crawlWebsite, type CrawlConfig } from "./knowledge-websites.js";
 import { ocrPdfPage } from "./pdf-ocr.js";
 import { config } from "./config.js";
+import {
+  advancedProcessing,
+  type AdvancedProcessing,
+} from "@agentconnect/schemas/knowledge";
+import {
+  processAdvancedDocument,
+  defaultProcessingFactory,
+} from "./knowledge-processing.js";
+import type { ProviderFactory } from "@agentconnect/provider-sdk";
 interface Job {
   id: string;
   source_id: string;
@@ -35,7 +45,12 @@ interface Job {
   source_revision: number;
   attempts: number;
   lease_token: string;
-  payload: { objectKey?: string; filename?: string; website?: CrawlConfig };
+  payload: {
+    objectKey?: string;
+    filename?: string;
+    website?: CrawlConfig;
+    processing?: AdvancedProcessing;
+  };
 }
 export async function claimKnowledgeJob(): Promise<Job | undefined> {
   return sql.begin(async (tx) => {
@@ -46,15 +61,24 @@ export async function claimKnowledgeJob(): Promise<Job | undefined> {
       Job[]
     >`SELECT j.* FROM knowledge_jobs j JOIN knowledge_sources s ON s.id=j.source_id JOIN knowledge_bases k ON k.id=j.knowledge_base_id WHERE j.status='queued' AND j.available_at<=now() AND j.attempts<3 AND s.status<>'deleted' AND s.revision=j.source_revision AND k.archived_at IS NULL ORDER BY j.available_at,j.id FOR UPDATE OF j SKIP LOCKED LIMIT 1`;
     if (!job) return;
+    const [base] =
+      await tx`SELECT advanced_processing FROM knowledge_bases WHERE id=${job.knowledge_base_id}`;
+    const payload = {
+      ...job.payload,
+      processing:
+        job.payload.processing ??
+        advancedProcessing.parse(base!.advanced_processing),
+    };
     const token = randomUUID();
-    await tx`UPDATE knowledge_jobs SET status='running',attempts=attempts+1,lease_token=${token},locked_until=now()+interval '120 seconds' WHERE id=${job.id}`;
+    await tx`UPDATE knowledge_jobs SET status='running',attempts=attempts+1,lease_token=${token},locked_until=now()+interval '120 seconds',payload=${tx.json(JSON.parse(JSON.stringify(payload)))} WHERE id=${job.id}`;
     await tx`UPDATE knowledge_sources SET status='processing',error_code=NULL,updated_at=now() WHERE id=${job.source_id} AND revision=${job.source_revision}`;
-    return { ...job, attempts: job.attempts + 1, lease_token: token };
+    return { ...job, payload, attempts: job.attempts + 1, lease_token: token };
   });
 }
 export async function processKnowledgeJob(
   factory: EmbeddingFactory = defaultEmbeddingFactory,
   firecrawl: typeof crawlFirecrawl = crawlFirecrawl,
+  processingFactory: ProviderFactory = defaultProcessingFactory,
 ): Promise<boolean> {
   const job = await claimKnowledgeJob();
   if (!job) return false;
@@ -70,6 +94,7 @@ export async function processKnowledgeJob(
   }, 30000);
   heartbeat.unref();
   try {
+    const settings = advancedProcessing.parse(job.payload.processing ?? {});
     const [kb] = await sql<
       KnowledgeBase[]
     >`SELECT * FROM knowledge_bases WHERE id=${job.knowledge_base_id} AND workspace_id=${job.workspace_id} AND organization_id=${job.organization_id} AND archived_at IS NULL`;
@@ -103,7 +128,13 @@ export async function processKnowledgeJob(
         const page = crawled[i]!;
         const key = `${job.organization_id}/${job.workspace_id}/${kb.id}/${job.source_id}/${job.source_revision}/page-${i}.html`;
         await storeKnowledge(key, page.bytes);
-        pages.push({ document: page.document, url: page.url, objectKey: key });
+        pages.push({
+          document: settings.enabled
+            ? parseHTML(page.bytes, page.document.title, { advanced: true })
+            : page.document,
+          url: page.url,
+          objectKey: key,
+        });
       }
     } else {
       if (!job.payload.objectKey || !job.payload.filename)
@@ -124,8 +155,9 @@ export async function processKnowledgeJob(
                     throw new KnowledgeError("OCR_NOT_AVAILABLE");
                   },
               maxOcrPages: 20,
+              advanced: settings.enabled,
             }
-          : {},
+          : { advanced: settings.enabled },
       );
       document.title = source.title;
       document.metadata = {
@@ -169,12 +201,36 @@ export async function processKnowledgeJob(
       }[];
     }[] = [];
     let total = 0;
+    const assistanceBudget = { remaining: 12 };
+    const processingReports: unknown[] = [];
     for (const page of pages) {
-      const chunks = chunkDocument(page.document, {
-        chunkSize: kb.chunk_size,
-        chunkOverlap: kb.chunk_overlap,
-        chunkStrategy: kb.chunk_strategy,
-      });
+      const processed = settings.enabled
+        ? await processAdvancedDocument(
+            page.document,
+            settings,
+            job.workspace_id,
+            job.organization_id,
+            controller.signal,
+            processingFactory,
+            assistanceBudget,
+          )
+        : null;
+      if (processed) {
+        page.document = processed.document;
+        page.document.metadata = {
+          ...page.document.metadata,
+          processing: settings,
+          extraction: processed.report,
+        };
+        processingReports.push(processed.report);
+      }
+      const chunks =
+        processed?.chunks ??
+        chunkDocument(page.document, {
+          chunkSize: kb.chunk_size,
+          chunkOverlap: kb.chunk_overlap,
+          chunkStrategy: kb.chunk_strategy,
+        });
       total += chunks.length;
       if (total > 500) throw new KnowledgeError("CHUNK_LIMIT");
       if (!chunks.length) throw new KnowledgeError("NO_EXTRACTABLE_TEXT");
@@ -223,7 +279,7 @@ export async function processKnowledgeJob(
         }
       }
       await tx`UPDATE knowledge_jobs SET status='completed',finished_at=now(),locked_until=NULL,lease_token=NULL,error_code=NULL WHERE id=${job.id}`;
-      await tx`UPDATE knowledge_sources SET status='ready',error_code=NULL,metadata=metadata || ${tx.json({ ...(job.payload.website ? { crawlPageCount: pages.length } : {}), ocrPages: pages.reduce((n, p) => n + Number(p.document.metadata.ocrPages ?? 0), 0), unrecognizedPages: pages.reduce((n, p) => n + Number(p.document.metadata.unrecognizedPages ?? 0), 0) })}::jsonb,updated_at=now() WHERE id=${job.source_id} AND revision=${job.source_revision}`;
+      await tx`UPDATE knowledge_sources SET status='ready',error_code=NULL,metadata=metadata || ${tx.json({ ...(job.payload.website ? { crawlPageCount: pages.length } : {}), processing: settings, processingWarnings: [...new Set(processingReports.flatMap((r) => (r as { warnings: string[] }).warnings))], ocrPages: pages.reduce((n, p) => n + Number(p.document.metadata.ocrPages ?? 0), 0), unrecognizedPages: pages.reduce((n, p) => n + Number(p.document.metadata.unrecognizedPages ?? 0), 0) })}::jsonb,updated_at=now() WHERE id=${job.source_id} AND revision=${job.source_revision}`;
     });
   } catch (error) {
     const code = controller.signal.aborted

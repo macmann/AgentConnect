@@ -29,6 +29,20 @@ import {
   type KnowledgeBase,
 } from "./knowledge-core.js";
 import { validateWebsite } from "./knowledge-websites.js";
+async function validateProcessingModel(
+  value: import("@agentconnect/schemas/knowledge").AdvancedProcessing,
+  workspace: string,
+  org: string,
+) {
+  if (!value.enabled || !value.llmAssisted) return;
+  const [model] =
+    await sql`SELECT id FROM model_configurations WHERE id=${value.modelId} AND workspace_id=${workspace} AND organization_id=${org} AND archived_at IS NULL`;
+  if (!model)
+    throw new HttpError(
+      400,
+      "Select an available processing model from this workspace",
+    );
+}
 export async function ownedKnowledge(
   r: FastifyRequest,
   cap:
@@ -184,7 +198,7 @@ export async function registerKnowledgeRoutes(
       id(params(r).workspaceId),
       "knowledge:read",
     );
-    return sql`SELECT k.id,k.name,k.description,k.public_access,k.approval_required,k.ocr_enabled,k.published_release_id,k.revision,k.embedding_model_id,k.dimensions,k.chunk_size,k.chunk_overlap,k.chunk_strategy,count(s.id) FILTER(WHERE s.status<>'deleted')::int AS source_count,count(s.id) FILTER(WHERE s.status='ready')::int AS ready_count,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',r.id,'available_sources',(SELECT count(DISTINCT rc.source_id)::int FROM knowledge_release_chunks rc JOIN knowledge_sources rs ON rs.id=rc.source_id WHERE rc.release_id=r.id AND rs.status<>'deleted'))) FROM knowledge_releases r WHERE r.knowledge_base_id=k.id AND r.status='published'),'[]'::jsonb) AS published_releases FROM knowledge_bases k LEFT JOIN knowledge_sources s ON s.knowledge_base_id=k.id WHERE k.workspace_id=${w.id} AND k.organization_id=${w.organization_id} AND k.archived_at IS NULL GROUP BY k.id ORDER BY k.created_at DESC`;
+    return sql`SELECT k.id,k.name,k.description,k.public_access,k.approval_required,k.ocr_enabled,k.advanced_processing,k.parent_context,k.published_release_id,k.revision,k.embedding_model_id,k.dimensions,k.chunk_size,k.chunk_overlap,k.chunk_strategy,count(s.id) FILTER(WHERE s.status<>'deleted')::int AS source_count,count(s.id) FILTER(WHERE s.status='ready')::int AS ready_count,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',r.id,'available_sources',(SELECT count(DISTINCT rc.source_id)::int FROM knowledge_release_chunks rc JOIN knowledge_sources rs ON rs.id=rc.source_id WHERE rc.release_id=r.id AND rs.status<>'deleted'))) FROM knowledge_releases r WHERE r.knowledge_base_id=k.id AND r.status='published'),'[]'::jsonb) AS published_releases FROM knowledge_bases k LEFT JOIN knowledge_sources s ON s.knowledge_base_id=k.id WHERE k.workspace_id=${w.id} AND k.organization_id=${w.organization_id} AND k.archived_at IS NULL GROUP BY k.id ORDER BY k.created_at DESC`;
   });
   app.post(
     "/workspaces/:workspaceId/knowledge-bases",
@@ -197,6 +211,11 @@ export async function registerKnowledgeRoutes(
         "knowledge:manage",
       );
       const data = knowledgeInput.parse(r.body);
+      await validateProcessingModel(
+        data.advancedProcessing,
+        w.id,
+        w.organization_id,
+      );
       const [model] =
         await sql`SELECT dimensions FROM embedding_models WHERE id=${data.embeddingModelId} AND workspace_id=${w.id} AND organization_id=${w.organization_id}`;
       if (!model)
@@ -207,7 +226,7 @@ export async function registerKnowledgeRoutes(
       await embeddingConnection(data.embeddingModelId, w.id, w.organization_id);
       const kbId = randomUUID();
       await sql.begin(async (tx) => {
-        await tx`INSERT INTO knowledge_bases(id,workspace_id,organization_id,name,description,embedding_model_id,dimensions,chunk_size,chunk_overlap,chunk_strategy,public_access,approval_required,ocr_enabled) VALUES (${kbId},${w.id},${w.organization_id},${data.name},${data.description},${data.embeddingModelId},${model.dimensions},${data.chunkSize},${data.chunkOverlap},${data.chunkStrategy},${data.publicAccess},${data.approvalRequired},${data.ocrEnabled})`;
+        await tx`INSERT INTO knowledge_bases(id,workspace_id,organization_id,name,description,embedding_model_id,dimensions,chunk_size,chunk_overlap,chunk_strategy,public_access,approval_required,ocr_enabled,advanced_processing,parent_context) VALUES (${kbId},${w.id},${w.organization_id},${data.name},${data.description},${data.embeddingModelId},${model.dimensions},${data.chunkSize},${data.chunkOverlap},${data.chunkStrategy},${data.publicAccess},${data.approvalRequired},${data.ocrEnabled},${tx.json(data.advancedProcessing)},${data.parentContext})`;
         // UUID is generated here; dimensions is constrained by embedding_models.
         await tx.unsafe(
           `CREATE INDEX kb_${kbId.replaceAll("-", "")} ON knowledge_chunks USING hnsw ((embedding::vector(${Number(model.dimensions)})) vector_cosine_ops) WHERE knowledge_base_id='${kbId}'`,
@@ -235,6 +254,11 @@ export async function registerKnowledgeRoutes(
     async (r) => {
       const { u, kb } = await ownedKnowledge(r, "knowledge:manage");
       const data = knowledgeUpdate.parse(r.body);
+      await validateProcessingModel(
+        data.advancedProcessing ?? kb.advanced_processing,
+        kb.workspace_id,
+        kb.organization_id,
+      );
       if (
         data.approvalRequired !== undefined &&
         data.approvalRequired !== kb.approval_required
@@ -242,7 +266,7 @@ export async function registerKnowledgeRoutes(
         await workspaceAccess(u.id, kb.workspace_id, "knowledge:approve");
       return sql.begin(async (tx) => {
         const [saved] =
-          await tx`UPDATE knowledge_bases SET name=${data.name},description=${data.description},public_access=${data.publicAccess},approval_required=${data.approvalRequired ?? kb.approval_required},ocr_enabled=${data.ocrEnabled ?? kb.ocr_enabled},revision=revision+1 WHERE id=${kb.id} AND revision=${data.revision} RETURNING revision`;
+          await tx`UPDATE knowledge_bases SET name=${data.name},description=${data.description},public_access=${data.publicAccess},approval_required=${data.approvalRequired ?? kb.approval_required},ocr_enabled=${data.ocrEnabled ?? kb.ocr_enabled},advanced_processing=${tx.json(data.advancedProcessing ?? kb.advanced_processing)},parent_context=${data.parentContext ?? kb.parent_context},revision=revision+1 WHERE id=${kb.id} AND revision=${data.revision} RETURNING revision`;
         if (!saved)
           throw new HttpError(409, "Knowledge base changed; reload first");
         await audit(
@@ -536,11 +560,21 @@ export async function registerKnowledgeRoutes(
     },
   );
   app.get(
+    "/knowledge-bases/:knowledgeBaseId/sources/:sourceId/extraction",
+    async (r) => {
+      const { kb } = await ownedKnowledge(r);
+      const source = await sourceFor(r, kb);
+      const documents =
+        await sql`SELECT id,title,metadata->'processing' AS processing,metadata->'extraction' AS extraction FROM knowledge_documents WHERE source_id=${source.id} AND workspace_id=${kb.workspace_id} AND organization_id=${kb.organization_id} AND revision=${source.revision} ORDER BY created_at LIMIT 100`;
+      return { status: source.status, revision: source.revision, documents };
+    },
+  );
+  app.get(
     "/knowledge-bases/:knowledgeBaseId/sources/:sourceId/chunks",
     async (r) => {
       const { kb } = await ownedKnowledge(r);
       const source = await sourceFor(r, kb);
-      return sql`SELECT c.id,c.content,c.page,c.heading,d.title,d.source_url,d.metadata FROM knowledge_chunks c JOIN knowledge_documents d ON d.id=c.document_id WHERE c.source_id=${source.id} AND c.workspace_id=${kb.workspace_id} ORDER BY d.created_at,c.ordinal LIMIT 100`;
+      return sql`SELECT c.id,c.content,c.page,c.heading,d.title,d.source_url,d.metadata-'extraction' AS metadata,c.metadata-'parentContent' AS chunk_metadata FROM knowledge_chunks c JOIN knowledge_documents d ON d.id=c.document_id WHERE c.source_id=${source.id} AND c.workspace_id=${kb.workspace_id} ORDER BY d.created_at,c.ordinal LIMIT 100`;
     },
   );
   app.post(

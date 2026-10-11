@@ -12,6 +12,22 @@ export const embeddingInput = z
     message: "Compatible embedding providers require a base URL",
     path: ["baseUrl"],
   });
+export const advancedProcessing = z
+  .object({
+    enabled: z.boolean().default(false),
+    llmAssisted: z.boolean().default(false),
+    modelId: z.uuid().nullable().default(null),
+    chunkTokens: z.number().int().min(100).max(1500).default(500),
+  })
+  .superRefine((v, ctx) => {
+    if (v.enabled && v.llmAssisted && !v.modelId)
+      ctx.addIssue({
+        code: "custom",
+        path: ["modelId"],
+        message: "Select a workspace model for LLM-assisted processing",
+      });
+  });
+export type AdvancedProcessing = z.infer<typeof advancedProcessing>;
 export const knowledgeInput = z
   .object({
     name: z.string().trim().min(1).max(100),
@@ -25,6 +41,8 @@ export const knowledgeInput = z
     publicAccess: z.boolean().default(false),
     approvalRequired: z.boolean().default(false),
     ocrEnabled: z.boolean().default(false),
+    advancedProcessing: advancedProcessing.prefault({}),
+    parentContext: z.boolean().default(false),
   })
   .refine((v) => v.chunkOverlap < v.chunkSize, {
     message: "Overlap must be smaller than chunk size",
@@ -36,6 +54,8 @@ export const knowledgeUpdate = z.object({
   publicAccess: z.boolean(),
   approvalRequired: z.boolean().optional(),
   ocrEnabled: z.boolean().optional(),
+  advancedProcessing: advancedProcessing.optional(),
+  parentContext: z.boolean().optional(),
   revision: z.number().int().min(1),
 });
 export const textSource = z.object({

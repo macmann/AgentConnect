@@ -34,6 +34,8 @@ export type KnowledgeBase = {
   public_access: boolean;
   approval_required: boolean;
   ocr_enabled: boolean;
+  advanced_processing: import("@agentconnect/schemas/knowledge").AdvancedProcessing;
+  parent_context: boolean;
   published_release_id: string | null;
   archived_at: Date | null;
   revision: number;
@@ -152,8 +154,8 @@ export class PostgresRagTool implements RagTool {
       const dim = sql.unsafe(String(kb.dimensions));
       const filters = options.sourceIds ?? [];
       const select = approved
-        ? sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,c.title,c.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,c.kind FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=${releaseId!} AND c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status<>'deleted' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`
-        : sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,d.title,d.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,s.kind FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id JOIN knowledge_documents d ON d.id=c.document_id WHERE c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status='ready' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`;
+        ? sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,c.title,c.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,c.kind FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=${releaseId!} AND c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status<>'deleted' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`
+        : sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,d.title,d.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,s.kind FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id JOIN knowledge_documents d ON d.id=c.document_id WHERE c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status='ready' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`;
       const semantic =
         await sql`${select} ORDER BY c.embedding::vector(${dim}) <=> ${literal}::vector(${dim}) LIMIT 30`;
       const lexical =
@@ -183,7 +185,14 @@ export class PostgresRagTool implements RagTool {
           documentId: String(row.document_id),
           sourceId: String(row.source_id),
           knowledgeBaseId: String(row.knowledge_base_id),
-          content: String(row.content),
+          content:
+            typeof row.parent_content === "string" &&
+            row.parent_content.includes(String(row.content))
+              ? row.parent_content
+              : String(row.content),
+          ...(row.parent_content
+            ? { contextExpanded: row.parent_content !== row.content }
+            : {}),
           page: row.page as number | null,
           heading: row.heading as string | null,
           title: String(row.title),

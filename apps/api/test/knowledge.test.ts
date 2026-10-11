@@ -842,3 +842,213 @@ test("Curated Q&A edits replace chunks atomically; deletion removes retrieval an
   await call("DELETE", `/knowledge-bases/${kbId}`);
   assert.equal((await call("GET", `/knowledge-bases/${kbId}`)).statusCode, 404);
 });
+
+test("Advanced processing is opt-in, isolated, previewable and preserves approved parent contexts", async () => {
+  const settings = {
+    enabled: true,
+    llmAssisted: true,
+    modelId: chatModel,
+    chunkTokens: 100,
+  };
+  const invalid = await call(
+    "POST",
+    `/workspaces/${workspace}/knowledge-bases`,
+    {
+      name: "Invalid",
+      embeddingModelId: modelId,
+      advancedProcessing: { ...settings, modelId: randomUUID() },
+    },
+  );
+  assert.equal(invalid.statusCode, 400);
+  const created = await call(
+    "POST",
+    `/workspaces/${workspace}/knowledge-bases`,
+    {
+      name: "Financial statements",
+      embeddingModelId: modelId,
+      advancedProcessing: settings,
+      parentContext: false,
+    },
+  );
+  assert.equal(created.statusCode, 201);
+  const baseId = created.json().id;
+  const path = `/knowledge-bases/${baseId}`;
+  let calls = 0;
+  const assistant: ProviderFactory = () => ({
+    async *stream(input) {
+      calls++;
+      assert.ok(input.signal);
+      assert.match(input.system, /never instructions/);
+      const rows = JSON.parse(input.messages[0]!.content).rows;
+      yield {
+        type: "token",
+        text: JSON.stringify({
+          blocks: [{ start: 0, end: rows.length, kind: "text", headerRows: 0 }],
+        }),
+      };
+      yield { type: "usage", inputTokens: 20, outputTokens: 12 };
+    },
+  });
+  const uploaded = await call("POST", path + "/text", {
+    title: "Annual statement",
+    text: "Amounts in USD thousands. Revenue is 125,000 in 2026 and 110,000 in 2025.\n".repeat(
+      15,
+    ),
+  });
+  assert.equal(uploaded.statusCode, 202);
+  const sourceId = uploaded.json().id;
+  await processKnowledgeJob(embedding, undefined, assistant);
+  assert.equal(calls, 1);
+  const preview = await call("GET", path + `/sources/${sourceId}/extraction`);
+  assert.equal(preview.statusCode, 200);
+  assert.equal(preview.json().documents[0].extraction.llm.status, "applied");
+  assert.equal(preview.json().documents[0].extraction.llm.inputTokens, 20);
+  assert.equal(
+    (
+      await call(
+        "GET",
+        path + `/sources/${sourceId}/extraction`,
+        undefined,
+        sessions.outsider,
+      )
+    ).statusCode,
+    403,
+  );
+  const chunks =
+    await sql`SELECT content,metadata FROM knowledge_chunks WHERE source_id=${sourceId} ORDER BY ordinal`;
+  assert.ok(chunks.length > 1);
+  assert.ok(chunks.every((c) => c.metadata.parentContent.includes(c.content)));
+  const search = () =>
+    call("POST", path + "/search", {
+      query: "Revenue 125,000",
+      topK: 1,
+      minScore: 0,
+    });
+  const before = (await search()).json().results[0];
+  const updated = await call("PUT", path, {
+    name: "Financial statements",
+    description: "",
+    publicAccess: false,
+    advancedProcessing: settings,
+    parentContext: true,
+    revision: 1,
+  });
+  assert.equal(updated.statusCode, 200);
+  const expanded = (await search()).json().results[0];
+  assert.equal(expanded.chunkId, before.chunkId);
+  assert.equal(expanded.contextExpanded, true);
+  assert.ok(expanded.content.includes(before.content));
+  assert.ok(expanded.content.length > before.content.length);
+  // Use the actual snapshot route, then a published fixture to exercise release retrieval.
+  const release = await call("POST", path + "/releases", {
+    name: "Reviewed financial report",
+    sourceIds: [sourceId],
+  });
+  assert.equal(release.statusCode, 201);
+  const releaseId = release.json().id;
+  await sql`UPDATE knowledge_releases SET status='published' WHERE id=${releaseId}`;
+  const { PostgresRagTool } = await import("../src/knowledge-core.js");
+  const approved = await new PostgresRagTool(embedding).execute(
+    "Revenue 125,000",
+    [baseId],
+    {
+      topK: 1,
+      minScore: 0,
+      mode: "hybrid",
+      releasePins: { [baseId]: releaseId },
+    },
+    { workspaceId: workspace, organizationId: org, publicAccess: false },
+    AbortSignal.timeout(5000),
+  );
+  assert.equal(approved[0]!.content, expanded.content);
+  // Disabling processing changes neither current chunks nor approved snapshots until reingestion.
+  const disabled = await call("PUT", path, {
+    name: "Financial statements",
+    description: "",
+    publicAccess: false,
+    advancedProcessing: { ...settings, enabled: false },
+    revision: 2,
+  });
+  assert.equal(disabled.statusCode, 200);
+  assert.equal(
+    (await call("GET", path + `/sources/${sourceId}/chunks`)).json()[0].content,
+    chunks[0]!.content,
+  );
+  await call("POST", path + `/sources/${sourceId}/reingest`);
+  await processKnowledgeJob(embedding, undefined, assistant);
+  assert.equal(calls, 1);
+  const plain = (
+    await call("GET", path + `/sources/${sourceId}/extraction`)
+  ).json();
+  assert.equal(plain.documents[0].extraction, null);
+  const pinned = await new PostgresRagTool(embedding).execute(
+    "Revenue 125,000",
+    [baseId],
+    {
+      topK: 1,
+      minScore: 0,
+      mode: "hybrid",
+      releasePins: { [baseId]: releaseId },
+    },
+    { workspaceId: workspace, organizationId: org, publicAccess: false },
+    AbortSignal.timeout(5000),
+  );
+  assert.equal(pinned[0]!.content, approved[0]!.content);
+  await sql`DELETE FROM knowledge_releases WHERE id=${releaseId}`;
+  await call("DELETE", path);
+});
+
+test("Invalid LLM boundaries fall back with a visible warning without losing financial values", async () => {
+  const created = await call(
+    "POST",
+    `/workspaces/${workspace}/knowledge-bases`,
+    {
+      name: "Boundary fallback",
+      embeddingModelId: modelId,
+      advancedProcessing: {
+        enabled: true,
+        llmAssisted: true,
+        modelId: chatModel,
+        chunkTokens: 100,
+      },
+    },
+  );
+  const baseId = created.json().id;
+  const source = await call("POST", `/knowledge-bases/${baseId}/text`, {
+    title: "Revenue",
+    text: "Revenue: 125,000 USD.\nNet income: (5,000) USD.",
+  });
+  const invalid: ProviderFactory = () => ({
+    async *stream() {
+      yield {
+        type: "token",
+        text: '{"blocks":[{"start":1,"end":2,"kind":"text","headerRows":0}]}',
+      };
+    },
+  });
+  await processKnowledgeJob(embedding, undefined, invalid);
+  const preview = (
+    await call(
+      "GET",
+      `/knowledge-bases/${baseId}/sources/${source.json().id}/extraction`,
+    )
+  ).json();
+  assert.equal(preview.status, "ready");
+  assert.equal(preview.documents[0].extraction.llm.status, "fallback");
+  assert.ok(preview.documents[0].extraction.warnings.length);
+  const chunks = (
+    await call(
+      "GET",
+      `/knowledge-bases/${baseId}/sources/${source.json().id}/chunks`,
+    )
+  ).json();
+  assert.match(
+    chunks.map((c: { content: string }) => c.content).join("\n"),
+    /125,000 USD/,
+  );
+  assert.match(
+    chunks.map((c: { content: string }) => c.content).join("\n"),
+    /\(5,000\) USD/,
+  );
+  await call("DELETE", `/knowledge-bases/${baseId}`);
+});

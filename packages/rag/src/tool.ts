@@ -1,4 +1,5 @@
 export interface Citation {
+  contextExpanded?: boolean;
   id: number;
   chunkId: string;
   documentId: string;
@@ -28,7 +29,7 @@ export interface RagTool {
       mode: "vector" | "hybrid";
       sourceIds?: string[];
       contentMode?: "current" | "approved";
-      releasePins?: Record<string,string>;
+      releasePins?: Record<string, string>;
     },
     context: RetrievalContext,
     signal: AbortSignal,
