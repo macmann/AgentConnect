@@ -1,5 +1,6 @@
 "use client";
 import { ContextControls } from "./context-controls";
+import { ModelRoutingControls } from "./model-routing-controls";
 import { BankExperienceEditor } from "./bank-experience-editor";
 import { AgentKnowledgeRelease } from "./agent-knowledge-releases";
 import { useState, type MutableRefObject } from "react";
@@ -629,6 +630,61 @@ export function KnowledgeSection(p: SectionProps) {
         open={p.issues.some((i) => /topK|minScore/.test(i.field)) || undefined}
       >
         <summary>Advanced retrieval settings</summary>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={c.rag.queryRewrite ?? false}
+            onChange={(e) =>
+              config(p, "rag", { ...c.rag, queryRewrite: e.target.checked })
+            }
+          />
+          Rewrite follow-up questions for search
+        </label>
+        <p className="muted">
+          Uses recent conversation context to form a standalone search query.
+          The original query is also searched. Adds a model call; malformed
+          rewrites use the original query.
+        </p>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={c.rag.rerank ?? false}
+            onChange={(e) =>
+              config(p, "rag", { ...c.rag, rerank: e.target.checked })
+            }
+          />
+          Rerank retrieved passages
+        </label>
+        <p className="muted">
+          The configured model ranks candidates against the original question.
+          Access, approved-release and minimum relevance checks still apply.
+          Adds a model call; malformed rankings retain retrieval order.
+        </p>
+        {c.rag.rerank && (
+          <Field
+            field="config.rag.candidateCount"
+            label="Reranking candidates"
+            issues={p.issues}
+            help="Retrieve up to this many candidates before choosing the final passages. Larger pools use more tokens."
+          >
+            {(a) => (
+              <input
+                {...a}
+                type="number"
+                min={5}
+                max={30}
+                value={c.rag.candidateCount ?? 15}
+                onChange={(e) =>
+                  config(p, "rag", {
+                    ...c.rag,
+                    candidateCount: Number(e.target.value),
+                  })
+                }
+              />
+            )}
+          </Field>
+        )}
+
         <div className="configure-short-grid">
           {(["topK", "minScore"] as const).map((key) => (
             <Field
@@ -1098,6 +1154,12 @@ export function AdvancedSection(p: SectionProps) {
       </Group>
       <PromptPreview draft={p.draft} />
       <ContextControls draft={p.draft} update={p.update} />
+      <ModelRoutingControls
+        draft={p.draft}
+        models={p.models}
+        update={p.update}
+        issues={p.issues}
+      />
       <Group title="Draft metadata">
         <dl className="configure-metadata">
           <dt>Draft revision</dt>

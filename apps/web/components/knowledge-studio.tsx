@@ -20,6 +20,7 @@ type Base = {
   description: string;
   public_access: boolean;
   approval_required: boolean;
+  ocr_enabled: boolean;
   published_release_id: string | null;
   revision: number;
   embedding_model_id: string;
@@ -45,6 +46,8 @@ type Source = {
   revision: number;
   chunk_count: number;
   metadata: {
+    ocrPages?: number;
+    unrecognizedPages?: number;
     question?: string;
     answer?: string;
     tags?: string[];
@@ -184,6 +187,7 @@ export function KnowledgeStudio({
             chunkOverlap: number("chunkOverlap"),
             chunkStrategy: value("chunkStrategy"),
             publicAccess: data.get("publicAccess") === "on",
+            ocrEnabled: data.get("ocrEnabled") === "on",
           },
         );
         setSelected(created.id);
@@ -490,6 +494,16 @@ export function KnowledgeStudio({
                     />
                   </label>
                 </div>
+                <label className="checkbox-label">
+                  <input type="checkbox" name="ocrEnabled" />
+                  Recognize scanned PDF pages with OCR
+                </label>
+                <p className="muted">
+                  Requires OCR_ENABLED=true and Poppler/Tesseract on the worker.
+                  Supports English scans, up to 20 scanned pages per document.
+                  Review recognition accuracy before publishing.
+                </p>
+
                 <label className="checkbox-label">
                   <input name="publicAccess" type="checkbox" /> Allow knowledge
                   in public hosted chat
@@ -876,6 +890,19 @@ export function KnowledgeStudio({
                             <span className={"source-status " + s.status}>
                               {s.status}
                             </span>
+                            {!!s.metadata.ocrPages && (
+                              <small>
+                                OCR recognized {s.metadata.ocrPages} pages ·
+                                review accuracy
+                              </small>
+                            )}
+                            {!!s.metadata.unrecognizedPages && (
+                              <small className="error">
+                                {s.metadata.unrecognizedPages} pages may contain
+                                scanned content that was not recognized. Enable
+                                OCR and reindex if needed.
+                              </small>
+                            )}
                             {s.error_code && (
                               <small className="error">{s.error_code}</small>
                             )}
@@ -1085,6 +1112,7 @@ export function KnowledgeStudio({
                         name: String(d.get("name")),
                         description: String(d.get("description")),
                         publicAccess: d.get("publicAccess") === "on",
+                        ocrEnabled: d.get("ocrEnabled") === "on",
                         ...(canModel
                           ? {
                               approvalRequired:
@@ -1125,6 +1153,20 @@ export function KnowledgeStudio({
                   <p className="muted">
                     Turning this off blocks retrieval from existing public
                     deployments immediately.
+                  </p>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      name="ocrEnabled"
+                      defaultChecked={base.ocr_enabled}
+                    />
+                    Recognize scanned PDF pages with OCR
+                  </label>
+                  <p className="muted">
+                    Requires OCR_ENABLED=true and Poppler/Tesseract on the
+                    worker. Applies to new ingestion or reindexing; existing
+                    chunks do not change automatically. English OCR is limited
+                    to 20 scanned pages per document.
                   </p>
                   {canModel && (
                     <label className="checkbox-label">

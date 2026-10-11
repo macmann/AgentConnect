@@ -33,6 +33,7 @@ export type KnowledgeBase = {
   chunk_strategy: string;
   public_access: boolean;
   approval_required: boolean;
+  ocr_enabled: boolean;
   published_release_id: string | null;
   archived_at: Date | null;
   revision: number;

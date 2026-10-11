@@ -70,7 +70,10 @@ export function controlledProvider(
   const controls = contextControls.parse(c.contextControls);
   let estimated = 0,
     reported = 0,
-    calls = 0;
+    calls = 0,
+    inputTokens = 0,
+    outputTokens = 0,
+    estimatedCalls = 0;
   const requests: {
     system: number;
     messages: number;
@@ -78,7 +81,15 @@ export function controlledProvider(
     outputLimit: number;
   }[] = [];
   return {
-    usage: () => ({ estimated, reported, calls, requests }),
+    usage: () => ({
+      estimated,
+      reported,
+      calls,
+      requests,
+      inputTokens,
+      outputTokens,
+      estimatedCalls,
+    }),
     provider: {
       async *stream(request) {
         const measured =
@@ -91,7 +102,15 @@ export function controlledProvider(
           controls.inputBudget ?? model.contextWindow,
           model.contextWindow - request.maxOutputTokens,
         );
-        if ((controls.enabled || controls.dailyTokenQuota) && measured > limit)
+        if (
+          (controls.enabled ||
+            controls.dailyTokenQuota ||
+            c.rag.queryRewrite ||
+            c.rag.rerank ||
+            c.modelRouting.enabled ||
+            c.modelRouting.fallbackModelIds.length) &&
+          measured > limit
+        )
           throw new ProviderError("CONTEXT_LIMIT");
         calls++;
         requests.push({
@@ -112,7 +131,12 @@ export function controlledProvider(
           }
         } finally {
           const local = measured + tokenCount(text, controls.tokenizer);
+          if (usage?.inputTokens == null || usage?.outputTokens == null)
+            estimatedCalls++;
           estimated += local;
+          inputTokens += usage?.inputTokens ?? measured;
+          outputTokens +=
+            usage?.outputTokens ?? tokenCount(text, controls.tokenizer);
           reported +=
             usage?.inputTokens != null && usage?.outputTokens != null
               ? usage.inputTokens + usage.outputTokens
@@ -205,6 +229,14 @@ export async function reserveTokens(
 ) {
   const controls = contextControls.parse(c.contextControls);
   if (!controls.dailyTokenQuota) return;
+  if (c.modelRouting.enabled || c.modelRouting.fallbackModelIds.length)
+    model = {
+      ...model,
+      contextWindow: Math.max(
+        model.contextWindow,
+        ...model.alternatives.map((m) => m.contextWindow),
+      ),
+    };
   const subject = conversation.user_id
     ? "user:" + conversation.user_id
     : conversation.customer_session_id
@@ -217,25 +249,34 @@ export async function reserveTokens(
     );
   const calls =
     1 +
+    (c.rag.queryRewrite && c.rag.knowledgeBaseIds.length ? 1 : 0) +
+    (c.rag.rerank && c.rag.knowledgeBaseIds.length ? 1 : 0) +
     (controls.summarize ? 1 : 0) +
     (c.rag.usageMode === "automatic" && c.rag.knowledgeBaseIds.length ? 1 : 0) +
     (c.tools.usageMode !== "disabled" && c.tools.toolIds.length ? 1 : 0);
+  const attempts =
+    1 +
+    (c.modelRouting.enabled ? 1 : 0) +
+    c.modelRouting.fallbackModelIds.length;
   const reserved =
-    (supportDecision
+    attempts *
+    ((supportDecision
       ? Math.min(
           controls.inputBudget ?? model.contextWindow,
           model.contextWindow - 512,
         ) + 512
       : 0) +
-    calls *
-      (Math.min(
-        controls.inputBudget ?? model.contextWindow,
-        model.contextWindow - c.maxOutputTokens,
-      ) +
-        Math.max(
-          c.maxOutputTokens,
-          controls.summarize ? controls.summaryMaxTokens : 0,
-        ));
+      calls *
+        (Math.min(
+          controls.inputBudget ?? model.contextWindow,
+          model.contextWindow - c.maxOutputTokens,
+        ) +
+          Math.max(
+            c.maxOutputTokens,
+            controls.summarize ? controls.summaryMaxTokens : 0,
+            c.rag.rerank ? 1024 : c.rag.queryRewrite ? 256 : 0,
+            supportDecision ? 512 : 0,
+          )));
   await tx`INSERT INTO customer_token_usage(workspace_id,organization_id,subject,day) VALUES(${conversation.workspace_id},${conversation.organization_id},${subject},(now() AT TIME ZONE 'UTC')::date) ON CONFLICT DO NOTHING`;
   const [usage] =
     await tx`UPDATE customer_token_usage SET reserved_tokens=reserved_tokens+${reserved} WHERE workspace_id=${conversation.workspace_id} AND subject=${subject} AND day=(now() AT TIME ZONE 'UTC')::date AND used_tokens+reserved_tokens+${reserved}<=${controls.dailyTokenQuota} RETURNING day`;

@@ -1,4 +1,6 @@
-import { controlledProvider, tokenCount } from "./context-control.js";
+import { routedProvider } from "./model-routing.js";
+import { enhancedRetrieval } from "./rag-enhancements.js";
+import { tokenCount } from "./context-control.js";
 import { generateGroundedAnswer } from "./bank-runtime.js";
 import { planKnowledgeUsage } from "./knowledge-usage.js";
 import { agentConfig } from "@agentconnect/schemas/agents";
@@ -15,7 +17,7 @@ import { KnowledgeError } from "@agentconnect/rag/parsers";
 import {
   modelSnapshotSchema,
   connection,
-  validateAgentModel,
+  validateModelSet,
 } from "./agent-models.js";
 import {
   PostgresRagTool,
@@ -38,7 +40,7 @@ export async function workflowAgentVersion(
   if (!v) throw new ProviderError("WORKFLOW_AGENT_UNAVAILABLE");
   const c = agentConfig.parse(v.config),
     model = modelSnapshotSchema.parse(v.model_snapshot);
-  validateAgentModel(c, model);
+  validateModelSet(c, model);
   await validateKnowledgeSelection(c.rag, ctx.workspaceId, ctx.organizationId);
   await validateToolIds(c.tools.toolIds, ctx);
   const conn = await connection(model, ctx.workspaceId, ctx.organizationId);
@@ -72,20 +74,34 @@ export async function executeAgentSnapshot(
   providerOverride?: ProviderFactory,
   embeddingOverride?: EmbeddingFactory,
 ) {
-  validateAgentModel(c, model);
+  validateModelSet(c, model);
   await validateKnowledgeSelection(c.rag, ctx.workspaceId, ctx.organizationId);
   await validateToolIds(c.tools.toolIds, ctx);
-  const conn = await connection(model, ctx.workspaceId, ctx.organizationId);
-  const originalProvider = providerOverride
-    ? providerOverride(conn)
-    : createProvider(
+  const factory: ProviderFactory =
+    providerOverride ??
+    ((conn) =>
+      createProvider(
         conn,
         safeTransport(
           hosts(config.MODEL_ALLOWED_HOSTS),
           hosts(config.MODEL_PRIVATE_HOSTS),
         ),
-      );
-  const provider = controlledProvider(originalProvider, c, model).provider;
+      ));
+  const metered = routedProvider(
+    c,
+    model,
+    input,
+    0,
+    ctx.workspaceId,
+    ctx.organizationId,
+    factory,
+  );
+  const provider = metered.provider;
+  const completeUsage =
+    c.modelRouting.enabled ||
+    c.modelRouting.fallbackModelIds.length ||
+    c.rag.queryRewrite ||
+    c.rag.rerank;
   const contextBudget = c.contextControls.enabled
     ? Infinity
     : model.contextWindow - c.maxOutputTokens;
@@ -102,17 +118,23 @@ export async function executeAgentSnapshot(
       : [],
   );
   let sources = knowledgePlan.retrieve
-    ? await new PostgresRagTool(embeddingOverride).execute(
-        input,
-        c.rag.knowledgeBaseIds,
-        c.rag,
-        {
-          workspaceId: ctx.workspaceId,
-          organizationId: ctx.organizationId,
-          publicAccess: false,
-        },
-        signal,
-      )
+    ? (
+        await enhancedRetrieval(
+          new PostgresRagTool(embeddingOverride),
+          provider,
+          [{ role: "user", content: input }],
+          input,
+          c.rag.knowledgeBaseIds,
+          c.rag,
+          {
+            workspaceId: ctx.workspaceId,
+            organizationId: ctx.organizationId,
+            publicAccess: false,
+          },
+          signal,
+          c.maxOutputTokens,
+        )
+      ).sources
     : [];
   if (c.contextControls.enabled) {
     let used = 0;
@@ -134,10 +156,15 @@ export async function executeAgentSnapshot(
     );
     return {
       output: result.message,
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
+      inputTokens: completeUsage
+        ? metered.usage().inputTokens
+        : result.inputTokens,
+      outputTokens: completeUsage
+        ? metered.usage().outputTokens
+        : result.outputTokens,
       citations: citedSources(result.message, sources),
       sources,
+      modelUsage: metered.usage().modelUsage,
     };
   }
   if (knowledgePlan.retrieve && !sources.length)
@@ -205,5 +232,12 @@ export async function executeAgentSnapshot(
     )
   )
     throw new KnowledgeError("INVALID_CITATION");
-  return { output: text, inputTokens, outputTokens, citations, sources };
+  return {
+    output: text,
+    inputTokens: completeUsage ? metered.usage().inputTokens : inputTokens,
+    outputTokens: completeUsage ? metered.usage().outputTokens : outputTokens,
+    citations,
+    sources,
+    modelUsage: metered.usage().modelUsage,
+  };
 }

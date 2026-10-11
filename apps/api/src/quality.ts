@@ -236,7 +236,7 @@ export async function registerQualityRoutes(app: FastifyInstance) {
           400,
           "Structured generative agents are not yet supported by offline evaluation",
         );
-      const model = await modelSnapshot(c.modelId, w.id);
+      const model = await modelSnapshot(c.modelId, w.id, c);
       validateAgentModel(c, model);
       const judge =
         body.evaluator.mode === "judge"

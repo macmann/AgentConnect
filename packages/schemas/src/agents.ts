@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { contextControls } from "@agentconnect/schemas/customer-experience";
+import { modelRouting } from "@agentconnect/schemas/model-routing";
 import {
   quickAction,
   supportJourney,
@@ -48,6 +49,7 @@ export const promptSchema = z.object({
 export const agentConfig = z
   .object({
     contextControls,
+    modelRouting,
     generative: generativeConfig,
     answerPolicy,
     quickActions: z.array(quickAction).max(20).default([]),
@@ -88,6 +90,20 @@ export const agentConfig = z
   .superRefine((v, ctx) => {
     const add = (path: (string | number)[], message: string) =>
       ctx.addIssue({ code: "custom", path, message });
+    const routing = v.modelRouting;
+    if (routing.enabled && (!routing.lightModelId || !routing.phrases.length))
+      add(
+        ["modelRouting"],
+        "Select a lighter model and add at least one exact query phrase",
+      );
+    const extra = [routing.lightModelId, ...routing.fallbackModelIds].filter(
+      Boolean,
+    );
+    if (extra.includes(v.modelId) || new Set(extra).size !== extra.length)
+      add(
+        ["modelRouting"],
+        "Primary, lighter and fallback models must be distinct",
+      );
     if (new Set(v.quickActions.map((a) => a.id)).size !== v.quickActions.length)
       add(["quickActions"], "Quick action IDs must be unique");
     if (new Set(v.journeys.map((j) => j.id)).size !== v.journeys.length)

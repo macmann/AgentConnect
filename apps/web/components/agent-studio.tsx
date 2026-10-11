@@ -54,6 +54,9 @@ export type Prompt = {
   advanced: string | null;
 };
 export type Config = {
+  modelRouting?: import("zod").infer<
+    typeof import("@agentconnect/schemas/model-routing").modelRouting
+  >;
   quickActions?: import("@agentconnect/schemas/bank-experience").QuickAction[];
   journeys?: import("@agentconnect/schemas/bank-experience").SupportJourney[];
   answerPolicy?: {
@@ -74,6 +77,9 @@ export type Config = {
     usageInstructions?: string;
   };
   rag: {
+    queryRewrite?: boolean;
+    rerank?: boolean;
+    candidateCount?: number;
     knowledgeBaseIds: string[];
     topK: number;
     minScore: number;

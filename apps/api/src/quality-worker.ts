@@ -1,3 +1,4 @@
+import { modelUsageCost } from "./model-routing.js";
 import { KnowledgeError } from "@agentconnect/rag/parsers";
 import { ToolError } from "./tool-errors.js";
 import { randomUUID } from "node:crypto";
@@ -128,7 +129,10 @@ export async function processEvaluationRun(
           retrievalRecall: deterministic.retrievalRecall,
           sourceIds: answer.sources.map((s) => s.sourceId),
           citationCount: answer.citations.length,
-          cost: estimate(model.id, answer.inputTokens, answer.outputTokens),
+          cost:
+            c.modelRouting.enabled || c.modelRouting.fallbackModelIds.length
+              ? (modelUsageCost(answer.modelUsage, prices)?.cost ?? null)
+              : estimate(model.id, answer.inputTokens, answer.outputTokens),
         };
         if (ev.mode === "judge") {
           const judge = modelSnapshotSchema.parse(run.judge_snapshot),

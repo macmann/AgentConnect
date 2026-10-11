@@ -8,6 +8,8 @@ const sql = postgres(process.env.DATABASE_URL, { max: 1 }),
   org = randomUUID(),
   workspace = randomUUID(),
   model = randomUUID(),
+  lightModel = randomUUID(),
+  fallbackModel = randomUUID(),
   kb = randomUUID(),
   embedding = randomUUID(),
   source = randomUUID(),
@@ -29,12 +31,20 @@ const provider = createServer(async (req, res) => {
   }
   const system =
     input.messages?.find((m) => m.role === "system")?.content ?? "";
-  const content = system.includes("Approved-knowledge-only")
-    ? JSON.stringify({
-        kind: "answer",
-        message: "Follow the approved recovery screen [1].",
-      })
-    : "Fixture response";
+  const content = system.startsWith("Rewrite")
+    ? JSON.stringify({ query: "Approved recovery guidance" })
+    : system.startsWith("Rank reference passages")
+      ? JSON.stringify({
+          scores: JSON.parse(input.messages.at(-1).content).passages.map(
+            (p) => ({ id: p.id, score: 0.9 }),
+          ),
+        })
+      : system.includes("Approved-knowledge-only")
+        ? JSON.stringify({
+            kind: "answer",
+            message: "Follow the approved recovery screen [1].",
+          })
+        : "Fixture response";
   res.writeHead(200, { "content-type": "text/event-stream" });
   res.end(
     "data: " +
@@ -67,6 +77,11 @@ test.beforeAll(async () => {
     await tx`INSERT INTO memberships(id,organization_id,user_id,role) VALUES (${randomUUID()},${org},${users.owner},'owner')`;
     await tx`INSERT INTO memberships(id,organization_id,workspace_id,user_id,role) VALUES (${randomUUID()},${org},${workspace},${users.reviewer},'workspace_admin')`;
     await tx`INSERT INTO model_configurations(id,workspace_id,organization_id,name,provider,model_id,base_url,context_window,max_output_tokens,capabilities) VALUES (${model},${workspace},${org},'Bank fixture model','openai-compatible','fixture','http://127.0.0.1:4566/v1',32768,4096,${tx.json({ streaming: true, temperature: true, topP: true })})`;
+    for (const [id, name] of [
+      [lightModel, "Light fixture model"],
+      [fallbackModel, "Fallback fixture model"],
+    ])
+      await tx`INSERT INTO model_configurations(id,workspace_id,organization_id,name,provider,model_id,base_url,context_window,max_output_tokens,capabilities) VALUES (${id},${workspace},${org},${name},'openai-compatible','fixture','http://127.0.0.1:4566/v1',32768,4096,${tx.json({ streaming: true, temperature: true, topP: true })})`;
     await tx`INSERT INTO embedding_models(id,workspace_id,organization_id,name,provider,model_id,base_url,dimensions) VALUES (${embedding},${workspace},${org},'Bank fixture embeddings','openai-compatible','fixture','http://127.0.0.1:4566/v1',3)`;
     await tx`INSERT INTO knowledge_bases(id,workspace_id,organization_id,name,description,embedding_model_id,dimensions,chunk_size,chunk_overlap,chunk_strategy,public_access,approval_required) VALUES (${kb},${workspace},${org},'Bank recovery','Approved steps',${embedding},3,1600,200,'recursive',true,true)`;
     await tx`INSERT INTO knowledge_sources(id,knowledge_base_id,workspace_id,organization_id,kind,title,status) VALUES (${source},${kb},${workspace},${org},'text','Recovery guidance','ready')`;
@@ -200,10 +215,30 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
   await page
     .getByLabel("Bank recovery — knowledge release", { exact: true })
     .selectOption({ label: "Version 1 · Approved recovery v1" });
+  await page.getByText("Advanced retrieval settings", { exact: true }).click();
+  await page
+    .getByLabel("Rewrite follow-up questions for search", { exact: true })
+    .check();
+  await page.getByLabel("Rerank retrieved passages", { exact: true }).check();
+  await page.getByLabel("Reranking candidates", { exact: true }).fill("10");
   await page
     .getByRole("navigation", { name: "Configure sections" })
     .getByRole("button", { name: "Advanced", exact: true })
     .click();
+  await page
+    .getByLabel("Route matching queries to a lighter model", { exact: true })
+    .check();
+  await page
+    .getByLabel("Lighter model", { exact: true })
+    .selectOption(lightModel);
+  await page
+    .getByLabel("Approved query phrases", { exact: true })
+    .fill("Hello\nOpening hours");
+  await page.getByText("Controlled provider fallback", { exact: true }).click();
+  await page
+    .getByLabel("Fallback model 1", { exact: true })
+    .selectOption(fallbackModel);
+
   await page
     .getByLabel("Enable tokenizer-aware context budgeting", { exact: true })
     .check();
@@ -231,6 +266,12 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
   expect(saved.draft_config.quickActions).toHaveLength(8);
   expect(saved.draft_config.journeys).toHaveLength(4);
   expect(saved.draft_config.answerPolicy.mode).toBe("grounded");
+  expect(saved.draft_config.modelRouting.lightModelId).toBe(lightModel);
+  expect(saved.draft_config.modelRouting.fallbackModelIds).toEqual([
+    fallbackModel,
+  ]);
+  expect(saved.draft_config.rag.queryRewrite).toBe(true);
+  expect(saved.draft_config.rag.rerank).toBe(true);
   const v = await post(context, `/agents/${agent}/publish`, {
     revision: saved.revision,
   });
@@ -322,6 +363,13 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
         exact: true,
       }),
     ).toBeVisible();
+    await expect
+      .poll(async () => {
+        const [run] =
+          await sql`SELECT context_breakdown FROM agent_runs WHERE workspace_id=${workspace} AND status='completed' AND context_breakdown->'retrievalEnhancements'->>'rerank'='applied' ORDER BY started_at DESC LIMIT 1`;
+        return run?.context_breakdown?.retrievalEnhancements?.queryRewrite;
+      })
+      .toBe("applied");
     await chat.reload();
     await expect(
       chat.getByText("Follow the approved recovery screen [1].", {

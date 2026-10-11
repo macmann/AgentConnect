@@ -28,6 +28,14 @@ EXPOSE 4000
 CMD ["node", "apps/api/dist/server.js"]
 
 FROM service AS worker
+# Opt-in scanned-PDF support; default worker image keeps its existing footprint.
+ARG ENABLE_OCR=false
+USER root
+RUN if [ "$ENABLE_OCR" = "true" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-eng \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
+USER node
 COPY --from=build --chown=node:node /out/worker ./apps/worker
 ENV WORKER_HEALTH_HOST=0.0.0.0
 EXPOSE 4100
