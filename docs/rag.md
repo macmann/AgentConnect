@@ -37,7 +37,7 @@ Deleting sources or archiving a base immediately removes searchable chunks and c
 
 ## RAG tool and citations
 
-`packages/rag` defines the built-in RagTool interface and source/citation structures. `PostgresRagTool` enforces the workspace/public boundary, embeds queries using the base's fixed model, retrieves ready chunks and assembles bounded passages. It runs deterministically before generation when knowledge is attached. Model-selected tool routing and general tool policies are Phase 3.
+`packages/rag` defines the built-in RagTool interface and source/citation structures. `PostgresRagTool` enforces the workspace/public boundary, embeds queries using the base's fixed model, retrieves ready chunks and assembles bounded passages. Existing agents retrieve before generation whenever knowledge is attached. Configure → Knowledge now supports Automatic (a relevance decision before retrieval), Always (required retrieval), and Disabled (retain attachments without retrieval), with usage instructions. See [usage policy details](agent-runtime.md#tool-and-knowledge-usage-policies).
 
 Reference passages are framed as untrusted data with explicit grounding instructions. SSE sends retrieved sources, then tokens and terminal results. Completed responses must include valid `[n]` references by default; only actually referenced retrieved chunks become persisted/displayed citations. Unknown references and required-but-missing citations fail the run. No relevant passages fail before generation. A citation includes chunk/document/source/base identity, title, available page, canonical URL, passage text and relevance score.
 

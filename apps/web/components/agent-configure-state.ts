@@ -46,6 +46,8 @@ const labels: Record<string, string> = {
   topK: "Retrieved passages",
   minScore: "Minimum relevance",
   maxCalls: "Maximum tool calls",
+  usageMode: "Usage policy",
+  usageInstructions: "Usage instructions",
   knowledgeBaseIds: "Attached knowledge",
   toolIds: "Attached tools",
   conversationStarters: "Conversation starters",

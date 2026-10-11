@@ -60,13 +60,20 @@ export type Config = {
     allowPublicForms: boolean;
   };
   schemaVersion: 1;
-  tools: { toolIds: string[]; maxCalls: number };
+  tools: {
+    toolIds: string[];
+    maxCalls: number;
+    usageMode?: "automatic" | "always" | "disabled";
+    usageInstructions?: string;
+  };
   rag: {
     knowledgeBaseIds: string[];
     topK: number;
     minScore: number;
     mode: "vector" | "hybrid";
     requireCitations: boolean;
+    usageMode?: "automatic" | "always" | "disabled";
+    usageInstructions?: string;
   };
   category: "hybrid" | "structured" | "unstructured";
   modelId: string;

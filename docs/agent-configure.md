@@ -29,3 +29,5 @@ Navigation follows the existing hash routing convention, for example:
 Refresh and browser back/forward restore stage and section. Section changes preserve unsaved edits; navigation away, workspace/organization changes, signing out and browser unload protect unsaved drafts. No additional API, database migration, environment setting or UI framework is introduced.
 
 Synthetic desktop/mobile artifacts are under `docs/agent-configure/`. Deployment automation and additional monitoring remain paused.
+
+Tools and Knowledge each include a Usage policy selector and Usage instructions field. These use the existing shared draft and save/version flow. See [runtime usage policies](agent-runtime.md#tool-and-knowledge-usage-policies) for defaults, required-use behavior and automatic selection limits.

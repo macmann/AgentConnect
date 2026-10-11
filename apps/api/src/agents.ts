@@ -1,3 +1,4 @@
+import { planKnowledgeUsage } from "./knowledge-usage.js";
 import { continuationContext } from "./support/continuation.js";
 import { evaluateEscalation } from "./support/policy.js";
 import { assertQualityGate } from "./quality-gate.js";
@@ -306,7 +307,19 @@ async function streamChat(
       model.contextWindow - c.maxOutputTokens
     )
       throw new ProviderError("CONTEXT_LIMIT");
-    if (c.rag.knowledgeBaseIds.length) {
+    const knowledgePlan = await planKnowledgeUsage(
+      c,
+      provider,
+      messages,
+      controller.signal,
+      model.contextWindow - c.maxOutputTokens,
+      c.rag.usageMode === "automatic" && c.rag.knowledgeBaseIds.length
+        ? await sql<
+            { name: string; description: string }[]
+          >`SELECT name,description FROM knowledge_bases WHERE id=ANY(${c.rag.knowledgeBaseIds}::uuid[]) AND workspace_id=${conversation.workspace_id} AND organization_id=${conversation.organization_id} AND archived_at IS NULL`
+        : [],
+    );
+    if (knowledgePlan.retrieve) {
       const started = performance.now();
       sources = await ragTool.execute(
         message,
@@ -346,7 +359,16 @@ async function streamChat(
       (data) => write("tool", data),
       model.contextWindow - c.maxOutputTokens,
       continuation.grounding,
+      messages,
     );
+    toolsResult.inputTokens =
+      toolsResult.inputTokens === null || knowledgePlan.inputTokens === null
+        ? null
+        : toolsResult.inputTokens + knowledgePlan.inputTokens;
+    toolsResult.outputTokens =
+      toolsResult.outputTokens === null || knowledgePlan.outputTokens === null
+        ? null
+        : toolsResult.outputTokens + knowledgePlan.outputTokens;
     const grounding =
       continuation.grounding +
       (sources.length ? groundedPrompt(sources) : "") +
@@ -507,17 +529,21 @@ async function streamChat(
         write("error", {
           code: errorCode,
           message:
-            errorCode === "NO_RELEVANT_SOURCES"
-              ? "No relevant knowledge was found. Try another question or check the knowledge sources."
-              : errorCode === "CITATION_REQUIRED" ||
-                  errorCode === "INVALID_CITATION"
-                ? "The response could not be verified against its source references."
-                : errorCode === "KNOWLEDGE_NOT_PUBLIC"
-                  ? "This knowledge is unavailable in public chat."
-                  : errorCode.startsWith("TOOL_") ||
-                      errorCode.startsWith("MCP_")
-                    ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
-                    : c.fallbackResponse,
+            errorCode === "KNOWLEDGE_PLAN_INVALID"
+              ? "The knowledge usage decision was invalid. Check your model and usage instructions, then retry."
+              : errorCode === "TOOL_REQUIRED"
+                ? "Your tool policy requires a call, but no relevant safe call was selected. Review the usage policy and tool descriptions."
+                : errorCode === "NO_RELEVANT_SOURCES"
+                  ? "No relevant knowledge was found. Try another question or check the knowledge sources."
+                  : errorCode === "CITATION_REQUIRED" ||
+                      errorCode === "INVALID_CITATION"
+                    ? "The response could not be verified against its source references."
+                    : errorCode === "KNOWLEDGE_NOT_PUBLIC"
+                      ? "This knowledge is unavailable in public chat."
+                      : errorCode.startsWith("TOOL_") ||
+                          errorCode.startsWith("MCP_")
+                        ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
+                        : c.fallbackResponse,
           status,
         });
       else {
