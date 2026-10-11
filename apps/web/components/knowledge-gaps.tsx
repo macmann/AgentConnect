@@ -10,6 +10,17 @@ type Gap = {
   count: number;
   reasons: string[];
   suggestion: string;
+  priority: number;
+  trend: { recent: number; earlier: number };
+  correctedDrafts: {
+    id: string;
+    status: string;
+    created_at: string;
+    published_at: string | null;
+    active_in_current_release: boolean;
+    before: number;
+    after: number;
+  }[];
   examples: {
     run_id: string;
     conversation_id: string;
@@ -36,6 +47,9 @@ export function KnowledgeGaps({
 }) {
   const cache = useQueryClient(),
     base = `/workspaces/${workspaceId}/operations`,
+    [embeddingId, setEmbeddingId] = useState(""),
+    [threshold, setThreshold] = useState(0.85),
+    [target, setTarget] = useState<Record<string, string>>({}),
     [days, setDays] = useState(30),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -52,6 +66,7 @@ export function KnowledgeGaps({
         requestJson<{
           groups: Gap[];
           drafts: Improvement[];
+          range: { from: string; to: string };
           truncated: boolean;
           method: string;
         }>(`${base}/knowledge-gaps?days=${days}`),
@@ -63,6 +78,13 @@ export function KnowledgeGaps({
           `/workspaces/${workspaceId}/knowledge-bases`,
         ),
     });
+  const embeddings = useQuery({
+    queryKey: ["gap-embeddings", workspaceId],
+    queryFn: () =>
+      requestJson<{ id: string; name: string }[]>(
+        `/workspaces/${workspaceId}/embedding-models`,
+      ),
+  });
   const canDraft = permitted(role, "knowledge:manage"),
     canApprove = permitted(role, "knowledge:approve");
   async function act(path: string, data: unknown) {
@@ -84,7 +106,7 @@ export function KnowledgeGaps({
     <section>
       <h3>Knowledge-gap improvement</h3>
       <p className="muted">
-        Unanswered and poorly reviewed questions are grouped by normalized text.
+        Unanswered questions and customer dissatisfaction are grouped by topic.
         Review proposed content before turning it into approved knowledge.
       </p>
       <label>
@@ -95,6 +117,51 @@ export function KnowledgeGaps({
           <option value={90}>Last 90 days</option>
         </select>
       </label>
+      <details className="configure-group">
+        <summary>Group related questions by meaning</summary>
+        <p>
+          Uses your embedding provider for the latest 300 affected questions in
+          this range. Questions are sent to that provider. Reviewer merges and
+          splits are preserved.
+        </p>
+        <label>
+          Embedding model
+          <select
+            value={embeddingId}
+            onChange={(e) => setEmbeddingId(e.target.value)}
+          >
+            <option value="">Choose an embedding model</option>
+            {embeddings.data?.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Minimum similarity
+          <input
+            type="number"
+            min={0.7}
+            max={0.99}
+            step={0.01}
+            value={threshold}
+            onChange={(e) => setThreshold(Number(e.target.value))}
+          />
+        </label>
+        <Button
+          disabled={busy || !embeddingId || !gaps.data}
+          onClick={() =>
+            act("/knowledge-gaps/cluster", {
+              modelId: embeddingId,
+              threshold,
+              ...gaps.data!.range,
+            })
+          }
+        >
+          Group by meaning
+        </Button>
+      </details>
       {(error || gaps.error) && (
         <p role="alert">{error || gaps.error?.message}</p>
       )}
@@ -115,9 +182,82 @@ export function KnowledgeGaps({
           </summary>
           <p>{g.reasons.join(" · ")}</p>
           <p>{g.suggestion}</p>
+          <p>
+            Priority score: {g.priority}. Earlier half: {g.trend.earlier};
+            recent half: {g.trend.recent} occurrences.
+          </p>
+          {g.correctedDrafts.length > 0 && (
+            <p>
+              Linked knowledge corrections:{" "}
+              {g.correctedDrafts.map((d) => d.status).join(", ")}. Compare
+              occurrences after the correction is published; changes are not
+              proof of causation.
+            </p>
+          )}
+          {g.correctedDrafts
+            .filter((d) => d.published_at)
+            .map((d) => (
+              <p key={d.id}>
+                Correction first published{" "}
+                {new Date(d.published_at!).toLocaleDateString()}: {d.before}{" "}
+                occurrences before, {d.after} after within this report window.{" "}
+                {d.active_in_current_release
+                  ? "Included in current release."
+                  : "Not in current release."}{" "}
+                Counts cover different time spans and do not establish
+                causation.
+              </p>
+            ))}
+          <label>
+            Merge with topic
+            <select
+              value={target[g.key] || ""}
+              onChange={(e) =>
+                setTarget({ ...target, [g.key]: e.target.value })
+              }
+            >
+              <option value="">Choose a topic</option>
+              {gaps
+                .data!.groups.filter((other) => other.key !== g.key)
+                .map((other) => (
+                  <option key={other.key} value={other.examples[0]?.run_id}>
+                    {other.question.slice(0, 100)}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <Button
+            disabled={busy || !target[g.key]}
+            onClick={() =>
+              act("/knowledge-gaps/assign", {
+                runIds: g.examples.map((e) => e.run_id),
+                targetRunId: target[g.key],
+                targetRunIds:
+                  gaps
+                    .data!.groups.find((other) =>
+                      other.examples.some((e) => e.run_id === target[g.key]),
+                    )
+                    ?.examples.map((e) => e.run_id) ?? [],
+              })
+            }
+          >
+            Merge topics
+          </Button>
           {g.examples.map((e) => (
             <div key={e.run_id}>
               <p>{e.question}</p>
+              <Button
+                className="secondary"
+                disabled={busy || g.count < 2}
+                onClick={() =>
+                  act("/knowledge-gaps/assign", {
+                    runIds: [e.run_id],
+                    targetRunId: null,
+                  })
+                }
+              >
+                Split into separate topic
+              </Button>
               {e.corrected_response && e.review_id && canDraft ? (
                 <Button
                   type="button"

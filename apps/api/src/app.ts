@@ -1,3 +1,11 @@
+import { startMessagingWorker } from "./messaging-worker.js";
+import {
+  registerMessagingChannels,
+  messagingWebhookPath,
+  messagingRawBodies,
+} from "./messaging-channels.js";
+import { registerCustomerFeedback } from "./customer-feedback.js";
+import { registerCustomerWorkflows } from "./customer-workflows.js";
 import { registerMonitoring } from "./monitoring.js";
 import { registerSupportRoutes } from "./support/routes.js";
 import { registerRetentionRoutes } from "./retention.js";
@@ -150,6 +158,8 @@ export async function buildApp(
   options: {
     providerFactory?: import("@agentconnect/provider-sdk").ProviderFactory;
     embeddingFactory?: import("@agentconnect/provider-sdk/embeddings").EmbeddingFactory;
+    runMessagingWorker?: boolean;
+    messagingHttp?: import("./customer-messaging-adapters.js").MessagingHttp;
     sharePointClientFactory?: import("./sharepoint.js").SharePointClientFactory;
   } = {},
 ) {
@@ -165,6 +175,29 @@ export async function buildApp(
     ajv: { customOptions: { coerceTypes: false } },
     trustProxy: false,
   });
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (r, body, done) => {
+      try {
+        const raw = String(body);
+        if (messagingWebhookPath(r.url)) messagingRawBodies.set(r, raw);
+        done(
+          null,
+          JSON.parse(raw, (key, value, context?: { source: string }) =>
+            messagingWebhookPath(r.url) &&
+            key === "message_token" &&
+            typeof value === "number"
+              ? (context?.source ?? String(value))
+              : value,
+          ),
+        );
+      } catch {
+        done(new HttpError(400, "Invalid JSON"));
+      }
+    },
+  );
   const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 2 });
   await redis.ping();
   await app.register(cookie);
@@ -254,7 +287,8 @@ export async function buildApp(
       !["GET", "HEAD", "OPTIONS"].includes(r.method) &&
       r.headers.origin !== config.WEB_ORIGIN &&
       !apiKeyChatRequest(r) &&
-      !widgetDeploymentPath(r)
+      !widgetDeploymentPath(r) &&
+      !messagingWebhookPath(r.url)
     )
       throw new HttpError(403, "Invalid request origin");
   });
@@ -680,9 +714,12 @@ export async function buildApp(
   await registerKnowledgeRoutes(app, options.embeddingFactory);
   await registerToolRoutes(app);
   await registerWorkflowRoutes(app);
-  await registerOperationsRoutes(app);
+  await registerOperationsRoutes(app, options.embeddingFactory);
   await registerGenerativeRoutes(app);
   await registerChannelRoutes(app);
+  await registerMessagingChannels(app, options.messagingHttp);
+  await registerCustomerFeedback(app);
+  await registerCustomerWorkflows(app);
   await registerSupportRoutes(
     app,
     {
@@ -703,6 +740,7 @@ export async function buildApp(
     options.providerFactory,
     options.embeddingFactory,
   );
+  if (options.runMessagingWorker) startMessagingWorker(app);
   await app.ready();
   return app;
 }

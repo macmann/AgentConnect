@@ -20,6 +20,8 @@ export async function customerReport(
     await sql`WITH active AS (SELECT c.* FROM conversations c WHERE c.workspace_id=${wid} AND c.organization_id=${org} AND (EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.created_at>=${from} AND m.created_at<${to}) OR EXISTS(SELECT 1 FROM handoff_events e WHERE e.conversation_id=c.id AND e.created_at>=${from} AND e.created_at<${to} AND e.kind IN ('user_message','operator_message')))) SELECT count(*)::int AS active_conversations,count(*) FILTER(WHERE channel<>'playground')::int AS customer_conversations,count(DISTINCT CASE WHEN channel<>'playground' THEN COALESCE(customer_session_id::text,'legacy:'||id::text) END)::int AS active_customer_sessions,count(DISTINCT user_id)::int AS active_workspace_users,count(*) FILTER(WHERE EXISTS(SELECT 1 FROM support_cases s WHERE s.conversation_id=active.id))::int AS escalated_conversations FROM active`;
   const [searches] =
     await sql`SELECT count(*) FILTER(WHERE error_code IN ('NO_RELEVANT_SOURCES','CITATION_REQUIRED','INVALID_CITATION','GROUNDED_RESPONSE_INVALID') OR answer_kind='no_answer')::int AS failed_searches,count(*)::int AS total_runs,count(*) FILTER(WHERE status='failed')::int AS failed_runs,count(*) FILTER(WHERE answer_kind='clarify')::int AS clarifications FROM agent_runs WHERE workspace_id=${wid} AND organization_id=${org} AND started_at>=${from} AND started_at<${to}`;
+  const [feedback] =
+    await sql`SELECT count(*)::int AS responses,count(f.rating)::int AS rated_responses,avg(f.rating)::float8 AS average_csat,count(*) FILTER(WHERE f.resolved IS NOT NULL)::int AS resolution_responses,count(*) FILTER(WHERE f.resolved=true)::int AS confirmed_resolved,count(*) FILTER(WHERE f.resolved=true AND NOT EXISTS(SELECT 1 FROM support_cases sc WHERE sc.conversation_id=f.conversation_id))::int AS confirmed_ai_resolved,count(*) FILTER(WHERE f.resolved=false)::int AS unresolved FROM customer_feedback f WHERE f.workspace_id=${wid} AND f.organization_id=${org} AND f.updated_at>=${from} AND f.updated_at<${to}`;
   const categories =
     await sql`SELECT COALESCE(NULLIF(s.triage_result->>'category',''),(SELECT j->>'name' FROM jsonb_array_elements(COALESCE(c.config_snapshot->'journeys','[]'::jsonb)) j WHERE j->>'id'=c.journey_state->>'id' LIMIT 1),'Uncategorized') AS category,count(*)::int AS conversations FROM conversations c LEFT JOIN LATERAL(SELECT triage_result FROM support_cases WHERE conversation_id=c.id ORDER BY created_at DESC,id DESC LIMIT 1) s ON true WHERE c.workspace_id=${wid} AND c.organization_id=${org} AND c.channel<>'playground' AND (EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.created_at>=${from} AND m.created_at<${to}) OR EXISTS(SELECT 1 FROM handoff_events e WHERE e.conversation_id=c.id AND e.created_at>=${from} AND e.created_at<${to} AND e.kind IN ('user_message','operator_message'))) GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 100`;
   const trends =
@@ -34,6 +36,7 @@ export async function customerReport(
     range,
     summary,
     searches,
+    feedback,
     categories,
     trends,
     agents,
@@ -50,7 +53,7 @@ export async function customerReport(
       failedSearches:
         "Knowledge no-answer and retrieval/citation validation failures; this is a knowledge-answer failure count, not only search infrastructure outages.",
       resolution:
-        "No AI resolution rate is inferred from a conversation without handoff.",
+        "Customer-confirmed resolution is reported separately from containment. Confirmed AI resolution means customer marked resolved and there was no support case. Denominator is customer resolution responses, not all chats. CSAT is 1–5; staff reviews are excluded. Latest feedback update determines reporting date.",
     },
   };
 }
@@ -85,6 +88,7 @@ export async function registerCustomerReports(app: FastifyInstance) {
                 Summary: [
                   { ...report.range, ...report.summary, ...report.searches },
                 ],
+                Feedback: [report.feedback!],
                 Categories: [...report.categories],
                 Trends: [...report.trends],
                 Agents: [...report.agents],

@@ -20,6 +20,7 @@ import {
 import { AgentAttachments } from "./agent-attachments";
 import { Button } from "./button";
 export type SectionProps = {
+  workspaceId: string;
   draft: Draft;
   update: (draft: Draft) => void;
   models: Model[];
@@ -985,6 +986,7 @@ export function ExperienceSection(p: SectionProps) {
         </div>
       </Group>
       <BankExperienceEditor
+        workspaceId={p.workspaceId}
         actions={c.quickActions ?? []}
         journeys={c.journeys ?? []}
         onChange={(quickActions, journeys) =>

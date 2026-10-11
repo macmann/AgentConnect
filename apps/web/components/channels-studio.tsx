@@ -1,4 +1,5 @@
 "use client";
+import { MessagingChannels } from "./messaging-channels";
 import { CustomerBranding } from "./customer-branding";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -34,6 +35,7 @@ export function ChannelsStudio({
   const [section, setSection] = useWorkspaceSection("channelsSection", "web", [
     "web",
     "inbox",
+    "messaging",
   ]);
   const deployments = useQuery({
     queryKey: ["channels", workspaceId],
@@ -66,6 +68,11 @@ export function ChannelsStudio({
           onChange={setSection}
           sections={[
             {
+              id: "messaging",
+              label: "Customer messaging",
+              description: "Messenger, Viber, Telegram and Microsoft Teams",
+            },
+            {
               id: "web",
               label: "Website widgets",
               description: "Configure a published agent for your website.",
@@ -81,6 +88,13 @@ export function ChannelsStudio({
           ]}
         />
       </section>
+      {section === "messaging" && (
+        <MessagingChannels
+          workspaceId={workspaceId}
+          canManage={permitted(role, "operations:manage")}
+          deployments={deployments.data ?? []}
+        />
+      )}
       <section className="panel" hidden={section !== "web"}>
         <div className="panel-header">
           <div>

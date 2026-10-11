@@ -36,7 +36,7 @@ export async function retentionCandidates(
     runs = cutoff(p.run_days, now),
     artifacts = cutoff(p.artifact_days, now),
     connectors = cutoff(p.connector_days, now);
-  const scope = tx`c.workspace_id=${p.workspace_id} AND c.organization_id=${p.organization_id} AND c.handoff_status NOT IN ('pending','active') AND c.conversation_mode='ai' AND NOT EXISTS(SELECT 1 FROM support_cases sc WHERE sc.conversation_id=c.id AND sc.status NOT IN ('resolved','closed','cancelled')) AND NOT EXISTS(SELECT 1 FROM agent_runs r WHERE r.conversation_id=c.id AND r.status='running') AND NOT EXISTS(SELECT 1 FROM tool_executions t JOIN agent_runs r ON r.id=t.run_id WHERE r.conversation_id=c.id AND t.status='running')`;
+  const scope = tx`c.workspace_id=${p.workspace_id} AND c.organization_id=${p.organization_id} AND c.handoff_status NOT IN ('pending','active') AND c.conversation_mode='ai' AND NOT EXISTS(SELECT 1 FROM support_cases sc WHERE sc.conversation_id=c.id AND sc.status NOT IN ('resolved','closed','cancelled')) AND NOT EXISTS(SELECT 1 FROM workflow_runs wr WHERE wr.conversation_id=c.id AND wr.status IN ('queued','running','waiting')) AND NOT EXISTS(SELECT 1 FROM messaging_inbox mi WHERE mi.conversation_id=c.id AND mi.status IN ('queued','processing','sending')) AND NOT EXISTS(SELECT 1 FROM agent_runs r WHERE r.conversation_id=c.id AND r.status='running') AND NOT EXISTS(SELECT 1 FROM tool_executions t JOIN agent_runs r ON r.id=t.run_id WHERE r.conversation_id=c.id AND t.status='running')`;
   const cs = conversations
     ? await tx`SELECT c.id FROM conversations c WHERE ${scope} AND c.last_activity_at<${conversations} ORDER BY c.last_activity_at,c.id LIMIT ${retentionBatchSize}`
     : [];
