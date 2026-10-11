@@ -1,3 +1,4 @@
+import { workflowRetry } from "./workflow-retries.js";
 import { randomUUID } from "node:crypto";
 import {
   Annotation,
@@ -166,13 +167,15 @@ export async function compileWorkflow(
           citations: unknown[] = [];
         const nodeCtx = { ...ctx, workflowNodeId: node.id };
         if (node.type === "agent") {
-          const result = await executeWorkflowAgent(
-            node.data.agentVersionId!,
-            node.data.prefix + stringify(input) + node.data.suffix,
-            nodeCtx,
-            signal,
-            overrides.providerFactory,
-            overrides.embeddingFactory,
+          const result = await workflowRetry(run.id, node, signal, () =>
+            executeWorkflowAgent(
+              node.data.agentVersionId!,
+              node.data.prefix + stringify(input) + node.data.suffix,
+              nodeCtx,
+              signal,
+              overrides.providerFactory,
+              overrides.embeddingFactory,
+            ),
           );
           output = result.output;
           inputTokens = result.inputTokens;
@@ -186,8 +189,11 @@ export async function compileWorkflow(
               ? { [node.data.inputArgument]: stringify(input) }
               : {}),
           };
-          output = (await executeTool(node.data.toolId!, args, nodeCtx, signal))
-            .result;
+          output = (
+            await workflowRetry(run.id, node, signal, () =>
+              executeTool(node.data.toolId!, args, nodeCtx, signal),
+            )
+          ).result;
         }
         if (node.type === "approval") {
           await sql`INSERT INTO workflow_approvals(id,run_id,node_id,workspace_id,organization_id,prompt,input,decision) VALUES (${randomUUID()},${run.id},${node.id},${run.workspace_id},${run.organization_id},${node.data.approvalPrompt},${sql.json(redact(input) as never)},'pending') ON CONFLICT(run_id,node_id) DO NOTHING`;
@@ -215,7 +221,7 @@ export async function compileWorkflow(
         if (Buffer.byteLength(JSON.stringify(output)) > 128000)
           throw new WorkflowError("WORKFLOW_OUTPUT_LIMIT");
         signal.throwIfAborted();
-        await sql`UPDATE workflow_node_runs SET status='completed',output=${sql.json(output as never)},input_tokens=${inputTokens},output_tokens=${outputTokens},citations=${sql.json(citations as never)},duration_ms=${Math.round(performance.now() - started)},finished_at=now() WHERE run_id=${run.id} AND node_id=${node.id}`;
+        await sql`UPDATE workflow_node_runs SET status='completed',retry_at=NULL,output=${sql.json(output as never)},input_tokens=${inputTokens},output_tokens=${outputTokens},citations=${sql.json(citations as never)},duration_ms=${Math.round(performance.now() - started)},finished_at=now() WHERE run_id=${run.id} AND node_id=${node.id}`;
         return {
           outputs: { [node.id]: output },
           ...(branch !== undefined ? { decisions: { [node.id]: branch } } : {}),
@@ -223,7 +229,7 @@ export async function compileWorkflow(
       } catch (e) {
         if (isGraphInterrupt(e)) throw e;
         const code = signal.aborted ? "WORKFLOW_CANCELLED" : errorCode(e);
-        await sql`UPDATE workflow_node_runs SET status=${signal.aborted ? "cancelled" : "failed"},error_code=${code},duration_ms=${Math.round(performance.now() - started)},finished_at=now() WHERE run_id=${run.id} AND node_id=${node.id}`;
+        await sql`UPDATE workflow_node_runs SET status=${signal.aborted ? "cancelled" : "failed"},retry_at=NULL,error_code=${code},duration_ms=${Math.round(performance.now() - started)},finished_at=now() WHERE run_id=${run.id} AND node_id=${node.id}`;
         throw e;
       }
     });

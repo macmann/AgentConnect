@@ -63,7 +63,8 @@ Acceptance: an agent uses explicitly attached read-only tools and shows saved ex
 - [x] Published-agent handoffs, deterministic branches, concurrent structured joins, and durable PostgreSQL checkpoints.
 - [x] Authorized approval/edit/reject, recovery, cancellation, bounded execution and persisted node/usage/citation/tool traces.
 - [ ] Live hosted-provider acceptance and production retention/process-management review.
-- [ ] Richer node catalog, nested branching, configurable retry policies, workflow public deployment, and collaborative editing.
+- [x] Customer quick-action workflow execution, reusable starter graphs/draft copies, bounded transient node retries with attempt traces, and named structured results in hosted chat/widget.
+- [ ] Richer node catalog, nested branching within parallel paths, subworkflows, standalone workflow deployments and collaborative editing.
 
 See workflows.md for supported graph shapes and runtime limits.
 

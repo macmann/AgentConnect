@@ -68,7 +68,10 @@ try {
                                                               : version ===
                                                                   "0027"
                                                                 ? "0027_rag_ocr.sql"
-                                                                : "0028_customer_engagement.sql";
+                                                                : version ===
+                                                                    "0028"
+                                                                  ? "0028_customer_engagement.sql"
+                                                                  : "0029_workflow_depth.sql";
         await tx.unsafe(
           await readFile(
             new URL(`../../../packages/db/migrations/${file}`, import.meta.url),

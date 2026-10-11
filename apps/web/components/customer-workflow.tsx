@@ -2,12 +2,23 @@
 import { useEffect, useState } from "react";
 import type { QuickAction } from "@agentconnect/schemas/bank-experience";
 import { apiBase } from "./agent-client";
+import { WorkflowResult } from "./workflow-result";
 import { Button } from "./button";
 type Run = {
   id: string;
   status: string;
   output?: unknown;
-  steps?: { label: string; status: string }[];
+  name?: string;
+  resultTitle?: string;
+  resultSummary?: string;
+  resultFormat?: "auto" | "text" | "json";
+  progress?: { completed: number; active: string[] };
+  steps?: {
+    label: string;
+    status: string;
+    attempts?: number;
+    retry_at?: string | null;
+  }[];
   error_code?: string;
 };
 export function CustomerWorkflow({
@@ -158,19 +169,31 @@ export function CustomerWorkflow({
             Workflow ·{" "}
             {r.status === "waiting" ? "Waiting for staff approval" : r.status}
           </summary>
+          {r.name && <h4>{r.name}</h4>}
+          {r.progress && (
+            <p>
+              {r.progress.completed} steps completed
+              {r.progress.active.length
+                ? " · Working on " + r.progress.active.join(", ")
+                : ""}
+            </p>
+          )}
           <ol>
             {r.steps?.map((s, i) => (
               <li key={i}>
-                {s.label}: {s.status}
+                {s.label}:{" "}
+                {s.retry_at ? "Retrying a temporary failure" : s.status}
+                {(s.attempts ?? 0) > 1 ? ` · ${s.attempts} attempts` : ""}
               </li>
             ))}
           </ol>
           {r.status === "completed" && (
-            <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-              {typeof r.output === "string"
-                ? r.output
-                : JSON.stringify(r.output, null, 2)}
-            </pre>
+            <WorkflowResult
+              output={r.output}
+              title={r.resultTitle}
+              summary={r.resultSummary}
+              format={r.resultFormat}
+            />
           )}
           {r.error_code && (
             <p role="alert">

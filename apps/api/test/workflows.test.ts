@@ -1,3 +1,9 @@
+import { ProviderError } from "@agentconnect/provider-sdk";
+import {
+  workflowTemplates,
+  workflowFromTemplate,
+} from "@agentconnect/schemas/workflow-templates";
+import { workflowPresentation } from "@agentconnect/schemas/workflow-results";
 import { createServer } from "node:http";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -54,7 +60,12 @@ const provider: ProviderFactory = (c) => ({
   },
 });
 const originalPrivate = config.TOOL_PRIVATE_HOSTS;
+let toolFailures = 0;
 const toolServer = createServer((req, res) => {
+  if (toolFailures-- > 0) {
+    res.writeHead(503).end("temporary outage");
+    return;
+  }
   res.writeHead(200, { "content-type": "application/json" }).end(
     JSON.stringify({
       reference: "fixture reference",
@@ -644,6 +655,240 @@ test("Running cancellation aborts the provider and persists terminal run and nod
   assert.equal(
     result.nodes.find((n: { node_id: string }) => n.node_id === "agent").status,
     "cancelled",
+  );
+  assert(
+    !result.nodes.some((n: { node_id: string }) => n.node_id === "output"),
+  );
+});
+
+test("Starter templates require real agents, validate when configured, and parallel research executes", async () => {
+  for (const template of workflowTemplates) {
+    assert(
+      analyzeWorkflow(workflowFromTemplate(template.id)).errors.some((e) =>
+        e.includes("published agent"),
+      ),
+    );
+    assert.deepEqual(
+      analyzeWorkflow(workflowFromTemplate(template.id, research)).errors,
+      [],
+    );
+  }
+  const id = await run(
+    await create(
+      "Reusable parallel template",
+      workflowFromTemplate("parallel-research", research),
+    ),
+  );
+  await processWorkflowRun({ providerFactory: provider });
+  const result = await inspect(id);
+  assert.equal(result.status, "completed");
+  assert.equal(
+    result.nodes.filter((n: { kind: string }) => n.kind === "agent").length,
+    3,
+  );
+  assert(
+    result.output.includes("research_a") &&
+      result.output.includes("research_b"),
+  );
+  assert.equal(
+    workflowGraph.parse(simple()).nodes[0]!.data.retry.maxAttempts,
+    1,
+  );
+  assert(!workflowNodeInvalidRetry());
+  function workflowNodeInvalidRetry() {
+    return workflowGraph.safeParse({
+      ...simple(),
+      nodes: [
+        node("input", "input", { retry: { maxAttempts: 4 } }),
+        node("output", "output"),
+      ],
+    }).success;
+  }
+});
+
+test("Step retries recover transient failures without replaying successful agents; permanent errors and limits stop", async () => {
+  const g = graph(
+    [
+      node("input", "input"),
+      node("upstream", "agent", { agentVersionId: risk }),
+      node("retry", "agent", {
+        agentVersionId: research,
+        retry: { maxAttempts: 3, delayMs: 100 },
+      }),
+      node("final", "agent", { agentVersionId: final }),
+      node("output", "output"),
+    ],
+    [
+      ["input", "upstream"],
+      ["upstream", "retry"],
+      ["retry", "final"],
+      ["final", "output"],
+    ],
+  );
+  const workflow = await create("Retry recovery", g);
+  const calls: Record<string, number> = {};
+  const transient: ProviderFactory = (c) => ({
+    async *stream() {
+      calls[c.modelId] = (calls[c.modelId] ?? 0) + 1;
+      if (c.modelId === "research" && calls[c.modelId] === 1)
+        throw new ProviderError("PROVIDER_HTTP_ERROR", true, 503);
+      yield { type: "token", text: "Recovered answer" };
+      yield { type: "usage", inputTokens: 3, outputTokens: 2 };
+    },
+  });
+  const id = await run(workflow);
+  await processWorkflowRun({ providerFactory: transient });
+  const result = await inspect(id),
+    trace = result.nodes.find(
+      (n: { node_id: string }) => n.node_id === "retry",
+    );
+  assert.equal(result.status, "completed");
+  assert.equal(calls.research, 2);
+  assert.equal(calls.risk, 1);
+  assert.equal(calls.final, 1);
+  assert.equal(trace.attempts, 2);
+  assert.equal(trace.retry_history.length, 1);
+  assert.equal(trace.retry_history[0].code, "PROVIDER_HTTP_ERROR");
+  assert.equal(trace.retry_at, null);
+  for (const retryable of [false, true]) {
+    let count = 0;
+    const failed = await run(workflow);
+    await processWorkflowRun({
+      providerFactory: (c) => ({
+        async *stream() {
+          if (c.modelId === "research") {
+            count++;
+            throw new ProviderError(
+              retryable ? "PROVIDER_HTTP_ERROR" : "AUTHENTICATION_FAILED",
+              retryable,
+              retryable ? 503 : 401,
+            );
+          }
+          yield { type: "token", text: "Upstream succeeded" };
+        },
+      }),
+    });
+    const inspected = await inspect(failed);
+    assert.equal(inspected.status, "failed");
+    assert.equal(count, retryable ? 3 : 1);
+    assert.equal(
+      inspected.nodes.find((n: { node_id: string }) => n.node_id === "retry")
+        .attempts,
+      count,
+    );
+    assert(
+      !inspected.nodes.some((n: { node_id: string }) => n.node_id === "final"),
+    );
+  }
+});
+
+test("Read-only HTTP tool retries record each execution and do not leak upstream bodies", async () => {
+  const tool = await call("POST", `/workspaces/${workspace}/tools`, {
+    name: "Retry lookup",
+    description: "Read references",
+    config: {
+      kind: "http",
+      url: `http://127.0.0.1:${toolPort}/reference`,
+      queryParameters: ["query"],
+    },
+    readOnlyAcknowledged: true,
+  });
+  assert.equal(tool.statusCode, 201, tool.body);
+  const g = graph(
+    [
+      node("input", "input"),
+      node("lookup", "tool", {
+        toolId: tool.json().id,
+        inputArgument: "query",
+        retry: { maxAttempts: 2, delayMs: 100 },
+      }),
+      node("output", "output"),
+    ],
+    [
+      ["input", "lookup"],
+      ["lookup", "output"],
+    ],
+  );
+  toolFailures = 1;
+  const id = await run(await create("Retry tool", g));
+  await processWorkflowRun();
+  const result = await inspect(id);
+  assert.equal(result.status, "completed");
+  assert.equal(result.tools.length, 2);
+  assert.equal(
+    result.nodes.find((n: { node_id: string }) => n.node_id === "lookup")
+      .attempts,
+    2,
+  );
+  assert(!JSON.stringify(result).includes("temporary outage"));
+});
+
+test("Workflow result presentation supports structured fields and bounded tables without changing output", () => {
+  assert.equal(workflowPresentation("Plain answer").kind, "text");
+  assert.deepEqual(workflowPresentation('{"case_number":"ABC"}').fields, [
+    { label: "Case number", value: "ABC" },
+  ]);
+  const rows = Array.from({ length: 101 }, (_, i) => ({
+    branch_name: "Branch " + i,
+    hours: "9–5",
+  }));
+  const p = workflowPresentation(rows);
+  assert.equal(p.kind, "table");
+  assert.equal(p.rows!.length, 100);
+  assert(p.truncated);
+  assert.equal(rows.length, 101);
+  assert.equal(workflowPresentation(rows, "json").kind, "json");
+  assert.equal(
+    workflowPresentation("<script>untrusted</script>").text,
+    "<script>untrusted</script>",
+  );
+});
+
+test("Cancellation during retry backoff aborts waiting and never makes the next attempt", async () => {
+  const g = graph(
+    [
+      node("input", "input"),
+      node("agent", "agent", {
+        agentVersionId: research,
+        retry: { maxAttempts: 3, delayMs: 10000 },
+      }),
+      node("output", "output"),
+    ],
+    [
+      ["input", "agent"],
+      ["agent", "output"],
+    ],
+  );
+  const id = await run(await create("Cancel backoff", g));
+  let calls = 0;
+  const executing = processWorkflowRun({
+    providerFactory: () => ({
+      async *stream() {
+        calls++;
+        throw new ProviderError("PROVIDER_HTTP_ERROR", true, 503);
+      },
+    }),
+  });
+  const deadline = Date.now() + 3000;
+  while (true) {
+    const [n] =
+      await sql`SELECT retry_at FROM workflow_node_runs WHERE run_id=${id} AND node_id='agent'`;
+    if (n?.retry_at) break;
+    if (Date.now() > deadline) throw new Error("Retry did not enter backoff");
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.equal(
+    (await call("POST", `/workflow-runs/${id}/cancel`, {})).statusCode,
+    200,
+  );
+  await executing;
+  const result = await inspect(id);
+  assert.equal(result.status, "cancelled");
+  assert.equal(calls, 1);
+  assert.equal(
+    result.nodes.find((n: { node_id: string }) => n.node_id === "agent")
+      .retry_at,
+    null,
   );
   assert(
     !result.nodes.some((n: { node_id: string }) => n.node_id === "output"),

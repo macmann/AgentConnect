@@ -397,6 +397,17 @@ test("Customer workflows validate inputs, are idempotent, resume and protect ver
   assert.equal(result.json().status, "completed");
   assert.match(result.json().output, /ABC/);
   assert.equal(result.json().steps.length, 2);
+  assert.equal(result.json().presentation.kind, "fields");
+  assert.equal(
+    result
+      .json()
+      .presentation.fields.find(
+        (f: { label: string }) => f.label === "Reference",
+      ).value,
+    "ABC",
+  );
+  assert.equal(result.json().progress.completed, 2);
+  assert(!("graph_snapshot" in result.json()));
   const replay = await app.inject({
     method: "POST",
     url: path,

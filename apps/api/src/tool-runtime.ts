@@ -379,6 +379,7 @@ async function invoke(
         response.status >= 300 && response.status < 400
           ? "TOOL_REDIRECT_BLOCKED"
           : "TOOL_HTTP_ERROR",
+        response.status === 429 || response.status >= 500,
       );
     let result: unknown;
     try {
@@ -508,7 +509,11 @@ export async function executeTool(
         ? e.code
         : "TOOL_EXECUTION_FAILED";
     await sql`UPDATE tool_executions SET status=${signal.aborted ? "cancelled" : "failed"},error_code=${code},duration_ms=${Math.round(performance.now() - started)},finished_at=now() WHERE id=${executionId}`;
-    throw new ToolError(code);
+    throw new ToolError(
+      code,
+      !signal.aborted &&
+        ((e instanceof ToolError && e.retryable) || code === "TOOL_TIMEOUT"),
+    );
   }
 }
 export async function runAgentTools(

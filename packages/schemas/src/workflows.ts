@@ -20,6 +20,15 @@ export const workflowNode = z.object({
   }),
   data: z.object({
     label: z.string().min(1).max(100),
+    retry: z
+      .object({
+        maxAttempts: z.number().int().min(1).max(3).default(1),
+        delayMs: z.number().int().min(100).max(10000).default(1000),
+      })
+      .default({ maxAttempts: 1, delayMs: 1000 }),
+    resultTitle: z.string().trim().max(120).default(""),
+    resultSummary: z.string().trim().max(400).default(""),
+    resultFormat: z.enum(["auto", "text", "json"]).default("auto"),
     agentVersionId: z.uuid().optional(),
     toolId: z.uuid().optional(),
     toolArguments: z.record(z.string(), z.json()).default({}),
@@ -167,6 +176,13 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
     )
       errors.push(
         `${n.data.label}: branch handles only belong to Router/Condition`,
+      );
+    if (
+      !["agent", "tool"].includes(n.type) &&
+      (n.data.retry?.maxAttempts ?? 1) > 1
+    )
+      errors.push(
+        `${n.data.label}: retries are supported on agent and read-only tool steps`,
       );
     if (n.type === "agent" && !n.data.agentVersionId)
       errors.push(`${n.data.label}: select a published agent version`);
