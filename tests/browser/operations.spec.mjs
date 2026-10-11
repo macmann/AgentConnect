@@ -1,3 +1,4 @@
+import { paceApiBudget } from "../helpers/api-budget.mjs";
 import { test, expect } from "@playwright/test";
 import { randomUUID, createHash } from "node:crypto";
 import postgres from "postgres";
@@ -17,6 +18,9 @@ const org = randomUUID(),
   message = randomUUID(),
   version = randomUUID(),
   deployment = randomUUID();
+test.beforeEach(async ({}, testInfo) => {
+  await paceApiBudget(testInfo);
+});
 test.beforeAll(async () => {
   await sql.begin(async (tx) => {
     for (const [id, raw, name] of [
@@ -97,12 +101,14 @@ test("operations analytics, pricing, key revocation, review and deployment envir
     page.getByRole("heading", { name: "Workspace operations" }),
   ).toBeVisible();
   await expect(page.getByText("$0.001000").first()).toBeVisible();
-  await page.getByRole("tab", { name: "Pricing", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Model pricing", exact: true })
+    .click();
   await page.getByLabel("Input USD / million tokens").fill("2");
   await page.getByLabel("Output USD / million tokens").fill("4");
   await page.getByRole("button", { name: "Save pricing" }).click();
   await expect(page.getByText("Pricing saved", { exact: true })).toBeVisible();
-  await page.getByRole("tab", { name: "API keys", exact: true }).click();
+  await page.getByRole("button", { name: "API keys", exact: true }).click();
   await page.getByLabel("Key label").fill("Browser application");
   await page
     .getByRole("button", { name: "Create API key", exact: true })
@@ -116,14 +122,14 @@ test("operations analytics, pricing, key revocation, review and deployment envir
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Revoke", exact: true }).click();
   await expect(page.getByText("Revoked", { exact: true })).toBeVisible();
-  await page.getByRole("tab", { name: "Deployments", exact: true }).click();
+  await page.getByRole("button", { name: "Deployments", exact: true }).click();
   await page
     .getByLabel("Environment for Browser deployment")
     .selectOption("production");
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(page.getByText("v1 · production · Active")).toBeVisible();
-  await page.getByRole("tab", { name: "Webhooks", exact: true }).click();
+  await page.getByRole("button", { name: "Webhooks", exact: true }).click();
   await page.getByLabel("Webhook name").fill("Unapproved receiver");
   await page
     .getByLabel("Webhook URL")
@@ -134,7 +140,7 @@ test("operations analytics, pricing, key revocation, review and deployment envir
   await expect(
     page.locator(".operations-content").getByRole("alert"),
   ).toContainText("WEBHOOK_ALLOWED_HOSTS");
-  await page.getByRole("tab", { name: "Audit", exact: true }).click();
+  await page.getByRole("button", { name: "Audit trail", exact: true }).click();
   await page.getByLabel("Filter by action").fill("api_key.revoked");
   await expect(
     page.getByRole("cell", { name: "api_key.revoked", exact: true }),
@@ -191,13 +197,18 @@ test("analyst sees operational reports and reviews without administration contro
   await login(page, context, analystSession);
   await page.getByRole("button", { name: "Operations", exact: true }).click();
   await expect(
-    page.getByRole("tab", { name: "Analytics", exact: true }),
+    page.getByRole("button", { name: "Analytics", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("tab", { name: "API keys", exact: true }),
+    page.getByRole("button", { name: "API keys", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("tab", { name: "Members", exact: true }),
+    page
+      .getByRole("navigation", {
+        name: "Operations sections navigation",
+        exact: true,
+      })
+      .getByRole("button", { name: "Members", exact: true }),
   ).toHaveCount(0);
   await page
     .getByRole("button", { name: "Conversations", exact: true })

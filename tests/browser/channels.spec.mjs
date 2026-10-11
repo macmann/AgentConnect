@@ -171,6 +171,9 @@ test("Configure website widget, stream, hand off to operator, resolve and test b
       web.getByText("Waiting for human support. You can leave a message."),
     ).toBeVisible();
     await page
+      .getByRole("button", { name: "Support requests", exact: true })
+      .click();
+    await page
       .getByRole("button", { name: "Website assistant · widget · pending" })
       .click();
     await page

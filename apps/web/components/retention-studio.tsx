@@ -3,6 +3,12 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
 import { requestJson } from "./agent-client";
+import {
+  WorkspaceSections,
+  WorkspaceSaveBar,
+  useWorkspaceSection,
+  useWorkspaceLeaveGuard,
+} from "./workspace-sections";
 import { Button } from "./button";
 
 const fields = [
@@ -80,6 +86,11 @@ export function RetentionStudio({
     cache = useQueryClient(),
     canRead = permitted(role, "retention:read"),
     canManage = permitted(role, "retention:manage");
+  const [section, setSection] = useWorkspaceSection(
+    "retentionSection",
+    "policy",
+    canManage ? ["policy", "preview", "history"] : ["policy", "history"],
+  );
   const query = useQuery({
     queryKey: ["retention", workspaceId],
     queryFn: () => requestJson<State>(base),
@@ -93,6 +104,11 @@ export function RetentionStudio({
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
   const policy = draft ?? query.data?.policy;
+  const dirty =
+    !!draft &&
+    (draft.enabled !== query.data?.policy.enabled ||
+      fields.some(([, key]) => draft[key] !== query.data?.policy[key]));
+  useWorkspaceLeaveGuard(dirty);
   async function action(work: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -145,86 +161,134 @@ export function RetentionStudio({
             {error || notice}
           </p>
         )}
-        <form
-          className="retention-settings"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void action(async () => {
-              const body = {
-                enabled: policy.enabled,
-                revision: policy.revision,
-                ...Object.fromEntries(
-                  fields.map(([input, key]) => [input, policy[key]]),
-                ),
-              };
-              await requestJson(base, "PUT", body);
-              setDraft(null);
-              setPreview(null);
-              setConfirmed(false);
-              setNotice("Retention settings saved.");
-            });
-          }}
-        >
-          <div className="retention-fields">
-            {fields.map(([, key, label, description]) => (
-              <label key={key}>
-                <strong>{label}</strong>
-                <span>{description}</span>
-                <input
-                  aria-label={`${label} retention days`}
-                  type="number"
-                  min="1"
-                  max="36500"
-                  step="1"
-                  placeholder="Keep indefinitely"
-                  value={policy[key] ?? ""}
-                  disabled={!canManage || busy}
-                  onChange={(e) => {
-                    setDraft({
-                      ...policy,
-                      [key]:
-                        e.target.value === "" ? null : Number(e.target.value),
-                    });
-                    setPreview(null);
-                    setConfirmed(false);
-                  }}
-                />
-                <small>Leave blank to keep indefinitely.</small>
-              </label>
-            ))}
-          </div>
-          <label className="retention-toggle">
-            <input
-              type="checkbox"
-              checked={policy.enabled}
-              disabled={!canManage || busy}
-              onChange={(e) => {
-                setDraft({ ...policy, enabled: e.target.checked });
+        <WorkspaceSections
+          label="Retention sections"
+          value={section}
+          onChange={setSection}
+          sections={[
+            {
+              id: "policy",
+              label: "Retention policy",
+              description:
+                "Choose how long to keep data. Cleanup remains paused until explicitly enabled.",
+            },
+            ...(canManage
+              ? [
+                  {
+                    id: "preview",
+                    label: "Preview & cleanup",
+                    description:
+                      "Preview the saved policy and confirm permanent removal before running cleanup.",
+                  },
+                ]
+              : []),
+            {
+              id: "history",
+              label: "Cleanup history",
+              description: "Review actual cleanup results and failures.",
+            },
+          ]}
+        />
+        <div hidden={section !== "policy"} className="workspace-section-body">
+          <form
+            className="retention-settings"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void action(async () => {
+                const body = {
+                  enabled: policy.enabled,
+                  revision: policy.revision,
+                  ...Object.fromEntries(
+                    fields.map(([input, key]) => [input, policy[key]]),
+                  ),
+                };
+                await requestJson(base, "PUT", body);
+                setDraft(null);
                 setPreview(null);
                 setConfirmed(false);
-              }}
-            />{" "}
-            Enable automatic daily cleanup
-          </label>
-          <p>
-            Active runs and pending or active human handoffs are protected.
-            Audit records and knowledge bases are retained. Shorter periods
-            permanently remove more history, including content used as agent
-            context.
-          </p>
-          {canManage ? (
-            <Button disabled={busy || !draft} type="submit">
-              Save retention settings
-            </Button>
-          ) : (
+                setNotice("Retention settings saved.");
+              });
+            }}
+          >
+            <div className="retention-fields">
+              {fields.map(([, key, label, description]) => (
+                <label key={key}>
+                  <strong>{label}</strong>
+                  <span>{description}</span>
+                  <input
+                    aria-label={`${label} retention days`}
+                    type="number"
+                    min="1"
+                    max="36500"
+                    step="1"
+                    placeholder="Keep indefinitely"
+                    value={policy[key] ?? ""}
+                    disabled={!canManage || busy}
+                    onChange={(e) => {
+                      setDraft({
+                        ...policy,
+                        [key]:
+                          e.target.value === "" ? null : Number(e.target.value),
+                      });
+                      setPreview(null);
+                      setConfirmed(false);
+                    }}
+                  />
+                  <small>Leave blank to keep indefinitely.</small>
+                </label>
+              ))}
+            </div>
+            <label className="retention-toggle">
+              <input
+                type="checkbox"
+                checked={policy.enabled}
+                disabled={!canManage || busy}
+                onChange={(e) => {
+                  setDraft({ ...policy, enabled: e.target.checked });
+                  setPreview(null);
+                  setConfirmed(false);
+                }}
+              />{" "}
+              Enable automatic daily cleanup
+            </label>
             <p>
-              Only workspace administrators can change settings or run cleanup.
+              Active runs and pending or active human handoffs are protected.
+              Audit records and knowledge bases are retained. Shorter periods
+              permanently remove more history, including content used as agent
+              context.
             </p>
-          )}
-        </form>
+            {canManage ? (
+              <WorkspaceSaveBar>
+                <span>{dirty ? "Unsaved changes" : "Saved"} </span>
+                <div className="studio-actions">
+                  <Button
+                    className="secondary"
+                    type="button"
+                    disabled={busy || !dirty}
+                    onClick={() => {
+                      setDraft(null);
+                      setPreview(null);
+                      setConfirmed(false);
+                    }}
+                  >
+                    Discard
+                  </Button>
+                  <Button disabled={busy || !dirty} type="submit">
+                    Save retention settings
+                  </Button>
+                </div>
+              </WorkspaceSaveBar>
+            ) : (
+              <p>
+                Only workspace administrators can change settings or run
+                cleanup.
+              </p>
+            )}
+          </form>
+        </div>
       </section>
       {canManage && (
-        <section className="panel">
+        <section className="panel" hidden={section !== "preview"}>
           <div className="panel-header">
             <div>
               <h3>Preview cleanup</h3>
@@ -234,7 +298,7 @@ export function RetentionStudio({
               </p>
             </div>
             <Button
-              disabled={busy || !!draft || !query.data?.policy.revision}
+              disabled={busy || dirty || !query.data?.policy.revision}
               onClick={() =>
                 void action(async () => {
                   setPreview(
@@ -308,7 +372,7 @@ export function RetentionStudio({
           )}
         </section>
       )}
-      <section className="panel">
+      <section className="panel" hidden={section !== "history"}>
         <div className="panel-header">
           <div>
             <h3>Cleanup status</h3>

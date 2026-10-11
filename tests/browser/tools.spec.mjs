@@ -121,6 +121,7 @@ test("register, test, attach and trace a read-only tool in playground and hosted
   ]);
   await page.goto("/");
   await page.getByRole("button", { name: "Tools", exact: true }).click();
+  await page.getByRole("button", { name: "Tool setup", exact: true }).click();
   await page.getByLabel("Name", { exact: true }).fill("Weather lookup");
   await page
     .getByLabel("Description for the agent")

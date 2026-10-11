@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
 import { requestJson } from "./agent-client";
+import { WorkspaceSections, useWorkspaceSection } from "./workspace-sections";
 import { Button } from "./button";
 type Analytics = {
   summary: {
@@ -92,8 +93,14 @@ export function OperationsStudio({
   });
   const canView = permitted(role as Role, "operations:view"),
     canManage = permitted(role as Role, "operations:manage");
-  const [tab, setTab] = useState("Analytics"),
-    [days, setDays] = useState(30),
+  const [tab, setTab] = useWorkspaceSection("operationsSection", "Analytics", [
+    "Analytics",
+    "Pricing",
+    ...(canManage ? ["API keys", "Webhooks", "Members"] : []),
+    "Deployments",
+    ...(canAudit ? ["Audit"] : []),
+  ]);
+  const [days, setDays] = useState(30),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
@@ -233,35 +240,64 @@ export function OperationsStudio({
           Refresh
         </Button>
       </div>
-      <div
-        className="studio-tabs"
-        role="tablist"
-        aria-label="Operations sections"
-      >
-        {[
-          "Analytics",
-          "Pricing",
-          ...(canManage ? ["API keys", "Webhooks", "Members"] : []),
-          "Deployments",
-          ...(canAudit ? ["Audit"] : []),
-        ].map((t) => (
-          <button
-            type="button"
-            key={t}
-            role="tab"
-            aria-selected={tab === t}
-            className={tab === t ? "active" : ""}
-            onClick={() => {
-              setTab(t);
-              setError("");
-              setNotice("");
-              setOneTime("");
-            }}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      <WorkspaceSections
+        label="Operations sections"
+        value={tab}
+        onChange={(value) => {
+          setTab(value);
+          setError("");
+          setNotice("");
+          setOneTime("");
+        }}
+        sections={[
+          {
+            id: "Analytics",
+            label: "Analytics",
+            description:
+              "Review usage, cost estimates and runtime performance.",
+          },
+          {
+            id: "Pricing",
+            label: "Model pricing",
+            description:
+              "Configure pricing to make workspace cost estimates useful.",
+          },
+          ...(canManage
+            ? [
+                {
+                  id: "API keys",
+                  label: "API keys",
+                  description: "Manage scoped access to published deployments.",
+                },
+                {
+                  id: "Webhooks",
+                  label: "Webhooks",
+                  description:
+                    "Manage signed event delivery and inspect failures.",
+                },
+                {
+                  id: "Members",
+                  label: "Members",
+                  description: "Manage workspace access and roles.",
+                },
+              ]
+            : []),
+          {
+            id: "Deployments",
+            label: "Deployments",
+            description: "Review deployment availability and access settings.",
+          },
+          ...(canAudit
+            ? [
+                {
+                  id: "Audit",
+                  label: "Audit trail",
+                  description: "Review recorded workspace changes.",
+                },
+              ]
+            : []),
+        ]}
+      />
       <div className="studio-form operations-content">
         {(error || activeError) && (
           <p className="error-banner" role="alert">

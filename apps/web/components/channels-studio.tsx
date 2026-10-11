@@ -7,6 +7,11 @@ import {
 } from "@agentconnect/schemas/channels";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
 import { apiBase, requestJson } from "./agent-client";
+import {
+  WorkspaceSections,
+  useWorkspaceSection,
+  WorkspaceSaveBar,
+} from "./workspace-sections";
 import { Button } from "./button";
 type Deployment = {
   id: string;
@@ -24,6 +29,10 @@ export function ChannelsStudio({
   role: Role;
   onNavigate: (view: string) => void;
 }) {
+  const [section, setSection] = useWorkspaceSection("channelsSection", "web", [
+    "web",
+    "inbox",
+  ]);
   const deployments = useQuery({
     queryKey: ["channels", workspaceId],
     queryFn: () =>
@@ -41,6 +50,36 @@ export function ChannelsStudio({
   return (
     <div className="channels-layout">
       <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h2>Channels</h2>
+            <p>
+              Manage website deployments and customer support conversations.
+            </p>
+          </div>
+        </div>
+        <WorkspaceSections
+          label="Channels sections"
+          value={section}
+          onChange={setSection}
+          sections={[
+            {
+              id: "web",
+              label: "Website widgets",
+              description: "Configure a published agent for your website.",
+              count: deployments.data?.length,
+            },
+            {
+              id: "inbox",
+              label: "Support requests",
+              description:
+                "Review customer requests that pause automated replies.",
+              count: handoffs.data?.length,
+            },
+          ]}
+        />
+      </section>
+      <section className="panel" hidden={section !== "web"}>
         <div className="panel-header">
           <div>
             <h3>Web channels</h3>
@@ -84,7 +123,7 @@ export function ChannelsStudio({
           </p>
         </div>
       </section>
-      <section className="panel">
+      <section className="panel" hidden={section !== "inbox"}>
         <div className="panel-header">
           <div>
             <h3>Human support inbox</h3>
@@ -285,9 +324,12 @@ function WidgetEditor({
             onChange={(e) => field("greeting", e.target.value)}
           />
         </label>
-        <Button type="button" onClick={() => void save()}>
-          Save widget settings
-        </Button>
+        <WorkspaceSaveBar>
+          <span>{saved ? "Saved" : "Review widget settings"}</span>
+          <Button type="button" onClick={() => void save()}>
+            Save widget settings
+          </Button>
+        </WorkspaceSaveBar>
       </fieldset>
       {error && (
         <p className="error" role="alert">

@@ -294,11 +294,11 @@ function Studio() {
       agentRoute.current = window.location.hash;
     };
     window.addEventListener("agent-studio:navigated", rememberAgentRoute);
+    window.addEventListener("workspace-section:navigated", rememberAgentRoute);
     const restore = () => {
       const params = new URLSearchParams(window.location.hash.slice(1));
       const previous = new URLSearchParams(agentRoute.current.slice(1));
       if (
-        previous.get("view") === "Agents" &&
         ["view", "organization", "workspace", "agent"].some(
           (key) => params.get(key) !== previous.get(key),
         ) &&
@@ -321,6 +321,10 @@ function Studio() {
     window.addEventListener("hashchange", restore);
     return () => {
       window.removeEventListener("agent-studio:navigated", rememberAgentRoute);
+      window.removeEventListener(
+        "workspace-section:navigated",
+        rememberAgentRoute,
+      );
       window.removeEventListener("popstate", restore);
       window.removeEventListener("hashchange", restore);
     };
