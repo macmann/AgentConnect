@@ -25,7 +25,7 @@ const provider = createServer(async (req, res) => {
     res
       .writeHead(200, { "content-type": "text/html" })
       .end(
-        "<html><title>Refund website</title><body><main>Refunds are available within 30 days.</main></body></html>",
+        '<html><title>Refund website</title><body><nav><a href="/details">Policy details</a><a href="/private">Private</a></nav><main>Website-only refund policy: refunds are available within 30 days.</main></body></html>',
       );
     return;
   }
@@ -38,9 +38,11 @@ const provider = createServer(async (req, res) => {
       JSON.stringify({
         data: input.input.map((text, index) => ({
           index,
-          embedding: text.toLowerCase().includes("refund")
-            ? [1, 0.2, 0.3]
-            : [0.1, 1, 0.3],
+          embedding: text.toLowerCase().includes("website-only")
+            ? [0.1, 1, 0.3]
+            : text.toLowerCase().includes("refund")
+              ? [1, 0.2, 0.3]
+              : [0.1, 1, 0.3],
         })),
       }),
     );
@@ -406,7 +408,54 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
     path: "test-results/knowledge-desktop.png",
     fullPage: true,
   });
-  expect(generated).toBe(2);
+
+  await page
+    .getByRole("button", { name: "Ingest website", exact: true })
+    .click();
+  await expect(page.getByLabel("Crawler", { exact: true })).toHaveValue(
+    "builtin",
+  );
+  await page.getByLabel("Crawler", { exact: true }).selectOption("firecrawl");
+  await expect(
+    page.getByLabel("Firecrawl credential", { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Crawler", { exact: true }).selectOption("builtin");
+  await page
+    .getByLabel("Website URL", { exact: true })
+    .fill("http://127.0.0.1:4546/website");
+  await expect(page.getByLabel("Page limit", { exact: true })).toHaveValue(
+    "20",
+  );
+  await expect(page.getByLabel("Crawl depth", { exact: true })).toHaveValue(
+    "2",
+  );
+  await page
+    .getByRole("button", { name: "Start website crawl", exact: true })
+    .click();
+  const websiteRow = page
+    .getByRole("row")
+    .filter({ hasText: "http://127.0.0.1:4546/website" });
+  await expect(websiteRow.getByText("ready", { exact: true })).toBeVisible({
+    timeout: 20000,
+  });
+  await expect(
+    websiteRow.getByText("2 pages indexed", { exact: true }),
+  ).toBeVisible();
+  const websiteGuest = await browser.newContext();
+  try {
+    const chat = await websiteGuest.newPage();
+    await chat.goto("http://localhost:3000" + href);
+    await chat
+      .getByLabel("Message", { exact: true })
+      .fill("What is the website-only refund policy?");
+    await chat.getByRole("button", { name: "Send message" }).click();
+    await expect(
+      chat.getByText("[1] Refund website", { exact: true }),
+    ).toBeVisible();
+  } finally {
+    await websiteGuest.close();
+  }
+  expect(generated).toBe(3);
   expect(embedded).toBeGreaterThanOrEqual(4);
   const [message] =
     await sql`SELECT citations FROM messages WHERE workspace_id=${workspace} AND role='assistant' LIMIT 1`;

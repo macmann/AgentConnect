@@ -192,3 +192,9 @@ The repository implements the features described in the linked guides; it does n
 The product is **Agent Connex**. The supplied SVG logo and cyan/violet palette appear throughout the application. Use the top **Dark / Light** switcher to choose a theme; it starts with your device preference and remembers your choice. Hosted chat supports both themes; the embedded widget has a separate header switcher and a saved preference per deployment. Custom customer branding remains supported. Repository paths, environment variables and `@agentconnect/*` package names remain unchanged.
 
 See the [dark agent view](docs/screenshots/rag-agent-dark.png) and [dark widget](docs/screenshots/chat-widget-dark.png).
+
+### Website knowledge sources
+
+Open a knowledge base → Sources → **Ingest website**, enter a main URL and select a crawler. Built-in Cheerio needs no key; Firecrawl renders JavaScript sites using an API key saved in workspace Secrets. Defaults crawl up to 20 pages at depth 2; limits and allowed/blocked paths are configurable. Once the source is Ready, attach the knowledge base to an agent for grounded chat with page citations. Reingest recrawls the site using the saved settings.
+
+Approve website hosts in API/worker `KNOWLEDGE_ALLOWED_HOSTS`; Firecrawl also needs outbound access to `api.firecrawl.dev` and account credits. See the [website crawl guide](docs/user-guide.md#crawl-a-website-into-knowledge).

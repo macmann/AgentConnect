@@ -464,6 +464,15 @@ export async function registerKnowledgeRoutes(
       const { u, kb } = await ownedKnowledge(r, "knowledge:manage");
       const data = websiteInput.parse(r.body);
       validateWebsite(data.url);
+      if (data.secretId) {
+        const [secret] =
+          await sql`SELECT id FROM secrets WHERE id=${data.secretId} AND workspace_id=${kb.workspace_id} AND organization_id=${kb.organization_id}`;
+        if (!secret)
+          throw new HttpError(
+            400,
+            "Select a Firecrawl credential from this workspace",
+          );
+      }
       return reply
         .code(202)
         .send(

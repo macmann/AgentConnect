@@ -11,6 +11,8 @@ import { config } from "./config.js";
 import { hosts } from "./knowledge-core.js";
 export interface CrawlConfig {
   url: string;
+  crawler?: "builtin" | "firecrawl";
+  secretId?: string | null;
   maxPages: number;
   maxDepth: number;
   allowedPaths: string[];
@@ -136,6 +138,8 @@ export async function crawlWebsite(
     seen = new Set<string>();
   const pages: { document: ParsedDocument; url: string; bytes: Uint8Array }[] =
     [];
+  let totalBytes = 0;
+  const canonicalSeen = new Set<string>();
   while (queue.length && pages.length < options.maxPages) {
     signal.throwIfAborted();
     const item = queue.shift()!;
@@ -153,6 +157,8 @@ export async function crawlWebsite(
       continue;
     }
     const bytes = await fetchWebsite(u.href, signal);
+    totalBytes += bytes.length;
+    if (totalBytes > 20000000) throw new KnowledgeError("WEBSITE_SIZE_LIMIT");
     const document = parseHTML(bytes, u.href);
     const canonical = document.metadata.canonical;
     let url = u.href;
@@ -162,14 +168,25 @@ export async function crawlWebsite(
         if (
           proposed.origin === root.origin &&
           !proposed.username &&
-          !proposed.password
-        )
+          !proposed.password &&
+          options.allowedPaths.some((path) =>
+            proposed.pathname.startsWith(path),
+          ) &&
+          !options.blockedPaths.some((path) =>
+            proposed.pathname.startsWith(path),
+          )
+        ) {
+          proposed.hash = "";
           url = proposed.href;
+        }
       } catch {
         /* invalid canonical ignored */
       }
     }
-    pages.push({ document, url, bytes });
+    if (!canonicalSeen.has(url)) {
+      canonicalSeen.add(url);
+      pages.push({ document, url, bytes });
+    }
     if (item.depth < options.maxDepth)
       for (const href of document.links) {
         try {

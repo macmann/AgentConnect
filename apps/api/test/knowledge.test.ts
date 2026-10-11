@@ -1,3 +1,4 @@
+import { parseHTML } from "@agentconnect/rag/parsers";
 import { executeAgentSnapshot } from "../src/workflow-agents.js";
 import { modelSnapshotSchema } from "../src/agent-models.js";
 import { test, before, after } from "node:test";
@@ -622,6 +623,108 @@ test("Empty knowledge fails before generation and records NO_RELEVANT_SOURCES", 
     200,
   );
 });
+test("Website provider credentials are workspace scoped, role protected and deletion guarded", async () => {
+  const previous = config.KNOWLEDGE_ALLOWED_HOSTS;
+  config.KNOWLEDGE_ALLOWED_HOSTS = "crawl.example.com";
+  const sibling = randomUUID();
+  await sql`INSERT INTO workspaces(id,organization_id,name) VALUES(${sibling},${org},'Sibling crawl workspace')`;
+  try {
+    const own = await call("POST", `/workspaces/${workspace}/secrets`, {
+      name: "FIRECRAWL_TEST",
+      value: "fixture-firecrawl-key",
+    });
+    const foreign = await call("POST", `/workspaces/${sibling}/secrets`, {
+      name: "FIRECRAWL_OTHER",
+      value: "fixture-other-key",
+    });
+    assert.equal(own.statusCode, 201);
+    assert.equal(foreign.statusCode, 201);
+    const [ownRow] =
+      await sql`SELECT id FROM secrets WHERE workspace_id=${workspace} AND name='FIRECRAWL_TEST'`;
+    const [foreignRow] =
+      await sql`SELECT id FROM secrets WHERE workspace_id=${sibling} AND name='FIRECRAWL_OTHER'`;
+    const body = {
+      url: "https://crawl.example.com",
+      crawler: "firecrawl",
+      secretId: ownRow!.id,
+    };
+    assert.equal(
+      (
+        await call("POST", `/knowledge-bases/${kbId}/website`, {
+          ...body,
+          secretId: foreignRow!.id,
+        })
+      ).statusCode,
+      400,
+    );
+    assert.equal(
+      (
+        await call(
+          "POST",
+          `/knowledge-bases/${kbId}/website`,
+          body,
+          sessions.viewer,
+        )
+      ).statusCode,
+      403,
+    );
+    const created = await call(
+      "POST",
+      `/knowledge-bases/${kbId}/website`,
+      body,
+    );
+    assert.equal(created.statusCode, 202);
+    assert.ok(!created.body.includes("fixture-firecrawl-key"));
+    let sawKey = false;
+    await processKnowledgeJob(embedding, async (options, key, signal) => {
+      signal.throwIfAborted();
+      sawKey = key === "fixture-firecrawl-key";
+      assert.equal(options.crawler, "firecrawl");
+      const bytes = Buffer.from(
+        "<html><body><main>Website refund policy: refunds within 30 days.</main></body></html>",
+      );
+      return [
+        {
+          document: parseHTML(bytes, "Website refund policy"),
+          url: "https://crawl.example.com/help",
+          bytes,
+        },
+      ];
+    });
+    assert.equal(sawKey, true);
+    const [source] =
+      await sql`SELECT status,metadata FROM knowledge_sources WHERE id=${created.json().id}`;
+    assert.equal(source!.status, "ready");
+    assert.equal(source!.metadata.crawlPageCount, 1);
+    const retrieved = await call("POST", `/knowledge-bases/${kbId}/search`, {
+      query: "website refund policy",
+      sourceIds: [created.json().id],
+    });
+    assert.equal(retrieved.statusCode, 200, retrieved.body);
+    assert.equal(
+      retrieved.json().results[0].sourceUrl,
+      "https://crawl.example.com/help",
+    );
+
+    assert.equal(
+      (await call("DELETE", `/workspaces/${workspace}/secrets/${ownRow!.id}`))
+        .statusCode,
+      409,
+    );
+    await call(
+      "DELETE",
+      `/knowledge-bases/${kbId}/sources/${created.json().id}`,
+    );
+    assert.equal(
+      (await call("DELETE", `/workspaces/${workspace}/secrets/${ownRow!.id}`))
+        .statusCode,
+      200,
+    );
+    await call("DELETE", `/workspaces/${sibling}/secrets/${foreignRow!.id}`);
+  } finally {
+    config.KNOWLEDGE_ALLOWED_HOSTS = previous;
+  }
+});
 test("Website crawling preserves canonical provenance and enforces robots and redirect rules", async () => {
   const visited: string[] = [];
   const server = createServer((req, res) => {
@@ -641,7 +744,7 @@ test("Website crawling preserves canonical provenance and enforces robots and re
       .end(
         req.url === "/details"
           ? "<html><title>Delivery guide</title><body><main>Shipping is free.</main></body></html>"
-          : '<html><head><title>Refund guide</title><link rel="canonical" href="/canonical-policy"></head><body><main>Refunds within 30 days.<a href="/details">Details</a><a href="/private">Private</a></main></body></html>',
+          : '<html><head><title>Refund guide</title><link rel="canonical" href="/canonical-policy"></head><body><main>Refunds within 30 days.</main><nav><a href="/details">Details</a><a href="/private">Private</a></nav></body></html>',
       );
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

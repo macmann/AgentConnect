@@ -21,6 +21,8 @@ import {
   storeKnowledge,
   purgeKnowledgePrefix,
 } from "./knowledge-storage.js";
+import { crawlFirecrawl } from "./knowledge-firecrawl.js";
+import { decrypt } from "./security.js";
 import { crawlWebsite, type CrawlConfig } from "./knowledge-websites.js";
 import { ocrPdfPage } from "./pdf-ocr.js";
 import { config } from "./config.js";
@@ -52,6 +54,7 @@ export async function claimKnowledgeJob(): Promise<Job | undefined> {
 }
 export async function processKnowledgeJob(
   factory: EmbeddingFactory = defaultEmbeddingFactory,
+  firecrawl: typeof crawlFirecrawl = crawlFirecrawl,
 ): Promise<boolean> {
   const job = await claimKnowledgeJob();
   if (!job) return false;
@@ -80,10 +83,22 @@ export async function processKnowledgeJob(
       objectKey: string | null;
     }[] = [];
     if (job.payload.website) {
-      const crawled = await crawlWebsite(
-        job.payload.website,
-        controller.signal,
-      );
+      const options = job.payload.website;
+      let apiKey: string | undefined;
+      if (options.crawler === "firecrawl") {
+        const [secret] =
+          await sql`SELECT name,ciphertext FROM secrets WHERE id=${options.secretId ?? null} AND workspace_id=${job.workspace_id} AND organization_id=${job.organization_id}`;
+        if (!secret)
+          throw new KnowledgeError("FIRECRAWL_CREDENTIAL_UNAVAILABLE");
+        apiKey = decrypt(
+          secret.ciphertext,
+          `${job.organization_id}:${job.workspace_id}:${secret.name}`,
+        );
+      }
+      const crawled =
+        apiKey !== undefined
+          ? await firecrawl(options, apiKey, controller.signal)
+          : await crawlWebsite(options, controller.signal);
       for (let i = 0; i < crawled.length; i++) {
         const page = crawled[i]!;
         const key = `${job.organization_id}/${job.workspace_id}/${kb.id}/${job.source_id}/${job.source_revision}/page-${i}.html`;
@@ -208,7 +223,7 @@ export async function processKnowledgeJob(
         }
       }
       await tx`UPDATE knowledge_jobs SET status='completed',finished_at=now(),locked_until=NULL,lease_token=NULL,error_code=NULL WHERE id=${job.id}`;
-      await tx`UPDATE knowledge_sources SET status='ready',error_code=NULL,metadata=metadata || ${tx.json({ ocrPages: pages.reduce((n, p) => n + Number(p.document.metadata.ocrPages ?? 0), 0), unrecognizedPages: pages.reduce((n, p) => n + Number(p.document.metadata.unrecognizedPages ?? 0), 0) })}::jsonb,updated_at=now() WHERE id=${job.source_id} AND revision=${job.source_revision}`;
+      await tx`UPDATE knowledge_sources SET status='ready',error_code=NULL,metadata=metadata || ${tx.json({ ...(job.payload.website ? { crawlPageCount: pages.length } : {}), ocrPages: pages.reduce((n, p) => n + Number(p.document.metadata.ocrPages ?? 0), 0), unrecognizedPages: pages.reduce((n, p) => n + Number(p.document.metadata.unrecognizedPages ?? 0), 0) })}::jsonb,updated_at=now() WHERE id=${job.source_id} AND revision=${job.source_revision}`;
     });
   } catch (error) {
     const code = controller.signal.aborted

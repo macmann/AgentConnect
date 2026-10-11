@@ -88,11 +88,11 @@ const plain = (data: Uint8Array) => {
 };
 export function parseHTML(data: Uint8Array, title: string): ParsedDocument {
   const $ = load(plain(data));
-  $("script,style,noscript,iframe,object,svg,nav,footer").remove();
   const links = $("a[href]")
     .map((_, a) => $(a).attr("href")!)
     .get()
     .slice(0, 500);
+  $("script,style,noscript,iframe,object,svg,nav,footer").remove();
   const canonical = $('link[rel="canonical"]').attr("href");
   const label = ($("title").first().text().trim() || title).slice(0, 200);
   const container = $("main").first().length ? $("main").first() : $("body");
