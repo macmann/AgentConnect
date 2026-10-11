@@ -228,6 +228,7 @@ export async function evaluateEscalation(
   conversationId: string,
   runId: string,
   provider?: ChatProvider,
+  explicitReason?: "knowledge_gap" | "required_intent",
 ) {
   const [prior] =
     await sql`SELECT run_id FROM support_decisions WHERE run_id=${runId}`;
@@ -258,14 +259,15 @@ export async function evaluateEscalation(
     (r) => r.status === "failed" && /^(TOOL_|MCP_)/.test(r.error_code ?? ""),
   ).length;
   let reason =
-    explicit >= policy.explicitRequestThreshold
+    explicitReason ??
+    (explicit >= policy.explicitRequestThreshold
       ? "explicit_request"
       : policy.loopDetectionEnabled && (repeated || unsuccessful)
         ? "resolution_loop"
         : policy.toolFailureEscalationEnabled &&
             toolFailures >= policy.toolFailureThreshold
           ? "tool_failure"
-          : null;
+          : null);
   let decision: ReturnType<typeof handoffDecision.parse> | null = null;
   let decisionProvenance: {
     purpose: string;

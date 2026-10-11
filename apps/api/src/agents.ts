@@ -1,3 +1,4 @@
+import { advanceJourney, generateGroundedAnswer } from "./bank-runtime.js";
 import { planKnowledgeUsage } from "./knowledge-usage.js";
 import { continuationContext } from "./support/continuation.js";
 import { evaluateEscalation } from "./support/policy.js";
@@ -44,7 +45,10 @@ import {
   type ModelConnection,
   type ChatMessage,
 } from "@agentconnect/provider-sdk";
-import { PostgresRagTool, validateKnowledgeIds } from "./knowledge-core.js";
+import {
+  PostgresRagTool,
+  validateKnowledgeSelection,
+} from "./knowledge-core.js";
 import {
   groundedPrompt,
   citedSources,
@@ -184,6 +188,7 @@ async function streamChat(
   factory: ProviderFactory,
   guestToken?: string,
   ragTool: RagTool = new PostgresRagTool(),
+  quickActionId?: string,
 ) {
   const c = agentConfig.parse(conversation.config_snapshot);
   const model = modelSnapshotSchema.parse(conversation.model_snapshot);
@@ -213,6 +218,7 @@ async function streamChat(
     span.spanContext().traceId === "00000000000000000000000000000000"
       ? randomUUID().replaceAll("-", "")
       : span.spanContext().traceId;
+  let journey: ReturnType<typeof advanceJourney>;
   let continuation = {
     grounding: "",
     blockedToolIds: [] as string[],
@@ -229,6 +235,7 @@ async function streamChat(
           409,
           "This conversation is with the human support team",
         );
+      journey = advanceJourney(c, locked.journey_state, message, quickActionId);
       continuation = await continuationContext(
         tx,
         locked as never,
@@ -299,156 +306,194 @@ async function streamChat(
   let sources: Citation[] = [];
   let citations: Citation[] = [];
   let retrievalMs: number | null = null;
+  let answerKind:
+    "answer" | "clarify" | "no_answer" | "journey" | "handoff" | null = null;
+  let offerHuman = false;
   try {
-    if (
-      Buffer.byteLength(JSON.stringify(messages)) +
-        Buffer.byteLength(JSON.stringify(c.prompt)) +
-        Buffer.byteLength(continuation.grounding) >
-      model.contextWindow - c.maxOutputTokens
-    )
-      throw new ProviderError("CONTEXT_LIMIT");
-    const knowledgePlan = await planKnowledgeUsage(
-      c,
-      provider,
-      messages,
-      controller.signal,
-      model.contextWindow - c.maxOutputTokens,
-      c.rag.usageMode === "automatic" && c.rag.knowledgeBaseIds.length
-        ? await sql<
-            { name: string; description: string }[]
-          >`SELECT name,description FROM knowledge_bases WHERE id=ANY(${c.rag.knowledgeBaseIds}::uuid[]) AND workspace_id=${conversation.workspace_id} AND organization_id=${conversation.organization_id} AND archived_at IS NULL`
-        : [],
-    );
-    if (knowledgePlan.retrieve) {
-      const started = performance.now();
-      sources = await ragTool.execute(
-        message,
-        c.rag.knowledgeBaseIds,
-        c.rag,
-        {
-          workspaceId: conversation.workspace_id,
-          organizationId: conversation.organization_id,
-          publicAccess: !!conversation.deployment_id,
-        },
-        controller.signal,
-      );
-      retrievalMs = Math.round(performance.now() - started);
-      if (!sources.length) throw new KnowledgeError("NO_RELEVANT_SOURCES");
-      write("sources", { sources });
-    }
-    const toolsResult = await runAgentTools(
-      {
-        ...c,
-        tools: {
-          ...c.tools,
-          toolIds: c.tools.toolIds.filter(
-            (id) => !continuation.blockedToolIds.includes(id),
-          ),
-        },
-      },
-      provider,
-      message,
-      {
-        workspaceId: conversation.workspace_id,
-        organizationId: conversation.organization_id,
-        publicAccess: !!conversation.deployment_id,
-        userId: conversation.user_id ?? undefined,
-        runId,
-      },
-      controller.signal,
-      (data) => write("tool", data),
-      model.contextWindow - c.maxOutputTokens,
-      continuation.grounding,
-      messages,
-    );
-    toolsResult.inputTokens =
-      toolsResult.inputTokens === null || knowledgePlan.inputTokens === null
-        ? null
-        : toolsResult.inputTokens + knowledgePlan.inputTokens;
-    toolsResult.outputTokens =
-      toolsResult.outputTokens === null || knowledgePlan.outputTokens === null
-        ? null
-        : toolsResult.outputTokens + knowledgePlan.outputTokens;
-    const grounding =
-      continuation.grounding +
-      (sources.length ? groundedPrompt(sources) : "") +
-      toolsResult.grounding +
-      (c.generative.enabled
-        ? generativePrompt() +
-          ` Allowed block types: ${c.generative.allowedBlocks.join(",")}.`
-        : "");
-    // Conservative UTF-8 byte budget avoids sending an oversized context to providers.
-    if (
-      Buffer.byteLength(JSON.stringify(messages)) +
-        Buffer.byteLength(JSON.stringify(c.prompt)) +
-        Buffer.byteLength(grounding) >
-      model.contextWindow - c.maxOutputTokens
-    )
-      throw new ProviderError("CONTEXT_LIMIT");
-    for await (const event of runtime.run(
-      c,
-      messages,
-      provider,
-      controller.signal,
-      grounding,
-    )) {
-      if (controller.signal.aborted) throw new ProviderError("CANCELLED");
-      if (event.type === "token") {
-        output += event.text;
-        if (output.length > 256000) throw new ProviderError("OUTPUT_LIMIT");
-        if (!c.generative.enabled) write("token", { text: event.text });
-      } else {
-        inputTokens =
-          event.inputTokens === null || toolsResult.inputTokens === null
-            ? null
-            : event.inputTokens + toolsResult.inputTokens;
-        outputTokens =
-          event.outputTokens === null || toolsResult.outputTokens === null
-            ? null
-            : event.outputTokens + toolsResult.outputTokens;
-      }
-    }
-    if (c.generative.enabled) {
-      try {
-        const envelope = responseEnvelope.parse(JSON.parse(output));
-        if (
-          envelope.blocks.some(
-            (b) => !c.generative.allowedBlocks.includes(b.type),
-          )
-        )
-          throw new Error("Unsupported component");
-        const prepared = await prepareArtifacts(
-          envelope,
-          conversation.workspace_id,
-          conversation.organization_id,
-        );
-        uiBlocks = prepared.blocks;
-        artifacts = prepared.artifacts;
-        if (controller.signal.aborted) throw new ProviderError("CANCELLED");
-        output = [
-          envelope.message,
-          ...envelope.blocks
-            .filter((b) => b.type === "text")
-            .map((b) => (b.type === "text" ? b.content : "")),
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-      } catch (error) {
-        output = "";
-        if (error instanceof ProviderError) throw error;
-        throw new ProviderError("INVALID_UI_RESPONSE");
-      }
-    }
-    citations = citedSources(output, sources);
-    if (sources.length && c.rag.requireCitations && !citations.length)
-      throw new KnowledgeError("CITATION_REQUIRED");
-    if (
-      sources.length &&
-      [...output.matchAll(/\[(\d+)\]/g)].some(
-        (m) => !sources.some((s) => s.id === Number(m[1])),
+    if (journey!.response) {
+      output = journey!.response;
+      answerKind = journey!.handoff ? "handoff" : "journey";
+      offerHuman = journey!.handoff;
+      inputTokens = 0;
+      outputTokens = 0;
+      write("token", { text: output });
+    } else {
+      if (
+        Buffer.byteLength(JSON.stringify(messages)) +
+          Buffer.byteLength(JSON.stringify(c.prompt)) +
+          Buffer.byteLength(continuation.grounding) >
+        model.contextWindow - c.maxOutputTokens
       )
-    )
-      throw new KnowledgeError("INVALID_CITATION");
+        throw new ProviderError("CONTEXT_LIMIT");
+      const knowledgePlan = await planKnowledgeUsage(
+        c,
+        provider,
+        messages,
+        controller.signal,
+        model.contextWindow - c.maxOutputTokens,
+        c.rag.usageMode === "automatic" && c.rag.knowledgeBaseIds.length
+          ? await sql<
+              { name: string; description: string }[]
+            >`SELECT name,description FROM knowledge_bases WHERE id=ANY(${c.rag.knowledgeBaseIds}::uuid[]) AND workspace_id=${conversation.workspace_id} AND organization_id=${conversation.organization_id} AND archived_at IS NULL`
+          : [],
+      );
+      if (knowledgePlan.retrieve) {
+        const started = performance.now();
+        sources = await ragTool.execute(
+          journey!.query,
+          c.rag.knowledgeBaseIds,
+          c.rag,
+          {
+            workspaceId: conversation.workspace_id,
+            organizationId: conversation.organization_id,
+            publicAccess: !!conversation.deployment_id,
+          },
+          controller.signal,
+        );
+        retrievalMs = Math.round(performance.now() - started);
+        if (!sources.length && c.answerPolicy.mode !== "grounded")
+          throw new KnowledgeError("NO_RELEVANT_SOURCES");
+        write("sources", { sources });
+      }
+      if (c.answerPolicy.mode === "grounded") {
+        const result = await generateGroundedAnswer(
+          c,
+          provider,
+          [...messages.slice(0, -1), { role: "user", content: journey!.query }],
+          sources,
+          controller.signal,
+          model.contextWindow - c.maxOutputTokens,
+          continuation.grounding,
+        );
+        output = result.message;
+        answerKind = result.kind;
+        inputTokens = result.inputTokens;
+        outputTokens = result.outputTokens;
+        offerHuman =
+          result.kind === "no_answer" && c.answerPolicy.offerHumanOnNoAnswer;
+        write("token", { text: output });
+      } else {
+        const toolsResult = await runAgentTools(
+          {
+            ...c,
+            tools: {
+              ...c.tools,
+              toolIds: c.tools.toolIds.filter(
+                (id) => !continuation.blockedToolIds.includes(id),
+              ),
+            },
+          },
+          provider,
+          message,
+          {
+            workspaceId: conversation.workspace_id,
+            organizationId: conversation.organization_id,
+            publicAccess: !!conversation.deployment_id,
+            userId: conversation.user_id ?? undefined,
+            runId,
+          },
+          controller.signal,
+          (data) => write("tool", data),
+          model.contextWindow - c.maxOutputTokens,
+          continuation.grounding,
+          messages,
+        );
+        toolsResult.inputTokens =
+          toolsResult.inputTokens === null || knowledgePlan.inputTokens === null
+            ? null
+            : toolsResult.inputTokens + knowledgePlan.inputTokens;
+        toolsResult.outputTokens =
+          toolsResult.outputTokens === null ||
+          knowledgePlan.outputTokens === null
+            ? null
+            : toolsResult.outputTokens + knowledgePlan.outputTokens;
+        const grounding =
+          continuation.grounding +
+          (sources.length ? groundedPrompt(sources) : "") +
+          toolsResult.grounding +
+          (c.generative.enabled
+            ? generativePrompt() +
+              ` Allowed block types: ${c.generative.allowedBlocks.join(",")}.`
+            : "");
+        // Conservative UTF-8 byte budget avoids sending an oversized context to providers.
+        if (
+          Buffer.byteLength(JSON.stringify(messages)) +
+            Buffer.byteLength(JSON.stringify(c.prompt)) +
+            Buffer.byteLength(grounding) >
+          model.contextWindow - c.maxOutputTokens
+        )
+          throw new ProviderError("CONTEXT_LIMIT");
+        for await (const event of runtime.run(
+          c,
+          messages,
+          provider,
+          controller.signal,
+          grounding,
+        )) {
+          if (controller.signal.aborted) throw new ProviderError("CANCELLED");
+          if (event.type === "token") {
+            output += event.text;
+            if (output.length > 256000) throw new ProviderError("OUTPUT_LIMIT");
+            if (!c.generative.enabled) write("token", { text: event.text });
+          } else {
+            inputTokens =
+              event.inputTokens === null || toolsResult.inputTokens === null
+                ? null
+                : event.inputTokens + toolsResult.inputTokens;
+            outputTokens =
+              event.outputTokens === null || toolsResult.outputTokens === null
+                ? null
+                : event.outputTokens + toolsResult.outputTokens;
+          }
+        }
+        if (c.generative.enabled) {
+          try {
+            const envelope = responseEnvelope.parse(JSON.parse(output));
+            if (
+              envelope.blocks.some(
+                (b) => !c.generative.allowedBlocks.includes(b.type),
+              )
+            )
+              throw new Error("Unsupported component");
+            const prepared = await prepareArtifacts(
+              envelope,
+              conversation.workspace_id,
+              conversation.organization_id,
+            );
+            uiBlocks = prepared.blocks;
+            artifacts = prepared.artifacts;
+            if (controller.signal.aborted) throw new ProviderError("CANCELLED");
+            output = [
+              envelope.message,
+              ...envelope.blocks
+                .filter((b) => b.type === "text")
+                .map((b) => (b.type === "text" ? b.content : "")),
+            ]
+              .filter(Boolean)
+              .join("\n\n");
+          } catch (error) {
+            output = "";
+            if (error instanceof ProviderError) throw error;
+            throw new ProviderError("INVALID_UI_RESPONSE");
+          }
+        }
+      }
+      citations = citedSources(output, sources);
+      if (
+        sources.length &&
+        c.rag.requireCitations &&
+        (!answerKind || answerKind === "answer") &&
+        !citations.length
+      )
+        throw new KnowledgeError("CITATION_REQUIRED");
+      if (
+        sources.length &&
+        [...output.matchAll(/\[(\d+)\]/g)].some(
+          (m) => !sources.some((s) => s.id === Number(m[1])),
+        )
+      )
+        throw new KnowledgeError("INVALID_CITATION");
+    }
   } catch (e) {
     citations = citedSources(output, sources);
     status = controller.signal.aborted ? "cancelled" : "failed";
@@ -507,7 +552,9 @@ async function streamChat(
           await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content,citations,ui_blocks) VALUES (${messageId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'assistant',${output},${tx.json(citations.map((s) => ({ ...s })))},${tx.json(uiBlocks as never)})`;
         for (const a of artifacts)
           await tx`INSERT INTO generated_artifacts(id,organization_id,workspace_id,message_id,name,content_type,storage_key,byte_size) VALUES (${a.id},${conversation.organization_id},${conversation.workspace_id},${messageId},${a.name},${a.contentType},${a.key},${a.byteSize})`;
-        await tx`UPDATE agent_runs SET status=${status},input_tokens=${inputTokens},output_tokens=${outputTokens},error_code=${errorCode},finished_at=now(),retrieval=${tx.json(sources.map((s) => ({ ...s })))},retrieval_ms=${retrievalMs} WHERE id=${runId}`;
+        if (status === "completed")
+          await tx`UPDATE conversations SET journey_state=${tx.json(journey!.state as never)} WHERE id=${conversation.id}`;
+        await tx`UPDATE agent_runs SET answer_kind=${answerKind},status=${status},input_tokens=${inputTokens},output_tokens=${outputTokens},error_code=${errorCode},finished_at=now(),retrieval=${tx.json(sources.map((s) => ({ ...s })))},retrieval_ms=${retrievalMs} WHERE id=${runId}`;
         await tx`UPDATE agent_runs ar SET input_usd_per_million=p.input_usd_per_million,output_usd_per_million=p.output_usd_per_million FROM model_prices p WHERE ar.id=${runId} AND p.model_id=${model.id} AND p.workspace_id=${conversation.workspace_id}`;
         await queueRunWebhooks(tx, {
           id: runId,
@@ -518,7 +565,16 @@ async function streamChat(
         });
       });
       try {
-        await evaluateEscalation(conversation.id, runId, provider);
+        await evaluateEscalation(
+          conversation.id,
+          runId,
+          provider,
+          offerHuman
+            ? answerKind === "handoff"
+              ? "required_intent"
+              : "knowledge_gap"
+            : undefined,
+        );
       } catch {
         r.log.warn(
           { runId, traceId, code: "SUPPORT_DECISION_FAILED" },
@@ -531,19 +587,21 @@ async function streamChat(
           message:
             errorCode === "KNOWLEDGE_PLAN_INVALID"
               ? "The knowledge usage decision was invalid. Check your model and usage instructions, then retry."
-              : errorCode === "TOOL_REQUIRED"
-                ? "Your tool policy requires a call, but no relevant safe call was selected. Review the usage policy and tool descriptions."
-                : errorCode === "NO_RELEVANT_SOURCES"
-                  ? "No relevant knowledge was found. Try another question or check the knowledge sources."
-                  : errorCode === "CITATION_REQUIRED" ||
-                      errorCode === "INVALID_CITATION"
-                    ? "The response could not be verified against its source references."
-                    : errorCode === "KNOWLEDGE_NOT_PUBLIC"
-                      ? "This knowledge is unavailable in public chat."
-                      : errorCode.startsWith("TOOL_") ||
-                          errorCode.startsWith("MCP_")
-                        ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
-                        : c.fallbackResponse,
+              : errorCode === "GROUNDED_RESPONSE_INVALID"
+                ? "The answer could not be verified. Please clarify your question or request customer care."
+                : errorCode === "TOOL_REQUIRED"
+                  ? "Your tool policy requires a call, but no relevant safe call was selected. Review the usage policy and tool descriptions."
+                  : errorCode === "NO_RELEVANT_SOURCES"
+                    ? "No relevant knowledge was found. Try another question or check the knowledge sources."
+                    : errorCode === "CITATION_REQUIRED" ||
+                        errorCode === "INVALID_CITATION"
+                      ? "The response could not be verified against its source references."
+                      : errorCode === "KNOWLEDGE_NOT_PUBLIC"
+                        ? "This knowledge is unavailable in public chat."
+                        : errorCode.startsWith("TOOL_") ||
+                            errorCode.startsWith("MCP_")
+                          ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
+                          : c.fallbackResponse,
           status,
         });
       else {
@@ -804,8 +862,8 @@ export async function registerAgentRoutes(
         "agent:create",
       );
       const data = agentInput.parse(r.body);
-      await validateKnowledgeIds(
-        data.config.rag.knowledgeBaseIds,
+      await validateKnowledgeSelection(
+        data.config.rag,
         w.id,
         w.organization_id,
       );
@@ -840,11 +898,7 @@ export async function registerAgentRoutes(
   app.put("/agents/:agentId", schema(agentUpdate), async (r) => {
     const { u, a, w } = await ownedAgent(r, "agent:update");
     const data = agentUpdate.parse(r.body);
-    await validateKnowledgeIds(
-      data.config.rag.knowledgeBaseIds,
-      w.id,
-      w.organization_id,
-    );
+    await validateKnowledgeSelection(data.config.rag, w.id, w.organization_id);
     await validateToolIds(data.config.tools.toolIds, {
       workspaceId: w.id,
       organizationId: w.organization_id,
@@ -885,10 +939,12 @@ export async function registerAgentRoutes(
         if (!locked || locked.revision !== data.revision)
           throw new HttpError(409, "Draft changed; reload before publishing");
         const c = agentConfig.parse(locked.draft_config);
-        await validateKnowledgeIds(
-          c.rag.knowledgeBaseIds,
+        await validateKnowledgeSelection(
+          c.rag,
           w.id,
           w.organization_id,
+          false,
+          true,
         );
         await validateToolIds(c.tools.toolIds, {
           workspaceId: w.id,
@@ -956,10 +1012,11 @@ export async function registerAgentRoutes(
         await sql`SELECT id,config FROM agent_versions WHERE id=${data.versionId} AND agent_id=${a.id}`;
       if (!v)
         throw new HttpError(400, "Select a published version of this agent");
-      await validateKnowledgeIds(
-        agentConfig.parse(v.config).rag.knowledgeBaseIds,
+      await validateKnowledgeSelection(
+        agentConfig.parse(v.config).rag,
         w.id,
         w.organization_id,
+        true,
         true,
       );
       await validateToolIds(agentConfig.parse(v.config).tools.toolIds, {
@@ -1074,6 +1131,7 @@ export async function registerAgentRoutes(
         factory,
         undefined,
         ragTool,
+        data.quickActionId,
       );
     },
   );
@@ -1087,6 +1145,7 @@ export async function registerAgentRoutes(
         description: d.public_description,
         welcomeMessage: c.welcomeMessage,
         conversationStarters: c.conversationStarters,
+        quickActions: c.quickActions,
         ...(channel === "widgets"
           ? {
               widget: (
@@ -1149,6 +1208,7 @@ export async function registerAgentRoutes(
           factory,
           raw,
           ragTool,
+          data.quickActionId,
         );
       },
     );
