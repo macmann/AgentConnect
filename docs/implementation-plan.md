@@ -152,7 +152,7 @@ See connectors.md for setup, permissions and the initial release's sync semantic
 - [x] Isolated synthetic PostgreSQL/S3 encrypted recovery drill with tenant, vector, secret and corruption verification.
 - [x] Workspace retention settings, non-destructive preview, scheduled atomic cleanup, audit counts and durable generated-object deletion with tenant/race regressions.
 - [ ] Independent penetration testing, broader concurrency/race assessment and realistic agent/workflow load tests.
-- [ ] Production HA/failover, measured backup/restore RPO/RTO, remaining data-category/backup retention and legal holds, release automation and on-premise packaging.
+- [ ] Production HA/failover, measured backup/restore RPO/RTO, remaining data-category/backup retention and legal holds, live release acceptance and certified on-premise packaging.
 - [ ] Performance targets, accessibility review and live provider/SMTP acceptance.
 
 See hardening.md for checks, operational limits and remaining production acceptance.
@@ -173,6 +173,6 @@ Proceed to product-spec.md Phase 10 hardening after Teams and Slack validation. 
 
 ## Current priority: UI enhancements
 
-Deployment automation and additional monitoring are on hold. The seven-phase [human support roadmap](human-support.md) is implemented through Phase G: support foundation, console, operator/routing configuration, policy-controlled escalation, private copilot, approved human-to-AI continuation and support operations.
+Deployment automation and private runtime monitoring have resumed: locked release images, CI and reviewed rollout/rollback tooling, authenticated aggregate API/queue metrics, worker progress probes, and Prometheus/Grafana examples. See [releases](releases.md) and [monitoring](monitoring.md). Live deployment, monitoring receivers and HA/failover acceptance require configured infrastructure. The seven-phase [human support roadmap](human-support.md) is implemented through Phase G: support foundation, console, operator/routing configuration, policy-controlled escalation, private copilot, approved human-to-AI continuation and support operations.
 
 The [Agent Configure redesign](agent-configure.md) introduces section-based progressive disclosure, real configuration readiness, attachment health, shared-draft validation, sticky saving and direct section navigation while preserving Configure / Playground / Publish. The [workspace UI enhancement](workspace-ui.md) extends focused sections, mobile navigation, actionable empty states and progressive disclosure to Tools, Knowledge, Quality, Channels, Retention, Operations, Models and Connectors, while preserving their existing data and APIs.

@@ -1,0 +1,48 @@
+groups:
+  - name: agentconnect
+    rules:
+      - alert: AgentConnectScrapeUnavailable
+        expr: up{job=~"agentconnect-api|agentconnect-worker"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: AgentConnect metrics cannot be collected
+          description: Check process/network health, bearer configuration and dependency availability.
+      - alert: AgentConnectApiNotReady
+        expr: agentconnect_api_ready == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: API dependency readiness is failing
+      - alert: AgentConnectWorkerNotReady
+        expr: agentconnect_worker_ready == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: A worker loop is stalled, repeatedly failing or stopping
+      - alert: AgentConnectQueueBacklog
+        expr: agentconnect_queue_oldest_due_age_seconds > 600
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Eligible queued work has waited more than ten minutes
+          description: Check the corresponding worker loop and provider/dependency limits. Human approval waiting is excluded.
+      - alert: AgentConnectRetentionBlocked
+        expr: agentconnect_queue_jobs{queue="retention_objects",state="blocked"} > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Retention object deletions need operator review
+      - alert: AgentConnectApiErrors
+        expr: sum(rate(agentconnect_http_requests_total{status="5xx"}[5m])) / clamp_min(sum(rate(agentconnect_http_requests_total[5m])), 0.001) > 0.05 and sum(increase(agentconnect_http_requests_total[5m])) > 20
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: API server errors exceed five percent of requests
+      - alert: AgentConnectAgentFailures
+        expr: agentconnect_agent_runs_1h{status="failed"} > 5
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Multiple agent runs failed in the last hour
+          description: Review sanitized runtime failure codes. Chat SSE responses may return HTTP 200 even when the agent run fails.

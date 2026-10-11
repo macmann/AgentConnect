@@ -73,6 +73,18 @@ try {
   if (!supportedVectorVersion(extension?.extversion))
     throw new Error("pgvector >= 0.8.7 is required");
   console.log("Migrations applied; pgvector version verified");
+} catch (error) {
+  const code = (error as { code?: unknown }).code;
+  console.error(
+    JSON.stringify({
+      status: "failed",
+      code:
+        typeof code === "string" && /^[A-Z0-9_]{2,64}$/.test(code)
+          ? code
+          : "MIGRATION_FAILED",
+    }),
+  );
+  process.exitCode = 1;
 } finally {
   await sql.end();
 }

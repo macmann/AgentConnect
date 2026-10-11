@@ -1,0 +1,179 @@
+{
+  "title": "AgentConnect operations",
+  "uid": "agentconnect-operations",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "tags": ["agentconnect"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "refresh": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "API readiness",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "agentconnect_api_ready",
+          "refId": "A",
+          "legendFormat": "{{status}}{{queue}}{{task}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Worker readiness",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "agentconnect_worker_ready",
+          "refId": "A",
+          "legendFormat": "{{status}}{{queue}}{{task}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Requests / second",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(agentconnect_http_requests_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{status}}{{queue}}{{task}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "HTTP p95 seconds",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(agentconnect_http_request_duration_seconds_bucket[5m])))",
+          "refId": "A",
+          "legendFormat": "{{status}}{{queue}}{{task}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Oldest eligible queue job (seconds)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "agentconnect_queue_oldest_due_age_seconds",
+          "refId": "A",
+          "legendFormat": "{{status}}{{queue}}{{task}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Worker consecutive failures",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "agentconnect_worker_task_consecutive_failures",
+          "refId": "A",
+          "legendFormat": "{{status}}{{queue}}{{task}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Agent runs in last hour",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "agentconnect_agent_runs_1h",
+          "refId": "A",
+          "legendFormat": "{{status}}{{queue}}{{task}}"
+        }
+      ]
+    }
+  ]
+}

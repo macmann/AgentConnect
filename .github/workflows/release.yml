@@ -1,0 +1,57 @@
+name: Build release images
+on:
+  workflow_dispatch:
+    inputs:
+      public_api_url:
+        description: HTTPS API URL baked into the browser bundle
+        type: string
+        required: true
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
+  images:
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Validate build URL
+        env:
+          PUBLIC_API_URL: ${{ inputs.public_api_url }}
+        run: node -e 'const u=new URL(process.env.PUBLIC_API_URL); if(u.protocol!=="https:"||u.username||u.password||u.search||u.hash) process.exit(1)'
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish pinned artifacts
+        env:
+          PUBLIC_API_URL: ${{ inputs.public_api_url }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          repository="$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          for service in api worker web; do
+            docker buildx build --file Dockerfile --target "$service" \
+              --build-arg NEXT_PUBLIC_API_URL="$PUBLIC_API_URL" \
+              --tag "ghcr.io/$repository-$service:$COMMIT" \
+              --label "org.opencontainers.image.revision=$COMMIT" \
+              --provenance=mode=min --sbom=true \
+              --metadata-file "$service-metadata.json" --push .
+          done
+          node scripts/create-release-manifest.mjs "$repository" "$COMMIT" "$PUBLIC_API_URL" > release.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-${{ github.sha }}
+          path: release.json
+          retention-days: 90
