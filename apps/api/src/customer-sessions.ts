@@ -78,6 +78,20 @@ export async function registerCustomerSessions(app: FastifyInstance) {
   for (const channel of ["deployments", "widgets"]) {
     const base = "/public/" + channel + "/:deploymentId";
     app.post(
+      base + "/conversations",
+      { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
+      async (r, reply) => {
+        const s = await customerSession(r, id(params(r).deploymentId));
+        if (!s) throw new HttpError(401, "Customer session required");
+        const [d] =
+          await sql`SELECT d.*,v.config,v.model_snapshot FROM deployments d JOIN agent_versions v ON v.id=d.version_id JOIN agents a ON a.id=d.agent_id WHERE d.id=${s.deployment_id} AND d.enabled AND a.archived_at IS NULL`;
+        if (!d) throw new HttpError(404, "Deployment unavailable");
+        const conversationId = randomUUID();
+        await sql`INSERT INTO conversations(id,workspace_id,organization_id,agent_id,version_id,deployment_id,guest_token_hash,customer_session_id,config_snapshot,model_snapshot,channel,widget_origin) VALUES(${conversationId},${d.workspace_id},${d.organization_id},${d.agent_id},${d.version_id},${d.id},${digest(token())},${s.id},${sql.json(d.config)},${sql.json(d.model_snapshot)},${s.channel},${s.widget_origin})`;
+        return reply.code(201).send({ conversationId });
+      },
+    );
+    app.post(
       base + "/sessions",
       { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
       async (r, reply) => {
@@ -123,7 +137,7 @@ export async function registerCustomerSessions(app: FastifyInstance) {
       if (!s)
         throw new HttpError(401, "Customer session expired or unavailable");
       const [c] =
-        await sql`SELECT id,conversation_mode,handoff_status FROM conversations WHERE id=${id(params(r).conversationId)} AND customer_session_id=${s.id} AND deployment_id=${s.deployment_id}`;
+        await sql`SELECT id,conversation_mode,handoff_status,(config_snapshot->'generative'->>'allowPublicForms')::boolean AS actions_enabled FROM conversations WHERE id=${id(params(r).conversationId)} AND customer_session_id=${s.id} AND deployment_id=${s.deployment_id}`;
       if (!c) throw new HttpError(404, "Conversation not found");
       reply.header("cache-control", "no-store");
       const q = z
@@ -138,7 +152,10 @@ export async function registerCustomerSessions(app: FastifyInstance) {
         await sql`SELECT m.id AS "messageId",m.role,m.content,m.citations,m.ui_blocks AS blocks,m.created_at FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${c.id} AND ar.status IN ('completed','failed','cancelled') AND (m.created_at,m.id)<(${q.before ?? new Date().toISOString()},${q.beforeId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"}) ORDER BY m.created_at DESC,m.id DESC LIMIT 201`;
       return {
         ...c,
-        messages: rows.slice(0, 200).reverse(),
+        messages: rows
+          .slice(0, 200)
+          .reverse()
+          .map((m) => ({ ...m, actionsEnabled: !!c.actions_enabled })),
         hasMore: rows.length > 200,
       };
     });

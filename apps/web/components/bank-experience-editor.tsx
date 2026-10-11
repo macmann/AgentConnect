@@ -4,16 +4,27 @@ import {
   type QuickAction,
   type SupportJourney,
 } from "@agentconnect/schemas/bank-experience";
+import { useQuery } from "@tanstack/react-query";
+import { requestJson } from "./agent-client";
 import { Button } from "./button";
 export function BankExperienceEditor({
+  workspaceId,
   actions,
   journeys,
   onChange,
 }: {
+  workspaceId: string;
   actions: QuickAction[];
   journeys: SupportJourney[];
   onChange: (actions: QuickAction[], journeys: SupportJourney[]) => void;
 }) {
+  const workflows = useQuery({
+    queryKey: ["customer-workflows", workspaceId],
+    queryFn: () =>
+      requestJson<{ id: string; name: string; version: number }[]>(
+        `/workspaces/${workspaceId}/customer-workflows`,
+      ),
+  });
   const updateAction = (i: number, patch: Partial<QuickAction>) =>
     onChange(
       actions.map((a, j) => (i === j ? { ...a, ...patch } : a)),
@@ -107,8 +118,36 @@ export function BankExperienceEditor({
               <option value="populate">Populate composer for review</option>
               <option value="journey">Start support journey</option>
               <option value="handoff">Offer customer care</option>
+              <option value="workflow">Run published workflow</option>
             </select>
           </label>
+          {a.behavior === "workflow" && (
+            <>
+              <label>
+                Published workflow
+                <select
+                  value={a.workflowVersionId ?? ""}
+                  onChange={(e) =>
+                    updateAction(i, {
+                      workflowVersionId: e.target.value || undefined,
+                    })
+                  }
+                >
+                  <option value="">Choose a published version</option>
+                  {workflows.data?.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name} · v{w.version}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {workflows.error && <p role="alert">{workflows.error.message}</p>}
+              <WorkflowFields
+                action={a}
+                update={(patch) => updateAction(i, patch)}
+              />
+            </>
+          )}
           {a.behavior === "journey" && (
             <label>
               Support journey
@@ -323,5 +362,118 @@ export function BankExperienceEditor({
         Add support journey
       </Button>
     </section>
+  );
+}
+
+function WorkflowFields({
+  action,
+  update,
+}: {
+  action: QuickAction;
+  update: (patch: Partial<QuickAction>) => void;
+}) {
+  const fields = action.workflowFields ?? [];
+  return (
+    <div>
+      <h5>Customer input fields</h5>
+      <p className="muted">
+        The workflow receives a JSON input containing the predefined request and
+        these field names. Do not collect passwords or banking credentials.
+      </p>
+      {fields.map((f, index) => (
+        <div key={index} className="configure-group">
+          <label>
+            Field name
+            <input
+              value={f.name}
+              onChange={(e) =>
+                update({
+                  workflowFields: fields.map((v, i) =>
+                    i === index ? { ...v, name: e.target.value } : v,
+                  ),
+                })
+              }
+            />
+          </label>
+          <label>
+            Label
+            <input
+              value={f.label}
+              onChange={(e) =>
+                update({
+                  workflowFields: fields.map((v, i) =>
+                    i === index ? { ...v, label: e.target.value } : v,
+                  ),
+                })
+              }
+            />
+          </label>
+          <label>
+            Type
+            <select
+              value={f.type}
+              onChange={(e) =>
+                update({
+                  workflowFields: fields.map((v, i) =>
+                    i === index
+                      ? { ...v, type: e.target.value as typeof f.type }
+                      : v,
+                  ),
+                })
+              }
+            >
+              {["text", "email", "number", "textarea", "checkbox", "date"].map(
+                (type) => (
+                  <option key={type}>{type}</option>
+                ),
+              )}
+            </select>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={f.required}
+              onChange={(e) =>
+                update({
+                  workflowFields: fields.map((v, i) =>
+                    i === index ? { ...v, required: e.target.checked } : v,
+                  ),
+                })
+              }
+            />
+            Required
+          </label>
+          <Button
+            type="button"
+            className="secondary"
+            onClick={() =>
+              update({ workflowFields: fields.filter((_, i) => i !== index) })
+            }
+          >
+            Remove field
+          </Button>
+        </div>
+      ))}
+      <Button
+        type="button"
+        className="secondary"
+        disabled={fields.length >= 12}
+        onClick={() =>
+          update({
+            workflowFields: [
+              ...fields,
+              {
+                name: "field_" + (fields.length + 1),
+                label: "New field",
+                type: "text",
+                required: false,
+              },
+            ],
+          })
+        }
+      >
+        Add input field
+      </Button>
+    </div>
   );
 }

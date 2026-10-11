@@ -1,11 +1,27 @@
 import { z } from "zod";
+import { field } from "@agentconnect/schemas/generative";
 const key = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
 export const quickAction = z.strictObject({
   id: key,
   label: z.string().trim().min(1).max(80),
   message: z.string().trim().min(1).max(1000),
-  behavior: z.enum(["send", "populate", "journey", "handoff"]).default("send"),
+  behavior: z
+    .enum(["send", "populate", "journey", "handoff", "workflow"])
+    .default("send"),
   journeyId: key.nullable().default(null),
+  workflowVersionId: z.uuid().optional(),
+  workflowFields: z
+    .array(
+      field.refine(
+        (f) =>
+          !/(^|_)(password|pin|otp|cvv|account_number|card_number)($|_)/i.test(
+            f.name,
+          ),
+        "Do not collect credentials or full financial identifiers",
+      ),
+    )
+    .max(12)
+    .optional(),
 });
 export const supportJourney = z
   .strictObject({

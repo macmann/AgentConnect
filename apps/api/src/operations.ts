@@ -1,3 +1,4 @@
+import { validateCustomerActions } from "./customer-workflows.js";
 import { registerCustomerReports } from "./customer-reports.js";
 import { registerKnowledgeGaps } from "./knowledge-gaps.js";
 import { dateRange } from "./customer-reports.js";
@@ -31,9 +32,12 @@ async function context(
   const w = await workspaceAccess(u.id, id(params(r).workspaceId), cap);
   return { u, w };
 }
-export async function registerOperationsRoutes(app: FastifyInstance) {
+export async function registerOperationsRoutes(
+  app: FastifyInstance,
+  embeddingFactory?: import("@agentconnect/provider-sdk/embeddings").EmbeddingFactory,
+) {
   await registerCustomerReports(app);
-  await registerKnowledgeGaps(app);
+  await registerKnowledgeGaps(app, embeddingFactory);
   app.get("/workspaces/:workspaceId/operations/audit", async (r) => {
     const { u, w } = await context(r);
     await workspaceAccess(u.id, w.id, "audit:view");
@@ -367,6 +371,7 @@ export async function registerOperationsRoutes(app: FastifyInstance) {
         if (!v)
           throw new HttpError(400, "Select a published version of this agent");
         const published = agentConfig.parse(v.config);
+        await validateCustomerActions(published, w.id, w.organization_id, true);
         await validateKnowledgeIds(
           published.rag.knowledgeBaseIds,
           w.id,

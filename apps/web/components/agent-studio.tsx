@@ -1022,6 +1022,7 @@ export function AgentStudio({
             </div>
             {tab === "configure" && (
               <AgentConfigure
+                workspaceId={workspaceId}
                 key={draft.id ?? "new"}
                 draft={draft}
                 update={setDraft}

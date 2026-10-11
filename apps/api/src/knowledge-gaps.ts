@@ -1,5 +1,12 @@
+import {
+  defaultEmbeddingFactory,
+  embeddingConnection,
+} from "./knowledge-core.js";
+import { semanticClusters } from "./semantic-gaps.js";
+import { validateVectors } from "@agentconnect/provider-sdk/embeddings";
+import type { EmbeddingFactory } from "@agentconnect/provider-sdk/embeddings";
 import type { FastifyInstance } from "fastify";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { z } from "zod";
 import { actor, workspaceAccess, id, params, audit } from "./app.js";
 import { sql } from "./db.js";
@@ -7,7 +14,10 @@ import { HttpError } from "./http-error.js";
 import { dateRange } from "./customer-reports.js";
 import { addSource } from "./knowledge.js";
 import type { KnowledgeBase } from "./knowledge-core.js";
-export async function registerKnowledgeGaps(app: FastifyInstance) {
+export async function registerKnowledgeGaps(
+  app: FastifyInstance,
+  factory: EmbeddingFactory = defaultEmbeddingFactory,
+) {
   app.get("/workspaces/:workspaceId/operations/knowledge-gaps", async (r) => {
     const u = await actor(r),
       w = await workspaceAccess(
@@ -17,7 +27,9 @@ export async function registerKnowledgeGaps(app: FastifyInstance) {
       ),
       { from, to } = dateRange(r.query);
     const rows =
-      await sql`SELECT ar.id AS run_id,ar.conversation_id,ar.answer_kind,ar.error_code,q.content AS question,cr.id AS review_id,cr.rating,cr.corrected_response,cr.label,ar.started_at FROM agent_runs ar JOIN LATERAL(SELECT content FROM messages WHERE run_id=ar.id AND role='user' ORDER BY created_at,id LIMIT 1) q ON true LEFT JOIN LATERAL(SELECT cr.* FROM conversation_reviews cr JOIN messages m ON m.id=cr.message_id WHERE m.run_id=ar.id ORDER BY cr.created_at DESC,cr.id DESC LIMIT 1) cr ON true WHERE ar.workspace_id=${w.id} AND ar.organization_id=${w.organization_id} AND ar.started_at>=${from} AND ar.started_at<${to} AND (ar.answer_kind='no_answer' OR ar.error_code IN ('NO_RELEVANT_SOURCES','CITATION_REQUIRED','INVALID_CITATION','GROUNDED_RESPONSE_INVALID') OR cr.rating='dislike') ORDER BY ar.started_at DESC,ar.id DESC LIMIT 1001`;
+      await sql`SELECT ar.id AS run_id,ar.conversation_id,ar.answer_kind,ar.error_code,q.content AS question,cr.id AS review_id,cr.rating,cr.corrected_response,cr.label,ar.started_at,cf.rating AS customer_rating,cf.resolved AS customer_resolved,EXISTS(SELECT 1 FROM support_cases sc WHERE sc.conversation_id=ar.conversation_id) AS handed_off FROM agent_runs ar JOIN LATERAL(SELECT content FROM messages WHERE run_id=ar.id AND role='user' ORDER BY created_at,id LIMIT 1) q ON true LEFT JOIN LATERAL(SELECT cr.* FROM conversation_reviews cr JOIN messages m ON m.id=cr.message_id WHERE m.run_id=ar.id ORDER BY cr.created_at DESC,cr.id DESC LIMIT 1) cr ON true LEFT JOIN customer_feedback cf ON cf.conversation_id=ar.conversation_id WHERE ar.workspace_id=${w.id} AND ar.organization_id=${w.organization_id} AND ar.started_at>=${from} AND ar.started_at<${to} AND (ar.answer_kind='no_answer' OR ar.error_code IN ('NO_RELEVANT_SOURCES','CITATION_REQUIRED','INVALID_CITATION','GROUNDED_RESPONSE_INVALID') OR cr.rating='dislike' OR cf.rating<=2 OR cf.resolved=false) ORDER BY ar.started_at DESC,ar.id DESC LIMIT 1001`;
+    const assignments =
+      await sql`SELECT run_id,group_key,method FROM knowledge_gap_assignments WHERE workspace_id=${w.id} AND organization_id=${w.organization_id}`;
     const groups = new Map<
       string,
       {
@@ -30,12 +42,15 @@ export async function registerKnowledgeGaps(app: FastifyInstance) {
       }
     >();
     for (const row of rows.slice(0, 1000)) {
-      const key = row.question
+      const normalized = row.question
         .normalize("NFKC")
         .toLowerCase()
         .replace(/[^\p{L}\p{N}\s]/gu, " ")
         .replace(/\s+/g, " ")
         .trim();
+      const key =
+        assignments.find((a) => a.run_id === row.run_id)?.group_key ??
+        normalized;
       const group: {
         key: string;
         question: string;
@@ -53,24 +68,177 @@ export async function registerKnowledgeGaps(app: FastifyInstance) {
       };
       group.count++;
       const reason =
-        row.rating === "dislike"
-          ? "Poor operator review"
-          : (row.error_code ?? "No approved answer");
+        row.customer_rating <= 2 && row.customer_rating !== null
+          ? "Customer dissatisfaction"
+          : row.customer_resolved === false
+            ? "Customer marked unresolved"
+            : row.rating === "dislike"
+              ? "Poor operator review"
+              : (row.error_code ?? "No approved answer");
       if (!group.reasons.includes(reason)) group.reasons.push(reason);
-      if (group.examples.length < 10) group.examples.push(row);
+      if (group.examples.length < 1000) group.examples.push(row);
       groups.set(key, group);
     }
     const drafts =
-      await sql`SELECT i.*,kb.name AS knowledge_name FROM knowledge_improvements i JOIN knowledge_bases kb ON kb.id=i.knowledge_base_id WHERE i.workspace_id=${w.id} AND i.organization_id=${w.organization_id} ORDER BY i.created_at DESC LIMIT 100`;
+      await sql`SELECT i.*,kb.name AS knowledge_name,release.published_at,EXISTS(SELECT 1 FROM knowledge_release_chunks rc WHERE rc.release_id=kb.published_release_id AND rc.source_id=i.source_id) AS active_in_current_release FROM knowledge_improvements i JOIN knowledge_bases kb ON kb.id=i.knowledge_base_id LEFT JOIN LATERAL(SELECT min(kr.published_at) AS published_at FROM knowledge_releases kr WHERE kr.knowledge_base_id=i.knowledge_base_id AND kr.published_at IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge_release_chunks rc WHERE rc.release_id=kr.id AND rc.source_id=i.source_id)) release ON true WHERE i.workspace_id=${w.id} AND i.organization_id=${w.organization_id} ORDER BY i.created_at DESC LIMIT 100`;
     return {
       range: { from, to },
-      groups: [...groups.values()].sort((a, b) => b.count - a.count),
+      groups: [...groups.values()]
+        .map((g) => ({
+          ...g,
+          priority:
+            g.count +
+            2 *
+              g.examples.filter(
+                (e) =>
+                  (e.customer_rating !== null && e.customer_rating <= 2) ||
+                  e.customer_resolved === false,
+              ).length +
+            g.examples.filter((e) => e.handed_off).length,
+          correctedDrafts: drafts
+            .filter((d) => g.examples.some((e) => e.review_id === d.review_id))
+            .map((d) => ({
+              id: d.id,
+              status: d.status,
+              created_at: d.created_at,
+              published_at: d.published_at,
+              active_in_current_release: d.active_in_current_release,
+              before: g.examples.filter(
+                (e) =>
+                  d.published_at &&
+                  new Date(e.started_at).getTime() <
+                    new Date(d.published_at).getTime(),
+              ).length,
+              after: g.examples.filter(
+                (e) =>
+                  d.published_at &&
+                  new Date(e.started_at).getTime() >=
+                    new Date(d.published_at).getTime(),
+              ).length,
+            })),
+          trend: {
+            recent: g.examples.filter(
+              (e) =>
+                Date.parse(e.started_at) >=
+                (Date.parse(from) + Date.parse(to)) / 2,
+            ).length,
+            earlier: g.examples.filter(
+              (e) =>
+                Date.parse(e.started_at) <
+                (Date.parse(from) + Date.parse(to)) / 2,
+            ).length,
+          },
+        }))
+        .sort((a, b) => b.priority - a.priority),
       drafts,
       truncated: rows.length > 1000,
       method:
-        "Exact normalized question grouping; suggestions are review prompts, not generated factual corrections.",
+        "Embedding similarity where clustered, exact normalized questions otherwise. Reviewer assignments take precedence. Priority combines frequency, customer dissatisfaction and handoff. Trend compares equal halves of the selected period; corrections do not prove causation.",
     };
   });
+  app.post(
+    "/workspaces/:workspaceId/operations/knowledge-gaps/cluster",
+    { config: { rateLimit: { max: 2, timeWindow: "1 minute" } } },
+    async (r) => {
+      const u = await actor(r),
+        w = await workspaceAccess(
+          u.id,
+          id(params(r).workspaceId),
+          "conversation:review",
+        );
+      const d = z
+        .strictObject({
+          modelId: z.uuid(),
+          threshold: z.number().min(0.7).max(0.99).default(0.85),
+          from: z.iso.datetime(),
+          to: z.iso.datetime(),
+        })
+        .parse(r.body);
+      const range = dateRange({ from: d.from, to: d.to });
+      const rows =
+        await sql`SELECT ar.id,q.content AS question FROM agent_runs ar JOIN LATERAL(SELECT content FROM messages WHERE run_id=ar.id AND role='user' ORDER BY created_at,id LIMIT 1) q ON true LEFT JOIN customer_feedback cf ON cf.conversation_id=ar.conversation_id WHERE ar.workspace_id=${w.id} AND ar.organization_id=${w.organization_id} AND ar.started_at>=${range.from} AND ar.started_at<${range.to} AND (ar.answer_kind='no_answer' OR ar.error_code IN ('NO_RELEVANT_SOURCES','CITATION_REQUIRED','INVALID_CITATION','GROUNDED_RESPONSE_INVALID') OR cf.rating<=2 OR cf.resolved=false OR EXISTS(SELECT 1 FROM conversation_reviews cr JOIN messages m ON m.id=cr.message_id WHERE m.run_id=ar.id AND cr.rating='dislike')) ORDER BY ar.started_at DESC,ar.id DESC LIMIT 301`;
+      const items = rows.slice(0, 300),
+        conn = await embeddingConnection(d.modelId, w.id, w.organization_id),
+        provider = factory(conn),
+        vectors: number[][] = [],
+        signal = AbortSignal.timeout(60000);
+      for (let i = 0; i < items.length; i += 32) {
+        const texts = items
+            .slice(i, i + 32)
+            .map((row) => row.question.slice(0, 2000)),
+          batch = await provider.embed(texts, signal, "document");
+        validateVectors(batch, texts.length, conn.dimensions);
+        vectors.push(...batch);
+      }
+      const groups = semanticClusters(vectors, d.threshold);
+      await sql.begin(async (tx) => {
+        for (const group of groups) {
+          const key =
+            "semantic:" +
+            createHash("sha256")
+              .update(
+                items[group[0]!]!.question.normalize("NFKC")
+                  .trim()
+                  .toLowerCase(),
+              )
+              .digest("hex");
+          for (const index of group)
+            await tx`INSERT INTO knowledge_gap_assignments(run_id,workspace_id,organization_id,group_key,updated_by,method) VALUES(${items[index]!.id},${w.id},${w.organization_id},${key},${u.id},'embedding') ON CONFLICT(run_id) DO UPDATE SET group_key=EXCLUDED.group_key,updated_by=EXCLUDED.updated_by,method='embedding',updated_at=now() WHERE knowledge_gap_assignments.method<>'reviewer'`;
+        }
+      });
+      return {
+        grouped: items.length,
+        clusters: groups.length,
+        truncated: rows.length > 300,
+      };
+    },
+  );
+  app.post(
+    "/workspaces/:workspaceId/operations/knowledge-gaps/assign",
+    async (r) => {
+      const u = await actor(r),
+        w = await workspaceAccess(
+          u.id,
+          id(params(r).workspaceId),
+          "conversation:review",
+        );
+      const d = z
+        .strictObject({
+          runIds: z.array(z.uuid()).min(1).max(1000),
+          targetRunId: z.uuid().nullable(),
+          targetRunIds: z.array(z.uuid()).max(1000).default([]),
+        })
+        .parse(r.body);
+      const result = await sql.begin(async (tx) => {
+        const rows =
+          await tx`SELECT id FROM agent_runs WHERE id=ANY(${[...d.runIds, ...d.targetRunIds, ...(d.targetRunId ? [d.targetRunId] : [])]}::uuid[]) AND workspace_id=${w.id} AND organization_id=${w.organization_id}`;
+        if (
+          rows.length !==
+          new Set([
+            ...d.runIds,
+            ...d.targetRunIds,
+            ...(d.targetRunId ? [d.targetRunId] : []),
+          ]).size
+        )
+          throw new HttpError(404, "Question unavailable");
+        const [target] = d.targetRunId
+          ? await tx`SELECT group_key FROM knowledge_gap_assignments WHERE run_id=${d.targetRunId}`
+          : [];
+        const key = target?.group_key ?? "reviewed:" + randomUUID();
+        const ids = [
+          ...new Set([
+            ...d.runIds,
+            ...d.targetRunIds,
+            ...(d.targetRunId ? [d.targetRunId] : []),
+          ]),
+        ];
+        for (const runId of ids)
+          await tx`INSERT INTO knowledge_gap_assignments(run_id,workspace_id,organization_id,group_key,updated_by) VALUES(${runId},${w.id},${w.organization_id},${key},${u.id}) ON CONFLICT(run_id) DO UPDATE SET group_key=EXCLUDED.group_key,updated_by=EXCLUDED.updated_by,method='reviewer',updated_at=now()`;
+        return { key };
+      });
+      return result;
+    },
+  );
   app.post(
     "/workspaces/:workspaceId/operations/knowledge-improvements",
     async (r, reply) => {

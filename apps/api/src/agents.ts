@@ -1,3 +1,4 @@
+import { validateCustomerActions } from "./customer-workflows.js";
 import { routedProvider, modelUsageCost } from "./model-routing.js";
 import { enhancedRetrieval } from "./rag-enhancements.js";
 import { advanceJourney, generateGroundedAnswer } from "./bank-runtime.js";
@@ -1033,6 +1034,7 @@ export async function registerAgentRoutes(
         "agent:create",
       );
       const data = agentInput.parse(r.body);
+      await validateCustomerActions(data.config, w.id, w.organization_id);
       await validateKnowledgeSelection(
         data.config.rag,
         w.id,
@@ -1069,6 +1071,7 @@ export async function registerAgentRoutes(
   app.put("/agents/:agentId", schema(agentUpdate), async (r) => {
     const { u, a, w } = await ownedAgent(r, "agent:update");
     const data = agentUpdate.parse(r.body);
+    await validateCustomerActions(data.config, w.id, w.organization_id);
     await validateKnowledgeSelection(data.config.rag, w.id, w.organization_id);
     await validateToolIds(data.config.tools.toolIds, {
       workspaceId: w.id,
@@ -1110,6 +1113,7 @@ export async function registerAgentRoutes(
         if (!locked || locked.revision !== data.revision)
           throw new HttpError(409, "Draft changed; reload before publishing");
         const c = agentConfig.parse(locked.draft_config);
+        await validateCustomerActions(c, w.id, w.organization_id);
         await validateKnowledgeSelection(
           c.rag,
           w.id,
@@ -1200,6 +1204,12 @@ export async function registerAgentRoutes(
         organizationId: w.organization_id,
         publicAccess: true,
       });
+      await validateCustomerActions(
+        agentConfig.parse(v.config),
+        w.id,
+        w.organization_id,
+        true,
+      );
       const deploymentId = randomUUID();
       await sql.begin(async (tx) => {
         await tx`INSERT INTO deployments(id,organization_id,workspace_id,agent_id,version_id,name,environment) VALUES (${deploymentId},${w.organization_id},${w.id},${a.id},${v.id},${data.name},${data.environment})`;

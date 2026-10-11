@@ -14,7 +14,7 @@ const tableData = {
     .max(12),
   rows: z.array(z.record(identifier, cell)).max(100),
 };
-const field = z
+export const field = z
   .object({
     name: identifier,
     label: title,

@@ -6,6 +6,20 @@ const schema = z.object({
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   WEB_ORIGIN: z.url(),
+  MESSAGING_PUBLIC_URL: z
+    .url()
+    .refine((v) => {
+      const u = new URL(v);
+      return (
+        u.protocol === "https:" &&
+        !u.username &&
+        !u.password &&
+        !u.search &&
+        !u.hash &&
+        u.pathname === "/"
+      );
+    }, "Use the public HTTPS API origin")
+    .optional(),
   MONITORING_TOKEN: z.string().min(32).max(256).optional(),
   WORKER_HEALTH_HOST: z.enum(["127.0.0.1", "0.0.0.0"]).default("127.0.0.1"),
   WORKER_HEALTH_PORT: z.coerce.number().int().min(1).max(65535).default(4100),

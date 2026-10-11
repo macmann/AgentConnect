@@ -21,7 +21,7 @@ import { digest } from "./security.js";
 import { HttpError } from "./http-error.js";
 import { widgetBundle } from "./widget-bundle.js";
 export function widgetDeploymentPath(r: FastifyRequest) {
-  return /^\/public\/widgets\/([0-9a-f-]{36})(?:\/(?:chat|sessions|history(?:\/[0-9a-f-]{36})?|conversations\/[0-9a-f-]{36}\/handoff(?:\/stream)?))?$/.exec(
+  return /^\/public\/widgets\/([0-9a-f-]{36})(?:\/(?:messages\/[0-9a-f-]{36}\/actions\/[a-z][a-z0-9_]{0,39}|artifacts\/[0-9a-f-]{36}\/grant|chat|sessions|history(?:\/[0-9a-f-]{36})?|conversations(?:\/[0-9a-f-]{36}\/(?:handoff(?:\/stream)?|feedback|workflows(?:\/[0-9a-f-]{36})?))?))?$/.exec(
     r.url.split("?")[0]!,
   )?.[1];
 }
@@ -51,7 +51,10 @@ export async function requireWidgetOrigin(r: FastifyRequest) {
   )
     throw new HttpError(403, "Widget disabled or origin not allowed");
 }
-async function conversationAccess(r: FastifyRequest, publicRoute: boolean) {
+export async function conversationAccess(
+  r: FastifyRequest,
+  publicRoute: boolean,
+) {
   const [c] =
     await sql`SELECT * FROM conversations WHERE id=${id(params(r).conversationId)}`;
   if (!c) throw new HttpError(404, "Conversation not found");
@@ -89,7 +92,7 @@ export async function registerChannelRoutes(app: FastifyInstance) {
   await registerCustomerSessions(app);
   app.get("/widget.js", async (_r, reply) =>
     reply
-      .type("application/javascript")
+      .type("application/javascript; charset=utf-8")
       .header("cross-origin-resource-policy", "cross-origin")
       .header("cache-control", "public, max-age=300")
       .send(widgetBundle),

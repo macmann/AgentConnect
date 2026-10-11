@@ -8,6 +8,8 @@ import {
 } from "react";
 import type { QuickAction } from "@agentconnect/schemas/bank-experience";
 import { ArrowUp, Square, RefreshCw, Sparkles } from "lucide-react";
+import { CustomerFeedback } from "./customer-feedback";
+import { CustomerWorkflow } from "./customer-workflow";
 import { GenerativeResponse } from "./generative-response";
 import type { RenderedBlock } from "@agentconnect/schemas/generative";
 import { Button } from "./button";
@@ -21,7 +23,7 @@ import {
   writeMemory,
   type CustomerMemory,
 } from "./customer-session";
-import { streamChat, requestJson } from "./agent-client";
+import { streamChat, requestJson, apiBase } from "./agent-client";
 function diagnosticHint(code: string): string {
   switch (code) {
     case "PROVIDER_HTTP_ERROR":
@@ -65,6 +67,9 @@ export function ChatPanel({
       tools?: ToolTrace[];
     }[]
   >([]);
+  const [workflowAction, setWorkflowAction] = useState<QuickAction | null>(
+    null,
+  );
   const customer = useRef<CustomerMemory | null>(null);
   const [restoring, setRestoring] = useState(endpoint.startsWith("/public/"));
   const [olderMessages, setOlderMessages] = useState(false);
@@ -254,6 +259,7 @@ export function ChatPanel({
     void send(input);
   }
   function reset() {
+    setWorkflowAction(null);
     controller.current?.abort();
     conversation.current = undefined;
     guest.current = undefined;
@@ -382,7 +388,39 @@ export function ChatPanel({
               className="secondary"
               disabled={busy || handoffOpen || restoring}
               onClick={() => {
-                if (a.behavior === "populate") {
+                if (a.behavior === "workflow" && publicBase) {
+                  void (async () => {
+                    setBusy(true);
+                    try {
+                      if (!conversation.current) {
+                        const r = await fetch(
+                          apiBase + publicBase + "/conversations",
+                          {
+                            method: "POST",
+                            headers: {
+                              authorization:
+                                "Bearer " + customer.current!.token,
+                            },
+                          },
+                        );
+                        const data = await r.json();
+                        if (!r.ok) throw new Error(data.error);
+                        conversation.current = data.conversationId;
+                        guest.current = customer.current!.token;
+                        customer.current = {
+                          ...customer.current!,
+                          active: data.conversationId,
+                        };
+                        writeMemory(publicBase, customer.current);
+                      }
+                      setWorkflowAction(a);
+                    } catch (e) {
+                      setError((e as Error).message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  })();
+                } else if (a.behavior === "populate") {
                   setInput(a.message);
                   composer.current?.focus();
                 } else void send(a.message, a.id);
@@ -392,6 +430,22 @@ export function ChatPanel({
             </Button>
           ))}
         </div>
+      )}
+      {publicBase && conversation.current && guest.current && (
+        <CustomerWorkflow
+          key={"workflow:" + conversation.current}
+          base={publicBase}
+          conversationId={conversation.current}
+          token={guest.current}
+          action={workflowAction}
+          onClose={() => setWorkflowAction(null)}
+        />
+      )}
+      {workflowAction && !conversation.current && (
+        <p role="status">
+          Send a message to start this conversation, then select the workflow
+          action.
+        </p>
       )}
       <div className="chat-messages" aria-live="polite">
         {olderMessages && publicBase && (
@@ -487,7 +541,7 @@ export function ChatPanel({
       />
       {conversation.current && (
         <HandoffPanel
-          key={conversation.current}
+          key={"support:" + conversation.current}
           endpoint={
             endpoint.startsWith("/public")
               ? endpoint.replace(
@@ -501,6 +555,17 @@ export function ChatPanel({
           onStatus={handoffStatus}
         />
       )}
+      {publicBase &&
+        conversation.current &&
+        guest.current &&
+        messages.some((m) => m.role === "assistant") && (
+          <CustomerFeedback
+            key={"feedback:" + conversation.current}
+            base={publicBase}
+            conversationId={conversation.current}
+            token={guest.current}
+          />
+        )}
       <form onSubmit={submit} className="chat-composer">
         <label className="sr-only" htmlFor={`chat-${name}`}>
           Message

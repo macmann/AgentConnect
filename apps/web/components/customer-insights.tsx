@@ -7,6 +7,7 @@ export type Insights = {
   range: { from: string; to: string };
   summary: Record<string, number>;
   searches: Record<string, number>;
+  feedback: Record<string, unknown>;
   categories: Record<string, unknown>[];
   trends: Record<string, unknown>[];
   agents: Record<string, unknown>[];
@@ -140,6 +141,8 @@ export function CustomerInsights({ workspaceId }: { workspaceId: string }) {
         stats.data && (
           <>
             <Table rows={[{ ...stats.data.summary, ...stats.data.searches }]} />
+            <h4>Customer satisfaction and confirmed resolution</h4>
+            <Table rows={[stats.data.feedback]} />
             {(
               [
                 "categories",

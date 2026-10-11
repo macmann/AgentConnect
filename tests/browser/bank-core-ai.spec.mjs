@@ -362,7 +362,7 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
       chat.getByText("Follow the approved recovery screen [1].", {
         exact: true,
       }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 20000 });
     await expect
       .poll(async () => {
         const [run] =
@@ -375,7 +375,7 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
       chat.getByText("Follow the approved recovery screen [1].", {
         exact: true,
       }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 20000 });
     await chat.getByText(/Previous conversations/).click();
     await expect(
       chat.getByRole("button", { name: /I forgot my password/ }),

@@ -41,7 +41,13 @@ export async function workflowAgentVersion(
   const c = agentConfig.parse(v.config),
     model = modelSnapshotSchema.parse(v.model_snapshot);
   validateModelSet(c, model);
-  await validateKnowledgeSelection(c.rag, ctx.workspaceId, ctx.organizationId);
+  await validateKnowledgeSelection(
+    c.rag,
+    ctx.workspaceId,
+    ctx.organizationId,
+    !!ctx.publicAccess,
+    !!ctx.publicAccess,
+  );
   await validateToolIds(c.tools.toolIds, ctx);
   const conn = await connection(model, ctx.workspaceId, ctx.organizationId);
   return { c, model, conn };
@@ -75,7 +81,13 @@ export async function executeAgentSnapshot(
   embeddingOverride?: EmbeddingFactory,
 ) {
   validateModelSet(c, model);
-  await validateKnowledgeSelection(c.rag, ctx.workspaceId, ctx.organizationId);
+  await validateKnowledgeSelection(
+    c.rag,
+    ctx.workspaceId,
+    ctx.organizationId,
+    !!ctx.publicAccess,
+    !!ctx.publicAccess,
+  );
   await validateToolIds(c.tools.toolIds, ctx);
   const factory: ProviderFactory =
     providerOverride ??
@@ -129,7 +141,7 @@ export async function executeAgentSnapshot(
           {
             workspaceId: ctx.workspaceId,
             organizationId: ctx.organizationId,
-            publicAccess: false,
+            publicAccess: !!ctx.publicAccess,
           },
           signal,
           c.maxOutputTokens,

@@ -13,6 +13,10 @@ import { HttpError } from "./http-error.js";
 import { sql } from "./db.js";
 import { config } from "./config.js";
 import { digest } from "./security.js";
+import {
+  customerOwnsConversation,
+  customerConversationActive,
+} from "./customer-sessions.js";
 import { widgetOriginAllowed } from "./channels.js";
 import {
   storeKnowledge,
@@ -96,15 +100,21 @@ export async function prepareArtifacts(
 }
 async function messageAccess(r: FastifyRequest, messageId: string) {
   const [m] =
-    await sql`SELECT m.*,c.user_id,c.guest_token_hash,c.deployment_id,c.config_snapshot,c.channel,c.widget_origin FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.id=${messageId} AND m.role='assistant'`;
+    await sql`SELECT m.*,c.user_id,c.guest_token_hash,c.deployment_id,c.config_snapshot,c.channel,c.widget_origin,c.customer_session_id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.id=${messageId} AND m.role='assistant'`;
   if (!m) throw new HttpError(404, "Assistant message not found");
   const bearer = r.headers.authorization?.replace(/^Bearer /, "");
   let userId: string | null = null;
   if (m.deployment_id && bearer) {
     const [active] =
       await sql`SELECT d.id FROM deployments d JOIN agents a ON a.id=d.agent_id WHERE d.id=${m.deployment_id} AND d.enabled=true AND a.archived_at IS NULL`;
+    if (params(r).deploymentId && params(r).deploymentId !== m.deployment_id)
+      throw new HttpError(404, "Message not found");
     if (!active) throw new HttpError(403, "Deployment is no longer available");
-    if (bearer.length > 128 || digest(bearer) !== m.guest_token_hash)
+    if (
+      !(await customerConversationActive(m)) ||
+      (!(await customerOwnsConversation(r, m)) &&
+        (bearer.length > 128 || digest(bearer) !== m.guest_token_hash))
+    )
       throw new HttpError(403, "Conversation token required");
     if (
       m.channel === "widget" &&
@@ -143,107 +153,118 @@ export async function registerGenerativeRoutes(app: FastifyInstance) {
       ],
     };
   });
-  app.post("/messages/:messageId/actions/:blockId", async (r, reply) => {
-    const { m, userId } = await messageAccess(r, id(params(r).messageId));
-    const d = z
-      .object({
-        confirmed: z.literal(true),
-        values: z.record(z.string(), z.unknown()),
-      })
-      .strict()
-      .parse(r.body);
-    const settings = agentConfig.parse(m.config_snapshot).generative;
-    if (!settings.enabled)
-      throw new HttpError(403, "Generative actions are disabled");
-    if (m.deployment_id && !settings.allowPublicForms)
-      throw new HttpError(
-        403,
-        "Public form collection is disabled for this published version",
-      );
-    if (!m.deployment_id && m.user_id !== userId)
-      throw new HttpError(
-        403,
-        "Only the conversation owner can submit this action",
-      );
-    const stored = (m.ui_blocks as RenderedBlock[]).find(
-      (b) => "id" in b && b.id === params(r).blockId,
-    );
-    if (!stored) throw new HttpError(404, "Action not found");
-    const block = uiBlock.parse(stored);
-    if (block.type !== "form" && block.type !== "action")
-      throw new HttpError(400, "This block has no registered action");
-    if (!settings.allowedBlocks.includes(block.type))
-      throw new HttpError(403, "Component is not allowed");
-    const values: Record<string, unknown> = {};
-    if (block.type === "action") {
-      if (Object.keys(d.values).length)
-        throw new HttpError(400, "Action values cannot be replaced");
-      Object.assign(values, block.values);
-    } else {
-      const names = new Set(block.fields.map((f) => f.name));
-      if (Object.keys(d.values).some((k) => !names.has(k)))
-        throw new HttpError(400, "Unknown form field");
-      for (const field of block.fields) {
-        const v = d.values[field.name];
-        if (v === undefined || v === "" || v === null) {
-          if (field.required)
-            throw new HttpError(400, `${field.label} is required`);
-          continue;
-        }
-        if (field.type === "number") {
-          if (
-            typeof v !== "number" ||
-            !Number.isFinite(v) ||
-            (field.min !== undefined && v < field.min) ||
-            (field.max !== undefined && v > field.max)
-          )
-            throw new HttpError(400, `${field.label} must be a valid number`);
-        } else if (field.type === "checkbox") {
-          if (typeof v !== "boolean" || (field.required && v !== true))
-            throw new HttpError(400, `${field.label} must be checked`);
-        } else {
-          if (typeof v !== "string" || v.length > 4000)
-            throw new HttpError(400, `${field.label} is invalid`);
-          if (field.type === "email" && !z.email().safeParse(v).success)
-            throw new HttpError(400, `${field.label} must be an email`);
-          if (field.type === "select" && !field.options?.includes(v))
-            throw new HttpError(400, `${field.label} is not an allowed option`);
-          if (field.type === "date" && !z.iso.date().safeParse(v).success)
-            throw new HttpError(400, `${field.label} must be a valid date`);
-        }
-        values[field.name] = v;
-      }
-    }
-    const submissionId = randomUUID();
-    await sql.begin(async (tx) => {
-      const [created] =
-        await tx`INSERT INTO collected_submissions(id,organization_id,workspace_id,message_id,conversation_id,block_id,values,submitted_by) VALUES (${submissionId},${m.organization_id},${m.workspace_id},${m.id},${m.conversation_id},${params(r).blockId!},${tx.json(values as never)},${userId}) ON CONFLICT(message_id,block_id) DO NOTHING RETURNING id`;
-      if (!created)
-        throw new HttpError(409, "This action has already been submitted");
-      if (userId)
-        await audit(
-          tx,
-          r,
-          userId,
-          "ui.action_submitted",
-          submissionId,
-          m.organization_id,
-          m.workspace_id,
+  for (const path of [
+    "/messages/:messageId/actions/:blockId",
+    "/public/widgets/:deploymentId/messages/:messageId/actions/:blockId",
+  ])
+    app.post(path, async (r, reply) => {
+      const { m, userId } = await messageAccess(r, id(params(r).messageId));
+      const d = z
+        .object({
+          confirmed: z.literal(true),
+          values: z.record(z.string(), z.unknown()),
+        })
+        .strict()
+        .parse(r.body);
+      const settings = agentConfig.parse(m.config_snapshot).generative;
+      if (!settings.enabled)
+        throw new HttpError(403, "Generative actions are disabled");
+      if (m.deployment_id && !settings.allowPublicForms)
+        throw new HttpError(
+          403,
+          "Public form collection is disabled for this published version",
         );
+      if (!m.deployment_id && m.user_id !== userId)
+        throw new HttpError(
+          403,
+          "Only the conversation owner can submit this action",
+        );
+      const stored = (m.ui_blocks as RenderedBlock[]).find(
+        (b) => "id" in b && b.id === params(r).blockId,
+      );
+      if (!stored) throw new HttpError(404, "Action not found");
+      const block = uiBlock.parse(stored);
+      if (block.type !== "form" && block.type !== "action")
+        throw new HttpError(400, "This block has no registered action");
+      if (!settings.allowedBlocks.includes(block.type))
+        throw new HttpError(403, "Component is not allowed");
+      const values: Record<string, unknown> = {};
+      if (block.type === "action") {
+        if (Object.keys(d.values).length)
+          throw new HttpError(400, "Action values cannot be replaced");
+        Object.assign(values, block.values);
+      } else {
+        const names = new Set(block.fields.map((f) => f.name));
+        if (Object.keys(d.values).some((k) => !names.has(k)))
+          throw new HttpError(400, "Unknown form field");
+        for (const field of block.fields) {
+          const v = d.values[field.name];
+          if (v === undefined || v === "" || v === null) {
+            if (field.required)
+              throw new HttpError(400, `${field.label} is required`);
+            continue;
+          }
+          if (field.type === "number") {
+            if (
+              typeof v !== "number" ||
+              !Number.isFinite(v) ||
+              (field.min !== undefined && v < field.min) ||
+              (field.max !== undefined && v > field.max)
+            )
+              throw new HttpError(400, `${field.label} must be a valid number`);
+          } else if (field.type === "checkbox") {
+            if (typeof v !== "boolean" || (field.required && v !== true))
+              throw new HttpError(400, `${field.label} must be checked`);
+          } else {
+            if (typeof v !== "string" || v.length > 4000)
+              throw new HttpError(400, `${field.label} is invalid`);
+            if (field.type === "email" && !z.email().safeParse(v).success)
+              throw new HttpError(400, `${field.label} must be an email`);
+            if (field.type === "select" && !field.options?.includes(v))
+              throw new HttpError(
+                400,
+                `${field.label} is not an allowed option`,
+              );
+            if (field.type === "date" && !z.iso.date().safeParse(v).success)
+              throw new HttpError(400, `${field.label} must be a valid date`);
+          }
+          values[field.name] = v;
+        }
+      }
+      const submissionId = randomUUID();
+      await sql.begin(async (tx) => {
+        const [created] =
+          await tx`INSERT INTO collected_submissions(id,organization_id,workspace_id,message_id,conversation_id,block_id,values,submitted_by) VALUES (${submissionId},${m.organization_id},${m.workspace_id},${m.id},${m.conversation_id},${params(r).blockId!},${tx.json(values as never)},${userId}) ON CONFLICT(message_id,block_id) DO NOTHING RETURNING id`;
+        if (!created)
+          throw new HttpError(409, "This action has already been submitted");
+        if (userId)
+          await audit(
+            tx,
+            r,
+            userId,
+            "ui.action_submitted",
+            submissionId,
+            m.organization_id,
+            m.workspace_id,
+          );
+      });
+      return reply.code(201).send({ id: submissionId, status: "collected" });
     });
-    return reply.code(201).send({ id: submissionId, status: "collected" });
-  });
-  app.get("/artifacts/:artifactId/grant", async (r) => {
-    const [a] =
-      await sql`SELECT id,message_id FROM generated_artifacts WHERE id=${id(params(r).artifactId)}`;
-    if (!a) throw new HttpError(404, "Artifact not found");
-    await messageAccess(r, a.message_id);
-    const expires = Math.floor(Date.now() / 1000) + 300;
-    return {
-      path: `/artifacts/${a.id}/download?expires=${expires}&signature=${signature(a.id, expires)}`,
-      expiresAt: new Date(expires * 1000).toISOString(),
-    };
-  });
+  for (const path of [
+    "/artifacts/:artifactId/grant",
+    "/public/widgets/:deploymentId/artifacts/:artifactId/grant",
+  ])
+    app.get(path, async (r) => {
+      const [a] =
+        await sql`SELECT id,message_id FROM generated_artifacts WHERE id=${id(params(r).artifactId)}`;
+      if (!a) throw new HttpError(404, "Artifact not found");
+      await messageAccess(r, a.message_id);
+      const expires = Math.floor(Date.now() / 1000) + 300;
+      return {
+        path: `/artifacts/${a.id}/download?expires=${expires}&signature=${signature(a.id, expires)}`,
+        expiresAt: new Date(expires * 1000).toISOString(),
+      };
+    });
   app.get("/artifacts/:artifactId/download", async (r, reply) => {
     const artifactId = id(params(r).artifactId),
       q = z

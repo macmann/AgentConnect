@@ -41,7 +41,9 @@ export type WorkflowRun = {
   id: string;
   workspace_id: string;
   organization_id: string;
-  user_id: string;
+  user_id: string | null;
+  conversation_id?: string | null;
+  customer_action_id?: string | null;
   graph_snapshot: WorkflowGraph;
   input: string;
   status: string;
@@ -139,8 +141,9 @@ export async function compileWorkflow(
   const ctx: ToolContext = {
     workspaceId: run.workspace_id,
     organizationId: run.organization_id,
-    userId: run.user_id,
+    userId: run.user_id ?? undefined,
     workflowRunId: run.id,
+    publicAccess: !!run.customer_action_id,
   };
   const builder = new StateGraph<
     typeof State.spec,
