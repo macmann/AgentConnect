@@ -40,10 +40,10 @@ export const widgetBundle = String.raw`(() => {
     panel.style.backgroundColor=b.backgroundColor||'';panel.style.color=b.textColor||'';
     if(b.primaryColor){style.textContent+=':host{--widget-primary:'+b.primaryColor+'}';}
     if(b.logoUrl){const logo=el('img');logo.src=b.logoUrl;logo.alt=config.name+' logo';logo.width=28;logo.height=28;logo.referrerPolicy='no-referrer';logo.style.objectFit='contain';header.prepend(logo);}
-    if(!b.logoUrl){const logo=el('img');logo.src=api+'/brand/agent-connex-logo.svg';logo.alt='Agent Connex';logo.width=80;logo.height=28;logo.style.objectFit='contain';header.prepend(logo);}
+    let productBrandLogo; if(!b.logoUrl){const logo=el('img');productBrandLogo=logo;logo.src=api+'/brand/agent-connex-logo.svg';logo.alt='Agent Connex';logo.width=80;logo.height=28;logo.style.objectFit='contain';header.prepend(logo);}
     const themeKey='agent-connex-widget-theme:'+deployment,themeToggle=el('button');themeToggle.type='button';header.append(themeToggle);
     let theme=s.theme;try{const saved=localStorage.getItem(themeKey);if(saved==='dark'||saved==='light')theme=saved;}catch{}
-    function applyTheme(){panel.classList.toggle('dark',theme==='dark');panel.style.backgroundColor=theme==='dark'?'':b.backgroundColor||'';panel.style.color=theme==='dark'?'':b.textColor||'';themeToggle.textContent=theme==='dark'?'Light':'Dark';themeToggle.setAttribute('aria-label','Switch to '+(theme==='dark'?'light':'dark')+' theme');panel.style.colorScheme=theme;}
+    function applyTheme(){if(productBrandLogo)productBrandLogo.src=api+'/brand/agent-connex-logo'+(theme==='light'?'-light':'')+'.svg';panel.classList.toggle('dark',theme==='dark');panel.style.backgroundColor=theme==='dark'?'':b.backgroundColor||'';panel.style.color=theme==='dark'?'':b.textColor||'';themeToggle.textContent=theme==='dark'?'Light':'Dark';themeToggle.setAttribute('aria-label','Switch to '+(theme==='dark'?'light':'dark')+' theme');panel.style.colorScheme=theme;}
     themeToggle.onclick=()=>{theme=theme==='dark'?'light':'dark';try{localStorage.setItem(themeKey,theme);}catch{}applyTheme();};applyTheme();
     add(b.welcomeMessage||s.greeting||config.welcomeMessage);
     const notice=el('p','Agent Connex · Messages are saved by this workspace.');notice.className='notice';notice.setAttribute('role','status');
