@@ -788,6 +788,51 @@ test("Empty knowledge fails before generation and records NO_RELEVANT_SOURCES", 
     200,
   );
 });
+test("Website registration accepts the exact approved Yoma hostname and explains mismatches without queuing them", async () => {
+  const previous = config.KNOWLEDGE_ALLOWED_HOSTS;
+  config.KNOWLEDGE_ALLOWED_HOSTS = "www.yomabank.com";
+  try {
+    const body = {
+      url: "https://www.yomabank.com/",
+      crawler: "builtin",
+      secretId: null,
+      maxPages: 20,
+      maxDepth: 2,
+      allowedPaths: ["/"],
+      blockedPaths: [],
+    };
+    const registered = await call(
+      "POST",
+      `/knowledge-bases/${kbId}/website`,
+      body,
+    );
+    assert.equal(registered.statusCode, 202, registered.body);
+    const [source] =
+      await sql`SELECT kind,metadata FROM knowledge_sources WHERE id=${registered.json().id}`;
+    assert.equal(source!.kind, "website");
+    assert.equal(source!.metadata.url, body.url);
+    assert.equal(source!.metadata.secretId, null);
+    // Registration only: never fetch the real bank or send it to an external service.
+    await call(
+      "DELETE",
+      `/knowledge-bases/${kbId}/sources/${registered.json().id}`,
+    );
+    const denied = await call("POST", `/knowledge-bases/${kbId}/website`, {
+      ...body,
+      url: "https://yomabank.com/",
+    });
+    assert.equal(denied.statusCode, 400);
+    assert.match(denied.json().error, /KNOWLEDGE_ALLOWED_HOSTS/);
+    assert.match(denied.json().error, /restart both/);
+    assert.match(denied.json().error, /ENDPOINT_NOT_ALLOWED/);
+    config.KNOWLEDGE_ALLOWED_HOSTS = "";
+    const stale = await call("POST", `/knowledge-bases/${kbId}/website`, body);
+    assert.equal(stale.statusCode, 400);
+    assert.match(stale.json().error, /running API/);
+  } finally {
+    config.KNOWLEDGE_ALLOWED_HOSTS = previous;
+  }
+});
 test("Website provider credentials are workspace scoped, role protected and deletion guarded", async () => {
   const previous = config.KNOWLEDGE_ALLOWED_HOSTS;
   config.KNOWLEDGE_ALLOWED_HOSTS = "crawl.example.com";
@@ -901,7 +946,7 @@ test("Website crawling preserves canonical provenance and enforces robots and re
       return;
     }
     if (req.url === "/redirect") {
-      res.writeHead(302, { location: "/policy" }).end();
+      res.writeHead(302, { location: "https://unapproved.example/" }).end();
       return;
     }
     res

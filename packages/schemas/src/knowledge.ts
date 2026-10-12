@@ -69,7 +69,7 @@ export const qaInput = z.object({
 });
 export const websiteInput = z
   .object({
-    url: z.url().max(1000),
+    url: z.url().trim().max(1000),
     crawler: z.enum(["builtin", "firecrawl"]).default("builtin"),
     secretId: z.uuid().nullable().default(null),
     maxPages: z.number().int().min(1).max(100).default(20),
@@ -81,6 +81,24 @@ export const websiteInput = z
     blockedPaths: z.array(z.string().regex(/^\//).max(200)).max(20).default([]),
   })
   .superRefine((data, ctx) => {
+    let url: URL;
+    try {
+      url = new URL(data.url);
+    } catch {
+      return;
+    }
+    if (!["http:", "https:"].includes(url.protocol))
+      ctx.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: "Use an HTTP or HTTPS website URL",
+      });
+    if (url.username || url.password)
+      ctx.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: "Website URLs cannot contain embedded credentials",
+      });
     if (data.crawler === "firecrawl" && !/^https:\/\//i.test(data.url))
       ctx.addIssue({
         code: "custom",

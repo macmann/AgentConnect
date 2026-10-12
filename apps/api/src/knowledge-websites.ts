@@ -37,48 +37,86 @@ export async function fetchWebsite(
   signal: AbortSignal,
   robots = false,
 ) {
-  const u = safeURL(url);
-  const response = await safeHttpTransport(
-    hosts(config.KNOWLEDGE_ALLOWED_HOSTS),
-    hosts(config.KNOWLEDGE_PRIVATE_HOSTS),
-  )(
-    u.href,
-    {
-      accept: robots ? "text/plain" : "text/html,application/xhtml+xml",
-      "user-agent": "AgentConnectKnowledge/1.0",
-    },
-    undefined,
-    signal,
-    "GET",
-  );
-  try {
-    if (robots && response.status === 404) return new Uint8Array();
-    if (response.status < 200 || response.status >= 300)
-      throw new KnowledgeError(
-        response.status >= 300 && response.status < 400
-          ? "WEBSITE_REDIRECT_BLOCKED"
-          : "WEBSITE_HTTP_ERROR",
-        response.status === 429 || response.status >= 500,
-      );
-    if (
-      !robots &&
-      !/text\/html|application\/xhtml\+xml/i.test(
-        String(response.headers?.["content-type"] ?? ""),
+  return (await fetchWebsitePage(url, signal, robots)).bytes;
+}
+
+export async function fetchWebsitePage(
+  url: string,
+  signal: AbortSignal,
+  robots = false,
+  checkAccess?: (url: URL) => void,
+) {
+  let current = safeURL(url);
+  const origin = current.origin,
+    seen = new Set<string>();
+  for (let hops = 0; hops <= 5; hops++) {
+    signal.throwIfAborted();
+    if (seen.has(current.href))
+      throw new KnowledgeError("WEBSITE_REDIRECT_LIMIT");
+    seen.add(current.href);
+    checkAccess?.(current);
+    const response = await safeHttpTransport(
+      hosts(config.KNOWLEDGE_ALLOWED_HOSTS),
+      hosts(config.KNOWLEDGE_PRIVATE_HOSTS),
+    )(
+      current.href,
+      {
+        accept: robots ? "text/plain" : "text/html,application/xhtml+xml",
+        "user-agent": "AgentConnectKnowledge/1.0",
+      },
+      undefined,
+      signal,
+      "GET",
+    );
+    try {
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers?.location;
+        if (typeof location !== "string" || !location)
+          throw new KnowledgeError("WEBSITE_REDIRECT_BLOCKED");
+        let next: URL;
+        try {
+          next = new URL(location, current);
+        } catch {
+          throw new KnowledgeError("WEBSITE_REDIRECT_BLOCKED");
+        }
+        if (next.origin !== origin || next.username || next.password)
+          throw new KnowledgeError("WEBSITE_REDIRECT_BLOCKED");
+        if (hops === 5) throw new KnowledgeError("WEBSITE_REDIRECT_LIMIT");
+        // Recheck exact grants here and pin/check DNS again in the transport at every hop.
+        current = safeURL(next.href);
+        continue;
+      }
+      if (robots && response.status === 404)
+        return { bytes: new Uint8Array(), url: current.href };
+      if (response.status < 200 || response.status >= 300)
+        throw new KnowledgeError(
+          response.status >= 300 && response.status < 400
+            ? "WEBSITE_REDIRECT_BLOCKED"
+            : "WEBSITE_HTTP_ERROR",
+          response.status === 429 || response.status >= 500,
+        );
+      if (
+        !robots &&
+        !/text\/html|application\/xhtml\+xml/i.test(
+          String(response.headers?.["content-type"] ?? ""),
+        )
       )
-    )
-      throw new KnowledgeError("WEBSITE_CONTENT_TYPE");
-    const result: Uint8Array[] = [];
-    let size = 0;
-    for await (const bytes of response.body) {
-      size += bytes.byteLength;
-      if (size > (robots ? 500000 : 2000000))
-        throw new KnowledgeError("WEBSITE_SIZE_LIMIT");
-      result.push(bytes);
+        throw new KnowledgeError("WEBSITE_CONTENT_TYPE");
+      const result: Uint8Array[] = [];
+      let size = 0;
+      for await (const bytes of response.body) {
+        signal.throwIfAborted();
+        size += bytes.byteLength;
+        if (size > (robots ? 500000 : 2000000))
+          throw new KnowledgeError("WEBSITE_SIZE_LIMIT");
+        result.push(bytes);
+      }
+      return { bytes: Buffer.concat(result), url: current.href };
+    } finally {
+      await response.close();
     }
-    return Buffer.concat(result);
-  } finally {
-    await response.close();
   }
+  throw new KnowledgeError("WEBSITE_REDIRECT_LIMIT");
 }
 export function robotsAllowed(text: string, path: string) {
   const groups: {
@@ -156,15 +194,27 @@ export async function crawlWebsite(
       if (item.depth === 0) throw new KnowledgeError("ROBOTS_DISALLOWED");
       continue;
     }
-    const bytes = await fetchWebsite(u.href, signal);
+    const fetched = await fetchWebsitePage(u.href, signal, false, (target) => {
+      if (
+        !options.allowedPaths.some((p) => target.pathname.startsWith(p)) ||
+        options.blockedPaths.some((p) => target.pathname.startsWith(p))
+      )
+        throw new KnowledgeError("WEBSITE_PATH_BLOCKED");
+      if (!robotsAllowed(robots, target.pathname + target.search))
+        throw new KnowledgeError("ROBOTS_DISALLOWED");
+    });
+    const bytes = fetched.bytes,
+      finalURL = new URL(fetched.url);
+    seen.add(finalURL.href);
     totalBytes += bytes.length;
     if (totalBytes > 20000000) throw new KnowledgeError("WEBSITE_SIZE_LIMIT");
-    const document = parseHTML(bytes, u.href);
+    const document = parseHTML(bytes, finalURL.href);
+    if (finalURL.href !== u.href) document.metadata.redirectedFrom = u.href;
     const canonical = document.metadata.canonical;
-    let url = u.href;
+    let url = finalURL.href;
     if (typeof canonical === "string") {
       try {
-        const proposed = new URL(canonical, u);
+        const proposed = new URL(canonical, finalURL);
         if (
           proposed.origin === root.origin &&
           !proposed.username &&
@@ -190,7 +240,7 @@ export async function crawlWebsite(
     if (item.depth < options.maxDepth)
       for (const href of document.links) {
         try {
-          const link = new URL(href, u);
+          const link = new URL(href, finalURL);
           link.hash = "";
           if (
             link.origin === root.origin &&

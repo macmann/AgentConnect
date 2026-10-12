@@ -15,7 +15,11 @@ import {
   retrievalInput,
 } from "@agentconnect/schemas/knowledge";
 import { supportedExtensions } from "@agentconnect/rag/parsers";
-import { validateEndpoint, defaultBaseUrls } from "@agentconnect/provider-sdk";
+import {
+  ProviderError,
+  validateEndpoint,
+  defaultBaseUrls,
+} from "@agentconnect/provider-sdk";
 import type { EmbeddingFactory } from "@agentconnect/provider-sdk/embeddings";
 import { actor, workspaceAccess, audit, HttpError, id, params } from "./app.js";
 import { sql } from "./db.js";
@@ -112,6 +116,50 @@ export async function registerKnowledgeRoutes(
 ) {
   await app.register(multipart, {
     limits: { fileSize: 10000000, files: 1, fields: 3, parts: 4 },
+  });
+  app.addHook("onError", async (request, _reply, error) => {
+    if (
+      request.routeOptions.url !==
+        "/knowledge-bases/:knowledgeBaseId/website" ||
+      request.method !== "POST"
+    )
+      return;
+    const body = request.body as { url?: unknown; crawler?: unknown } | null;
+    let hostname: string | undefined;
+    try {
+      if (typeof body?.url === "string" && body.url.length <= 1000)
+        hostname = new URL(body.url).host;
+    } catch {
+      /* No request contents in diagnostics. */
+    }
+    const code =
+      error.validation || error instanceof z.ZodError
+        ? "WEBSITE_INVALID_SETTINGS"
+        : error instanceof ProviderError
+          ? error.code
+          : ((error as { crawlCode?: string }).crawlCode ??
+            (/^[A-Z0-9_]{2,64}$/.test(error.code ?? "")
+              ? error.code
+              : "WEBSITE_REQUEST_REJECTED"));
+    request.log.warn(
+      {
+        code,
+        hostname,
+        crawler: body?.crawler === "firecrawl" ? "firecrawl" : "builtin",
+        httpStatus: error.statusCode,
+        hostApproved: hostname
+          ? hosts(config.KNOWLEDGE_ALLOWED_HOSTS).includes(hostname) ||
+            hosts(config.KNOWLEDGE_PRIVATE_HOSTS).includes(hostname)
+          : false,
+        approvedHostCount: hosts(config.KNOWLEDGE_ALLOWED_HOSTS).length,
+        fields:
+          error.validation?.map((v) => v.instancePath) ??
+          (error instanceof z.ZodError
+            ? error.issues.map((v) => v.path.join("."))
+            : []),
+      },
+      "Website crawl request rejected",
+    );
   });
   await registerKnowledgeReleases(app, ownedKnowledge);
   const factory = override ?? defaultEmbeddingFactory;
@@ -487,7 +535,28 @@ export async function registerKnowledgeRoutes(
     async (r, reply) => {
       const { u, kb } = await ownedKnowledge(r, "knowledge:manage");
       const data = websiteInput.parse(r.body);
-      validateWebsite(data.url);
+      try {
+        validateWebsite(data.url);
+      } catch (error) {
+        if (
+          error instanceof ProviderError &&
+          [
+            "ENDPOINT_NOT_ALLOWED",
+            "HTTPS_REQUIRED",
+            "INVALID_ENDPOINT",
+          ].includes(error.code)
+        ) {
+          const hostname = new URL(data.url).host;
+          const message =
+            error.code === "ENDPOINT_NOT_ALLOWED"
+              ? `Website host ${hostname} is not approved by the running API (ENDPOINT_NOT_ALLOWED). Add this exact host to KNOWLEDGE_ALLOWED_HOSTS in the repository-root .env for both API and worker, preserving existing entries, then restart both services. If already configured, check for an older running process or an overriding environment variable. Hostnames with and without www are separate.`
+              : "Use an HTTPS website URL. HTTP requires an administrator-approved private endpoint (HTTPS_REQUIRED).";
+          throw Object.assign(new HttpError(400, message), {
+            crawlCode: error.code,
+          });
+        }
+        throw error;
+      }
       if (data.secretId) {
         const [secret] =
           await sql`SELECT id FROM secrets WHERE id=${data.secretId} AND workspace_id=${kb.workspace_id} AND organization_id=${kb.organization_id}`;

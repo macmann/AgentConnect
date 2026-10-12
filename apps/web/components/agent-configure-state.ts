@@ -39,6 +39,8 @@ export type ConfigureIssue = {
 };
 const labels: Record<string, string> = {
   name: "Agent name",
+  languageMode: "Response language",
+  language: "Language",
   description: "Internal description",
   publicDescription: "Public description",
   modelId: "Model",

@@ -104,7 +104,7 @@ export function OverviewSection(p: SectionProps) {
             ],
             [
               "Experience",
-              c.language,
+              c.languageMode === "auto" ? "Matches user language" : c.language,
               c.welcomeMessage.trim()
                 ? "Welcome message configured"
                 : "No welcome message",
@@ -250,8 +250,32 @@ export function OverviewSection(p: SectionProps) {
         </Field>
       </Group>
       <Group title="Locale">
+        <Field
+          field="config.languageMode"
+          label="Response language"
+          issues={p.issues}
+          help="Match the user's message each turn, or use a fixed language. New chats use the saved setting; published deployments use their published version. Welcome messages and authored fallback text remain as configured."
+        >
+          {(a) => (
+            <select
+              {...a}
+              value={c.languageMode ?? "fixed"}
+              onChange={(e) =>
+                config(p, "languageMode", e.target.value as "auto" | "fixed")
+              }
+            >
+              <option value="auto">Match user language</option>
+              <option value="fixed">Fixed language</option>
+            </select>
+          )}
+        </Field>
         <div className="configure-short-grid">
-          {scalar(p, "language", "Language", 50)}
+          {scalar(
+            p,
+            "language",
+            c.languageMode === "auto" ? "Fallback language" : "Language",
+            50,
+          )}
           {scalar(p, "timezone", "Timezone", 100)}
         </div>
       </Group>
