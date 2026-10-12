@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import { SupportQueueOperations } from "./support-queue-operations";
 import { queueOperations } from "@agentconnect/schemas/support";
 import { useState } from "react";
@@ -318,11 +319,15 @@ export function SupportQueueEditor({
           {strategy === "hybrid" && (
             <>
               <h3>Hybrid scoring weights</h3>
-              <p className="field-help">
-                Each factor is normalized from 0 to 1 and multiplied by its
-                weight. Fairness reaches 1 after an hour without a queue
-                assignment.
-              </p>
+              <div className="setting-label-row">
+                <span>
+                  Each factor is normalized from 0 to 1 and multiplied by its
+                  weight.
+                </span>
+                <HelpTooltip>
+                  Fairness reaches 1 after an hour without a queue assignment.
+                </HelpTooltip>
+              </div>
               <div className="support-weight-grid">
                 {Object.entries(policy.weights).map(([key, value]) => (
                   <label key={key}>

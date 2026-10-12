@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import { useState } from "react";
 export type ProcessingSettings = {
   enabled: boolean;
@@ -58,20 +59,22 @@ export function AdvancedKnowledgeSettings({
       />
       <input type="hidden" name="advancedModel" value={value.modelId ?? ""} />
       <input type="hidden" name="advancedTokens" value={value.chunkTokens} />
-      <label className="checkbox-label">
-        <input
-          type="checkbox"
-          checked={value.enabled}
-          onChange={(e) => setValue({ ...value, enabled: e.target.checked })}
-        />
-        Enable advanced document processing
-      </label>
-      <p className="muted">
-        Optional processing for complex documents and financial tables.
-        Preserves original values, identifies separate tables and grouped
-        headers, and builds token-aware chunks. Adds ingestion time; standard
-        processing stays unchanged when off.
-      </p>
+      <div className="setting-label-row">
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={value.enabled}
+            onChange={(e) => setValue({ ...value, enabled: e.target.checked })}
+          />
+          Enable advanced document processing
+        </label>
+        <HelpTooltip>
+          Optional processing for complex documents and financial tables.
+          Preserves original values, identifies separate tables and grouped
+          headers, and builds token-aware chunks. Adds ingestion time; standard
+          processing stays unchanged when off.
+        </HelpTooltip>
+      </div>
       {value.enabled && (
         <>
           <label>
@@ -88,28 +91,32 @@ export function AdvancedKnowledgeSettings({
               }
             />
           </label>
-          <p className="muted">
-            Measured with the o200k tokenizer. Wide table rows stay intact and
-            may exceed this target. Review extraction warnings before publishing
-            financial content.
-          </p>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={value.llmAssisted}
-              onChange={(e) =>
-                setValue({ ...value, llmAssisted: e.target.checked })
-              }
-            />
-            Use LLM-assisted boundaries
-          </label>
-          <p className="muted">
-            The selected model receives extracted document content during
-            ingestion and chooses boundaries and header rows only. It cannot
-            rewrite numeric values. Invalid output or provider failures fall
-            back to deterministic processing with a warning. Limited to 12 calls
-            per ingestion job.
-          </p>
+          <div className="setting-label-row">
+            <span>Measured with the o200k tokenizer.</span>
+            <HelpTooltip>
+              Wide table rows stay intact and may exceed this target. Review
+              extraction warnings before publishing financial content.
+            </HelpTooltip>
+          </div>
+          <div className="setting-label-row">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={value.llmAssisted}
+                onChange={(e) =>
+                  setValue({ ...value, llmAssisted: e.target.checked })
+                }
+              />
+              Use LLM-assisted boundaries
+            </label>
+            <HelpTooltip>
+              The selected model receives extracted document content during
+              ingestion and chooses boundaries and header rows only. It cannot
+              rewrite numeric values. Invalid output or provider failures fall
+              back to deterministic processing with a warning. Limited to 12
+              calls per ingestion job.
+            </HelpTooltip>
+          </div>
           {value.llmAssisted && (
             <label>
               Processing model
@@ -135,31 +142,40 @@ export function AdvancedKnowledgeSettings({
               )}
             </label>
           )}
-          <p className="muted">
-            After indexing, open Extraction preview on the source to check
-            tables, headers, units and warnings. This is not a guarantee of
-            financial accuracy.
-          </p>
+          <div className="setting-label-row">
+            <span>
+              After indexing, open Extraction preview on the source to check
+              tables, headers, units and warnings.
+            </span>
+            <HelpTooltip>
+              This is not a guarantee of financial accuracy.
+            </HelpTooltip>
+          </div>
         </>
       )}
-      <label className="checkbox-label">
-        <input
-          name="parentContext"
-          type="checkbox"
-          defaultChecked={parentContext}
-        />
-        Expand retrieved passages with parent context
-      </label>
-      <p className="muted">
-        Separate retrieval setting: adds bounded surrounding text or table rows
-        from advanced indexed chunks. May increase chat token usage and latency.
-        Older standard chunks remain usable without expansion.
-      </p>
-      <p className="muted">
-        Processing changes apply when ingestion starts. Existing content stays
-        unchanged until you choose Reingest. Retrieval settings apply
-        immediately; approved releases retain their original indexed context.
-      </p>
+      <div className="setting-label-row">
+        <label className="checkbox-label">
+          <input
+            name="parentContext"
+            type="checkbox"
+            defaultChecked={parentContext}
+          />
+          Expand retrieved passages with parent context
+        </label>
+        <HelpTooltip>
+          Separate retrieval setting: adds bounded surrounding text or table
+          rows from advanced indexed chunks. May increase chat token usage and
+          latency. Older standard chunks remain usable without expansion.
+        </HelpTooltip>
+      </div>
+      <div className="setting-label-row">
+        <span>Processing changes apply when ingestion starts.</span>
+        <HelpTooltip>
+          Existing content stays unchanged until you choose Reingest. Retrieval
+          settings apply immediately; approved releases retain their original
+          indexed context.
+        </HelpTooltip>
+      </div>
     </fieldset>
   );
 }

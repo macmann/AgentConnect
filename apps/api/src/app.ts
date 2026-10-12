@@ -1,3 +1,4 @@
+import { qualityFailure } from "./quality-errors.js";
 import { registerAnswerIssues } from "./answer-issues.js";
 import { startMessagingWorker } from "./messaging-worker.js";
 import {
@@ -353,6 +354,20 @@ export async function buildApp(
             typeof error.statusCode === "number"
           ? error.statusCode
           : 500;
+    const qualityError =
+      status >= 500 ? qualityFailure(_r.routeOptions.url ?? "", error) : null;
+    if (qualityError) {
+      _r.log.error(
+        {
+          code: qualityError.code,
+          route: _r.routeOptions.url,
+          requestId: _r.id,
+        },
+        "Quality lab request failed",
+      );
+      if (qualityError.guidance)
+        return reply.code(503).send({ error: qualityError.guidance });
+    }
     return reply.code(status).send({
       error:
         status >= 500 && !(error instanceof HttpError)

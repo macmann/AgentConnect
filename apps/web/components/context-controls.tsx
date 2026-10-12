@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import { useState } from "react";
 import { contextControls } from "@agentconnect/schemas/customer-experience";
 import type { SectionProps } from "./agent-configure-sections";
@@ -111,19 +112,22 @@ export function ContextControls({
           </label>
         ))}
       </div>
-      <label className="checkbox-label">
-        <input
-          type="checkbox"
-          checked={controls.summarize}
-          disabled={!controls.enabled}
-          onChange={(e) => field("summarize", e.target.checked)}
-        />
-        Summarize older completed turns when memory exceeds its budget
-      </label>
-      <p className="muted">
-        Summaries cost tokens and are treated as untrusted conversation memory,
-        never as approved knowledge. Failed summarization retains recent turns.
-      </p>
+      <div className="setting-label-row">
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={controls.summarize}
+            disabled={!controls.enabled}
+            onChange={(e) => field("summarize", e.target.checked)}
+          />
+          Summarize older completed turns when memory exceeds its budget
+        </label>
+        <HelpTooltip>
+          Summaries cost tokens and are treated as untrusted conversation
+          memory, never as approved knowledge. Failed summarization retains
+          recent turns.
+        </HelpTooltip>
+      </div>
       <details>
         <summary>Preview token components</summary>
         <label>

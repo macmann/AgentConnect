@@ -1,3 +1,4 @@
+import { qualityFailure } from "../src/quality-errors.js";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -444,5 +445,25 @@ test("dataset imports reject assistant messages outside the workspace", async ()
       })
     ).statusCode,
     404,
+  );
+});
+
+test("quality database diagnostics are actionable, scoped and contain no raw details", () => {
+  for (const code of ["42P01", "42703"]) {
+    const result = qualityFailure(
+      "/workspaces/:workspaceId/datasets",
+      Object.assign(new Error("private SQL detail"), { code }),
+    );
+    assert.equal(result?.code, code);
+    assert.match(result!.guidance!, /pnpm db:migrate/);
+    assert.doesNotMatch(JSON.stringify(result), /private SQL detail/);
+  }
+  assert.equal(qualityFailure("/auth/me", { code: "42P01" }), null);
+  assert.equal(
+    qualityFailure(
+      "/workspaces/:workspaceId/evaluations",
+      new Error("private SQL detail"),
+    )?.guidance,
+    null,
   );
 });

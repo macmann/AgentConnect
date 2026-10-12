@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import { modelRouting } from "@agentconnect/schemas/model-routing";
 import type { Draft, Model } from "./agent-studio";
 import type { ConfigureIssue } from "./agent-configure-state";
@@ -123,29 +124,36 @@ export function ModelRoutingControls({
               />
             )}
           </Field>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={value.firstTurnOnly}
-              onChange={(e) => change({ firstTurnOnly: e.target.checked })}
-            />
-            Only route the first turn of a conversation
-          </label>
-          <p className="muted">
-            If a routed request does not fit the lighter model, use the primary
-            model. A transient lighter-model failure may also fall back to the
-            primary model before response text starts.
-          </p>
+          <div className="setting-label-row">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={value.firstTurnOnly}
+                onChange={(e) => change({ firstTurnOnly: e.target.checked })}
+              />
+              Only route the first turn of a conversation
+            </label>
+            <HelpTooltip>
+              If a routed request does not fit the lighter model, use the
+              primary model. A transient lighter-model failure may also fall
+              back to the primary model before response text starts.
+            </HelpTooltip>
+          </div>
         </>
       )}
       <details className="configure-details">
         <summary>Controlled provider fallback</summary>
-        <p className="muted">
-          Try these models in order on network errors, first-token timeouts or
-          provider HTTP 5xx errors. Authentication, invalid parameters, safety
-          blocks and failures after response text starts never trigger fallback.
-          Knowledge and tools are not re-executed.
-        </p>
+        <div className="setting-label-row">
+          <span>
+            Try these models in order on network errors, first-token timeouts or
+            provider HTTP 5xx errors.
+          </span>
+          <HelpTooltip>
+            Authentication, invalid parameters, safety blocks and failures after
+            response text starts never trigger fallback. Knowledge and tools are
+            not re-executed.
+          </HelpTooltip>
+        </div>
         {[0, 1].map((index) => (
           <Field
             key={index}

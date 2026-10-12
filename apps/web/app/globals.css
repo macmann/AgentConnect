@@ -4967,3 +4967,101 @@ input[type="range"] {
   border-radius: 8px;
   box-shadow: 0 6px 20px #0002;
 }
+
+/* Shared compact help and action spacing across all studios. */
+.setting-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-block: 12px;
+}
+.setting-label-row > .checkbox-label {
+  margin: 0;
+}
+.help-tooltip {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.help-tooltip-trigger {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: help;
+  padding: 4px;
+  font: inherit;
+  border-radius: 6px;
+}
+.help-tooltip-trigger:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.help-tooltip-content {
+  display: none;
+  position: fixed;
+  z-index: 30;
+  width: min(340px, calc(100vw - 32px));
+  max-height: min(50vh, 300px);
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 6px 24px #0003;
+  font-size: 13px;
+  line-height: 1.6;
+  font-weight: 400;
+}
+.help-tooltip:not([data-dismissed]):hover .help-tooltip-content,
+.help-tooltip:not([data-dismissed]):focus-within .help-tooltip-content,
+.help-tooltip[data-open]:not([data-dismissed]) .help-tooltip-content {
+  display: block;
+}
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-block: 12px;
+}
+.workspace-section-body > p {
+  margin-block: 12px;
+}
+.studio-form > button + button,
+.studio-form > button + a,
+.studio-form > a + button {
+  margin-inline-start: 12px;
+}
+.quality-layout .workspace-section-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+}
+.quality-layout .workspace-section-body[hidden] {
+  display: none;
+}
+.quality-layout .workspace-section-body > button {
+  align-self: flex-start;
+}
+.workflow-properties fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  border-radius: 12px;
+}
+.workflow-properties .setting-label-row {
+  font-size: 13px;
+  color: var(--muted);
+}
+.workflow-toolbar {
+  gap: 12px;
+  padding-block: 16px;
+}
+@media (max-width: 600px) {
+  .button-row > button {
+    flex: 1 1 auto;
+  }
+}

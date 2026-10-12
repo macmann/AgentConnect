@@ -152,6 +152,49 @@ test("API outages offer retry and non-JSON failures remain readable", async ({
   ).toContainText("HTTP 502");
   await expect(page.getByText("No secrets yet.")).toHaveCount(0);
 });
+test("compact help is accessible and connector actions are separated", async ({
+  page,
+}) => {
+  await open(page);
+  await page.getByRole("button", { name: "Connectors", exact: true }).click();
+  const create = page.getByRole("button", {
+    name: "Create a knowledge base",
+    exact: true,
+  });
+  const credential = page.getByRole("button", {
+    name: "Add source credential",
+    exact: true,
+  });
+  await expect(create).toBeVisible();
+  const firstBox = await create.boundingBox(),
+    secondBox = await credential.boundingBox();
+  expect(secondBox.x - firstBox.x - firstBox.width).toBeGreaterThanOrEqual(10);
+  await page.getByRole("button", { name: "Quality", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Quality lab", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Internal server error", { exact: false }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "New dataset", exact: true }).click();
+  const tooltip = page
+    .getByRole("tooltip", { includeHidden: true })
+    .filter({ hasText: "Example IDs" });
+  const trigger = page
+    .locator(".help-tooltip")
+    .filter({ has: tooltip })
+    .getByRole("button");
+  await expect(tooltip).toBeHidden();
+  await trigger.hover();
+  await expect(tooltip).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(tooltip).toBeHidden();
+  await trigger.focus();
+  await expect(tooltip).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(tooltip).toBeHidden();
+});
+
 test("sign out removes private workspace state", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
