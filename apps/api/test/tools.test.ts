@@ -1,3 +1,5 @@
+import { executeAgentSnapshot } from "../src/workflow-agents.js";
+import { modelSnapshot } from "../src/agents.js";
 import { capturedSpans } from "./tracing-fixture.js";
 import { createBraveSearchAdapter } from "../src/web-search.js";
 import { test, before, after } from "node:test";
@@ -11,6 +13,7 @@ import { digest, hashPassword } from "../src/security.js";
 import { agentConfig } from "@agentconnect/schemas/agents";
 import {
   runAgentTools,
+  availableAgentTools,
   validateInputSchema,
   redact,
   executeTool,
@@ -24,6 +27,8 @@ const org = randomUUID(),
   viewer = randomUUID(),
   outsider = randomUUID();
 const sessions: Record<string, string> = {};
+// Isolate repeated fixture runs without disabling the production Redis rate limits.
+const fixtureAddress = `198.18.${parseInt(org.slice(0, 2), 16)}.${parseInt(org.slice(2, 4), 16)}`;
 let httpTool = "",
   credential = "",
   model = "",
@@ -169,6 +174,7 @@ async function call(
   session = sessions.owner,
 ) {
   return app.inject({
+    remoteAddress: fixtureAddress,
     method,
     url,
     headers: {
@@ -591,6 +597,215 @@ test("Tool usage policies skip planning, permit no calls, require a call, and pa
     { code: "TOOL_REQUIRED" },
   );
 });
+test("Automatic excludes disabled, archived, missing, foreign and private tools without planning or execution", async () => {
+  const c = agentConfig.parse({
+    modelId: model,
+    tools: { toolIds: [httpTool, randomUUID()], usageMode: "automatic" },
+  });
+  const ctx = { workspaceId: workspace, organizationId: org };
+  let plans = 0;
+  const provider = {
+    async *stream() {
+      plans++;
+      yield { type: "token" as const, text: '{"calls":[]}' };
+    },
+  };
+  const events: { status?: string }[] = [];
+  const [original] =
+    await sql`SELECT enabled,archived_at,public_access FROM tools WHERE id=${httpTool}`;
+  try {
+    await sql`UPDATE tools SET enabled=false WHERE id=${httpTool}`;
+    const result = await runAgentTools(
+      c,
+      provider,
+      "hello",
+      ctx,
+      new AbortController().signal,
+      (e) => events.push(e as { status?: string }),
+    );
+    assert.equal(plans, 0);
+    assert.equal(result.inputTokens, 0);
+    assert(result.grounding.includes("were not called"));
+    assert.equal(events.length, 2);
+    assert(events.every((e) => e.status === "skipped"));
+    await sql`UPDATE tools SET enabled=true,archived_at=now() WHERE id=${httpTool}`;
+    assert.deepEqual(await availableAgentTools(c, ctx), []);
+    await sql`UPDATE tools SET archived_at=NULL,public_access=false WHERE id=${httpTool}`;
+    assert.deepEqual(
+      await availableAgentTools(c, { ...ctx, publicAccess: true }),
+      [],
+    );
+    assert.deepEqual(
+      await availableAgentTools(c, { ...ctx, workspaceId: randomUUID() }),
+      [],
+    );
+    await assert.rejects(
+      executeTool(
+        httpTool,
+        { city: "Yangon" },
+        { ...ctx, publicAccess: true },
+        new AbortController().signal,
+      ),
+      { code: "TOOL_NOT_PUBLIC" },
+    );
+    c.tools.usageMode = "always";
+    await assert.rejects(
+      runAgentTools(
+        c,
+        provider,
+        "hello",
+        ctx,
+        new AbortController().signal,
+        () => {},
+      ),
+      { code: "TOOL_UNAVAILABLE" },
+    );
+    c.tools.toolIds = [];
+    await assert.rejects(
+      runAgentTools(
+        c,
+        provider,
+        "hello",
+        ctx,
+        new AbortController().signal,
+        () => {},
+      ),
+      { code: "TOOL_REQUIRED" },
+    );
+  } finally {
+    await sql`UPDATE tools SET enabled=${original!.enabled},archived_at=${original!.archived_at},public_access=${original!.public_access} WHERE id=${httpTool}`;
+  }
+});
+test("Automatic plans only available tools and skips disabled MCP connectors while preserving successful results", async () => {
+  const c = agentConfig.parse({
+    modelId: model,
+    tools: { toolIds: [httpTool, mcpTool], usageMode: "automatic" },
+  });
+  try {
+    await sql`UPDATE mcp_connectors SET enabled=false WHERE id=${connector}`;
+    const provider = {
+      async *stream(input: import("@agentconnect/provider-sdk").ChatRequest) {
+        assert(input.system.includes(httpTool));
+        assert(!input.system.includes(mcpTool));
+        yield {
+          type: "token" as const,
+          text: JSON.stringify({
+            calls: [{ toolId: httpTool, arguments: { city: "Yangon" } }],
+          }),
+        };
+      },
+    };
+    const result = await runAgentTools(
+      c,
+      provider,
+      "weather",
+      { workspaceId: workspace, organizationId: org },
+      new AbortController().signal,
+      () => {},
+    );
+    assert(result.grounding.includes("sunny"));
+    assert(result.grounding.includes("were not called"));
+  } finally {
+    await sql`UPDATE mcp_connectors SET enabled=true WHERE id=${connector}`;
+  }
+});
+test("Automatic handles revocation between planning and execution without executing or failing the turn", async () => {
+  const c = agentConfig.parse({
+    modelId: model,
+    tools: { toolIds: [httpTool], usageMode: "automatic" },
+  });
+  const [before] =
+    await sql`SELECT count(*)::int AS count FROM tool_executions WHERE tool_id=${httpTool}`;
+  try {
+    const provider = {
+      async *stream() {
+        await sql`UPDATE tools SET enabled=false WHERE id=${httpTool}`;
+        yield {
+          type: "token" as const,
+          text: JSON.stringify({
+            calls: [{ toolId: httpTool, arguments: { city: "Yangon" } }],
+          }),
+        };
+        yield { type: "usage" as const, inputTokens: 4, outputTokens: 3 };
+      },
+    };
+    const events: { status?: string }[] = [];
+    const result = await runAgentTools(
+      c,
+      provider,
+      "weather",
+      { workspaceId: workspace, organizationId: org },
+      new AbortController().signal,
+      (e) => events.push(e as { status?: string }),
+    );
+    const [after] =
+      await sql`SELECT count(*)::int AS count FROM tool_executions WHERE tool_id=${httpTool}`;
+    assert.equal(after!.count, before!.count);
+    assert(events.some((e) => e.status === "skipped"));
+    assert(!events.some((e) => e.status === "failed"));
+    assert.equal(result.inputTokens, 4);
+    assert.equal(result.outputTokens, 3);
+    assert(!result.grounding.includes("sunny"));
+  } finally {
+    await sql`UPDATE tools SET enabled=true WHERE id=${httpTool}`;
+  }
+});
+test("Snapshot agent execution tolerates optional stale attachments, Disabled bypasses them, and Always remains strict", async () => {
+  const c = agentConfig.parse({
+    modelId: model,
+    tools: { toolIds: [randomUUID()], usageMode: "automatic" },
+  });
+  const snapshot = await modelSnapshot(model, workspace, c);
+  let calls = 0;
+  const factory = () => ({
+    async *stream(input: import("@agentconnect/provider-sdk").ChatRequest) {
+      calls++;
+      assert(!input.system.startsWith("Choose useful"));
+      yield { type: "token" as const, text: "Answer without external tools." };
+    },
+  });
+  const ctx = { workspaceId: workspace, organizationId: org };
+  assert.equal(
+    (
+      await executeAgentSnapshot(
+        c,
+        snapshot,
+        "question",
+        ctx,
+        new AbortController().signal,
+        factory,
+      )
+    ).output,
+    "Answer without external tools.",
+  );
+  c.tools.usageMode = "disabled";
+  assert.equal(
+    (
+      await executeAgentSnapshot(
+        c,
+        snapshot,
+        "question",
+        ctx,
+        new AbortController().signal,
+        factory,
+      )
+    ).output,
+    "Answer without external tools.",
+  );
+  assert.equal(calls, 2);
+  c.tools.usageMode = "always";
+  await assert.rejects(
+    executeAgentSnapshot(
+      c,
+      snapshot,
+      "question",
+      ctx,
+      new AbortController().signal,
+      factory,
+    ),
+    { code: "TOOL_UNAVAILABLE" },
+  );
+});
 test("Optimistic updates, tool revocation and connector disabling prevent subsequent execution", async () => {
   const update = { ...input(), revision: 1, enabled: false };
   assert.equal(
@@ -610,10 +825,22 @@ test("Optimistic updates, tool revocation and connector disabling prevent subseq
     ),
     /TOOL_UNAVAILABLE/,
   );
+  const [existing] =
+    await sql`SELECT id,config_snapshot FROM conversations WHERE agent_id=${agent} AND config_snapshot->'tools'->'toolIds' @> ${sql.json([httpTool])} ORDER BY created_at LIMIT 1`;
+  assert(existing);
+  await sql`UPDATE agents SET draft_config=jsonb_set(draft_config,'{tools,toolIds}','[]'::jsonb) WHERE id=${agent}`;
   const r = await call("POST", `/agents/${agent}/chat`, {
     message: "Weather?",
+    conversationId: existing.id,
   });
-  assert(r.body.includes("TOOL_UNAVAILABLE"));
+  assert(r.body.includes("event: done"), r.body);
+  assert(r.body.includes('"status":"completed"'), r.body);
+  assert(!r.body.includes("event: error"), r.body);
+  assert(!gotGrounding);
+  assert(r.body.includes('"status":"skipped"'), r.body);
+  const [preserved] =
+    await sql`SELECT config_snapshot FROM conversations WHERE id=${existing.id}`;
+  assert.deepEqual(preserved!.config_snapshot, existing.config_snapshot);
   assert.equal(
     (
       await call("PUT", `/mcp-connectors/${connector}`, {

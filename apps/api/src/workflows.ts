@@ -251,10 +251,14 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
           );
         graph = workflowGraph.parse(w.draft_graph);
       }
-      await validateWorkflowDependencies(graph, {
-        workspaceId: w.workspace_id,
-        organizationId: w.organization_id,
-      });
+      await validateWorkflowDependencies(
+        graph,
+        {
+          workspaceId: w.workspace_id,
+          organizationId: w.organization_id,
+        },
+        true,
+      );
       const runId = randomUUID();
       await sql.begin(async (tx) => {
         const [active] =

@@ -27,6 +27,7 @@ import {
 } from "./knowledge-core.js";
 import {
   validateToolIds,
+  availableAgentTools,
   runAgentTools,
   type ToolContext,
 } from "./tool-runtime.js";
@@ -35,6 +36,7 @@ import { config } from "./config.js";
 export async function workflowAgentVersion(
   versionId: string,
   ctx: ToolContext,
+  runtime = false,
 ) {
   const [v] =
     await sql`SELECT v.* FROM agent_versions v JOIN agents a ON a.id=v.agent_id WHERE v.id=${versionId} AND v.workspace_id=${ctx.workspaceId} AND v.organization_id=${ctx.organizationId} AND a.archived_at IS NULL`;
@@ -49,7 +51,8 @@ export async function workflowAgentVersion(
     !!ctx.publicAccess,
     !!ctx.publicAccess,
   );
-  await validateToolIds(c.tools.toolIds, ctx);
+  if (runtime) await availableAgentTools(c, ctx);
+  else await validateToolIds(c.tools.toolIds, ctx);
   const conn = await connection(model, ctx.workspaceId, ctx.organizationId);
   return { c, model, conn };
 }
@@ -61,7 +64,7 @@ export async function executeWorkflowAgent(
   providerOverride?: ProviderFactory,
   embeddingOverride?: EmbeddingFactory,
 ) {
-  const { c, model } = await workflowAgentVersion(versionId, ctx);
+  const { c, model } = await workflowAgentVersion(versionId, ctx, true);
   return observe(
     "workflow.agent",
     "agent",
@@ -108,7 +111,7 @@ export async function executeAgentSnapshot(
         !!ctx.publicAccess,
         candidateReleaseId,
       );
-      await validateToolIds(c.tools.toolIds, ctx);
+      await availableAgentTools(c, ctx);
       const factory: ProviderFactory =
         providerOverride ??
         ((conn) =>

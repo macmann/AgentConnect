@@ -78,15 +78,15 @@ Test greetings and irrelevant questions if you configured automatic knowledge us
 
 ## Attach tools deliberately
 
-Open **Configure → Tools** and select approved, enabled tools from your workspace. If there are no tools, follow the empty-state link to Tools and register one with an administrator.
+Open **Configure → Tools** and select approved, enabled tools from your workspace. If there are no tools, follow the empty-state link to Tools and register one with an administrator. Disabled tools explain their workspace state. Workspace administrators can use **Enable tool** directly in the attachment list, then select it and save the agent. Enabling applies across the workspace and does not automatically attach the tool. Builders must ask an administrator to enable it.
 
-- **Automatic:** the model may select a relevant tool or skip tool use.
-- **Required/always policy:** requires a valid tool selection within the call limit; it does not call every attached tool blindly.
+- **Automatic:** the model may select a relevant available tool or skip tool use. Disabled, deleted, archived, inaccessible or connector-disabled attachments are skipped at runtime; if none remain, the agent answers from its instructions, conversation and authorized knowledge. This also applies to existing conversation snapshots and workflow agent nodes. Skips appear in tool events and Langfuse diagnostics, with no execution of revoked tools.
+- **Required/always policy:** requires valid attachments and a valid tool selection within the call limit; unavailable required tools remain an explicit error. It does not call every attached tool blindly.
 - **Disabled:** preserves attachments but skips planning/execution.
 
 Use instructions such as “Use search for current information; do not use it for greetings or questions answered by approved knowledge.” Existing tools are read-only. Knowledge and tool usage have separate planning decisions; do not assume a deterministic knowledge-first fallback chain.
 
-Review tool arguments, access, descriptions and traces before exposing them publicly. See [tools](tools.md).
+Saving and publishing still validate configured attachments. Explicit workflow tool nodes remain required. Remove unavailable attachments before saving/publishing, or enable them if appropriate. Review tool arguments, access, descriptions and traces before exposing them publicly. See [tools](tools.md).
 
 ## Connect external knowledge with sign-in
 

@@ -14,6 +14,7 @@ export async function validateCustomerActions(
   wid: string,
   org: string,
   publicAccess = false,
+  runtime = false,
 ) {
   for (const action of c.quickActions.filter(
     (a) => a.behavior === "workflow",
@@ -31,11 +32,15 @@ export async function validateCustomerActions(
     const [v] =
       await sql`SELECT v.graph FROM workflow_versions v JOIN workflows w ON w.id=v.workflow_id WHERE v.id=${action.workflowVersionId} AND v.workspace_id=${wid} AND v.organization_id=${org} AND w.archived_at IS NULL`;
     if (!v) throw new HttpError(400, "Published workflow is unavailable");
-    await validateWorkflowDependencies(workflowGraph.parse(v.graph), {
-      workspaceId: wid,
-      organizationId: org,
-      publicAccess,
-    });
+    await validateWorkflowDependencies(
+      workflowGraph.parse(v.graph),
+      {
+        workspaceId: wid,
+        organizationId: org,
+        publicAccess,
+      },
+      runtime,
+    );
   }
 }
 
@@ -141,6 +146,7 @@ export async function registerCustomerWorkflows(app: FastifyInstance) {
           { ...config, quickActions: [action] },
           c.workspace_id,
           c.organization_id,
+          true,
           true,
         );
         const [v] =
