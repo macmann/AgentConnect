@@ -1,3 +1,8 @@
+import {
+  startObservation,
+  observationContent,
+  observationError,
+} from "./ai-tracing.js";
 import { validateCustomerActions } from "./customer-workflows.js";
 import { routedProvider, modelUsageCost } from "./model-routing.js";
 import { enhancedRetrieval } from "./rag-enhancements.js";
@@ -46,7 +51,7 @@ import { validateToolIds, runAgentTools, ToolError } from "./tool-runtime.js";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { trace, SpanStatusCode } from "@opentelemetry/api";
+import { context, trace } from "@opentelemetry/api";
 import {
   modelInput,
   modelUpdate,
@@ -247,633 +252,668 @@ async function streamChat(
   );
   const provider = metered.provider;
   const runId = randomUUID();
-  const span = trace.getTracer("agentconnect-runtime").startSpan("agent.run", {
-    attributes: {
-      "run.id": runId,
-      "conversation.id": conversation.id,
-      "agent.id": conversation.agent_id,
-      "agent.version": conversation.version_id ?? "draft",
-      "organization.id": conversation.organization_id,
-      "workspace.id": conversation.workspace_id,
-      "user.id": conversation.user_id ?? "anonymous",
-      "model.provider": model.provider,
-      "model.id": model.modelId,
-    },
+  const span = startObservation("agent.run", "agent", {
+    "langfuse.trace.name": "Agent chat",
+    "session.id": conversation.id,
+    "run.id": runId,
+    "conversation.id": conversation.id,
+    "agent.id": conversation.agent_id,
+    "agent.version": conversation.version_id ?? "draft",
+    "organization.id": conversation.organization_id,
+    "workspace.id": conversation.workspace_id,
+    "user.id": conversation.user_id ?? "anonymous",
+    "model.provider": model.provider,
+    "model.id": model.modelId,
   });
   const traceId =
     span.spanContext().traceId === "00000000000000000000000000000000"
       ? randomUUID().replaceAll("-", "")
       : span.spanContext().traceId;
-  let explicitHandoff = false;
-  let journey: ReturnType<typeof advanceJourney>;
-  let continuation = {
-    grounding: "",
-    blockedToolIds: [] as string[],
-    caseIds: [] as string[],
-  };
-  try {
-    await sql.begin(async (tx) => {
-      const [locked] =
-        await tx`SELECT * FROM conversations WHERE id=${conversation.id} AND workspace_id=${conversation.workspace_id} AND organization_id=${conversation.organization_id} FOR UPDATE`;
-      if (!locked)
-        throw new HttpError(404, "Conversation expired or unavailable");
-      if (locked.conversation_mode !== "ai")
-        throw new HttpError(
-          409,
-          "This conversation is with the human support team",
-        );
-
-      continuation = await continuationContext(
-        tx,
-        locked as never,
-        c.tools.toolIds,
-      );
-      await tx`INSERT INTO agent_runs(id,conversation_id,organization_id,workspace_id,status,trace_id) VALUES (${runId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},'running',${traceId})`;
-      const { policy } = await effectivePolicy(tx, locked as never);
-      explicitHandoff =
-        isHumanRequest(message) &&
-        (await customerHandoffState(tx, locked as never)).canRequestExplicit;
-      journey = explicitHandoff
-        ? {
-            state: locked.journey_state as Record<string, unknown>,
-            response: null,
-            query: message,
-            handoff: false,
-          }
-        : advanceJourney(c, locked.journey_state, message, quickActionId);
-      if (!explicitHandoff)
-        await reserveTokens(
-          tx,
-          c,
-          model,
-          conversation,
-          runId,
-          policy.humanEntryMode !== "disabled" &&
-            !!(
-              policy.agentCanRequestHandoff ||
-              policy.sentimentEscalationEnabled ||
-              policy.intentRules.length
-            ),
-        );
-      await tx`UPDATE conversations SET last_customer_message_at=now() WHERE id=${conversation.id}`;
-      await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content) VALUES (${randomUUID()},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'user',${message})`;
-    });
-  } catch (e) {
-    span.end();
-    if ((e as { code?: string }).code === "23505")
-      throw new HttpError(
-        409,
-        "A response is already running in this conversation",
-      );
-    throw e;
-  }
-  const [summaryState] =
-    await sql`SELECT context_summary FROM conversations WHERE id=${conversation.id}`;
-  const rows = await sql<
-    {
-      id: string;
-      created_at: Date;
-      role: "user" | "assistant";
-      content: string;
-    }[]
-  >`SELECT m.id,m.created_at,m.role,m.content FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${conversation.id} AND (ar.status='completed' OR ar.id=${runId}) AND (${c.contextControls.enabled && c.contextControls.summarize ? (summaryState!.context_summary.beforeTime ?? null) : null}::timestamptz IS NULL OR (m.created_at,m.id)>(${c.contextControls.enabled && c.contextControls.summarize ? (summaryState!.context_summary.beforeTime ?? null) : null}::timestamptz,${summaryState!.context_summary.beforeId ?? "00000000-0000-0000-0000-000000000000"}::uuid)) ORDER BY m.created_at DESC,m.id DESC LIMIT ${c.contextControls.enabled && c.contextControls.summarize ? 200 : c.historyWindow * 2}`;
-  const fitted = fitHistory(c, model, rows.reverse());
-  const messages: ChatMessage[] = fitted.messages.map(({ role, content }) => ({
-    role,
-    content,
-  }));
-  let newSummary: string | null = null;
-  let breakdown: ReturnType<typeof componentPreview> | null = null;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 90000);
-  timer.unref();
-  reply.hijack();
-  const responseHeaders: Record<string, string | number | string[]> = {};
-  for (const [name, value] of Object.entries(reply.getHeaders())) {
-    if (typeof value === "string" || typeof value === "number")
-      responseHeaders[name] = value;
-    else if (Array.isArray(value)) responseHeaders[name] = value.map(String);
-  }
-  reply.raw.writeHead(200, {
-    ...responseHeaders,
-    "Content-Type": "text/event-stream; charset=utf-8",
-    "Cache-Control": "no-store",
-    "X-Accel-Buffering": "no",
-    Connection: "keep-alive",
-  });
-  const write = (event: string, data: unknown) => {
-    if (!reply.raw.destroyed)
-      reply.raw.write(
-        `event: ${event}\ndata: ${JSON.stringify({ protocolVersion: 1, ...(data as object) })}\n\n`,
-      );
-  };
-  const disconnected = () => {
-    if (!reply.raw.writableEnded) controller.abort();
-  };
-  reply.raw.on("close", disconnected);
-  const heartbeat = setInterval(() => {
-    if (!reply.raw.destroyed) reply.raw.write(": heartbeat\n\n");
-  }, 15000);
-  heartbeat.unref();
-  write("meta", {
-    runId,
-    traceId,
-    conversationId: conversation.id,
-    ...(guestToken ? { guestToken } : {}),
-  });
-  let output = "";
-  let uiBlocks: RenderedBlock[] = [];
-  let artifacts: Artifact[] = [];
-  const messageId = randomUUID();
-  let inputTokens: number | null = null;
-  let outputTokens: number | null = null;
-  let status = "completed";
-  let errorCode: string | null = null;
-  let sources: Citation[] = [];
-  let citations: Citation[] = [];
-  let retrievalMs: number | null = null;
-  let retrievalDiagnostics: Record<string, string | number> = {};
-  let answerKind:
-    "answer" | "clarify" | "no_answer" | "journey" | "handoff" | null = null;
-  let offerHuman = false;
-  try {
-    if (explicitHandoff) {
-      output =
-        "I’ll request human support for this conversation. You can continue in this same chat.";
-      answerKind = "handoff";
-      inputTokens = 0;
-      outputTokens = 0;
-      write("token", { text: output });
-    } else if (journey!.response) {
-      output = journey!.response;
-      answerKind = journey!.handoff ? "handoff" : "journey";
-      offerHuman = journey!.handoff;
-      inputTokens = 0;
-      outputTokens = 0;
-      write("token", { text: output });
-    } else {
-      if (
-        c.contextControls.enabled &&
-        c.contextControls.summarize &&
-        fitted.removed.length
-      ) {
-        const [saved] =
-          await sql`SELECT context_summary FROM conversations WHERE id=${conversation.id}`;
-        try {
-          newSummary = await summarizeHistory(
-            provider,
-            c,
-            fitted.removed,
-            saved!.context_summary.text ?? "",
-            controller.signal,
-          );
-        } catch (e) {
-          if (controller.signal.aborted) throw e;
-          r.log.warn(
-            { runId, code: "SUMMARY_UNAVAILABLE" },
-            "Context summary unavailable; retaining recent turns",
-          );
-        }
-      }
-      const [savedContext] =
-        await sql`SELECT context_summary FROM conversations WHERE id=${conversation.id}`;
-      const summaryText =
-        c.contextControls.enabled && c.contextControls.summarize
-          ? (newSummary ?? savedContext!.context_summary.text ?? "")
-          : "";
-      if (summaryText)
-        continuation.grounding +=
-          "\nUntrusted conversation summary (not approved factual guidance):\n" +
-          JSON.stringify(summaryText);
-      if (
-        !c.contextControls.enabled &&
-        Buffer.byteLength(JSON.stringify(messages)) +
-          Buffer.byteLength(JSON.stringify(c.prompt)) +
-          Buffer.byteLength(continuation.grounding) >
-          model.contextWindow - c.maxOutputTokens
-      )
-        throw new ProviderError("CONTEXT_LIMIT");
-      const knowledgePlan = await planKnowledgeUsage(
-        c,
-        provider,
-        messages,
-        controller.signal,
-        c.contextControls.enabled
-          ? Infinity
-          : model.contextWindow - c.maxOutputTokens,
-        c.rag.usageMode === "automatic" && c.rag.knowledgeBaseIds.length
-          ? await sql<
-              { name: string; description: string }[]
-            >`SELECT name,description FROM knowledge_bases WHERE id=ANY(${c.rag.knowledgeBaseIds}::uuid[]) AND workspace_id=${conversation.workspace_id} AND organization_id=${conversation.organization_id} AND archived_at IS NULL`
-          : [],
-      );
-      const planningRoute = metered.usage().routing.attempts.at(-1);
-      retrievalDiagnostics = {
-        ...knowledgePlan.diagnostics,
-        provider: planningRoute?.provider ?? model.provider,
-        model: planningRoute?.modelId ?? model.id,
+  observationContent(span, "input", message, true);
+  return context.with(trace.setSpan(context.active(), span), async () => {
+    try {
+      let explicitHandoff = false;
+      let journey: ReturnType<typeof advanceJourney>;
+      let continuation = {
+        grounding: "",
+        blockedToolIds: [] as string[],
+        caseIds: [] as string[],
       };
-      span.addEvent("knowledge.planning", knowledgePlan.diagnostics);
-      if (knowledgePlan.diagnostics.status === "fallback")
+      try {
+        await sql.begin(async (tx) => {
+          const [locked] =
+            await tx`SELECT * FROM conversations WHERE id=${conversation.id} AND workspace_id=${conversation.workspace_id} AND organization_id=${conversation.organization_id} FOR UPDATE`;
+          if (!locked)
+            throw new HttpError(404, "Conversation expired or unavailable");
+          if (locked.conversation_mode !== "ai")
+            throw new HttpError(
+              409,
+              "This conversation is with the human support team",
+            );
+
+          continuation = await continuationContext(
+            tx,
+            locked as never,
+            c.tools.toolIds,
+          );
+          await tx`INSERT INTO agent_runs(id,conversation_id,organization_id,workspace_id,status,trace_id) VALUES (${runId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},'running',${traceId})`;
+          const { policy } = await effectivePolicy(tx, locked as never);
+          explicitHandoff =
+            isHumanRequest(message) &&
+            (await customerHandoffState(tx, locked as never))
+              .canRequestExplicit;
+          journey = explicitHandoff
+            ? {
+                state: locked.journey_state as Record<string, unknown>,
+                response: null,
+                query: message,
+                handoff: false,
+              }
+            : advanceJourney(c, locked.journey_state, message, quickActionId);
+          if (!explicitHandoff)
+            await reserveTokens(
+              tx,
+              c,
+              model,
+              conversation,
+              runId,
+              policy.humanEntryMode !== "disabled" &&
+                !!(
+                  policy.agentCanRequestHandoff ||
+                  policy.sentimentEscalationEnabled ||
+                  policy.intentRules.length
+                ),
+            );
+          await tx`UPDATE conversations SET last_customer_message_at=now() WHERE id=${conversation.id}`;
+          await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content) VALUES (${randomUUID()},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'user',${message})`;
+        });
+      } catch (e) {
+        if ((e as { code?: string }).code === "23505")
+          throw new HttpError(
+            409,
+            "A response is already running in this conversation",
+          );
+        throw e;
+      }
+      const [summaryState] =
+        await sql`SELECT context_summary FROM conversations WHERE id=${conversation.id}`;
+      const rows = await sql<
+        {
+          id: string;
+          created_at: Date;
+          role: "user" | "assistant";
+          content: string;
+        }[]
+      >`SELECT m.id,m.created_at,m.role,m.content FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${conversation.id} AND (ar.status='completed' OR ar.id=${runId}) AND (${c.contextControls.enabled && c.contextControls.summarize ? (summaryState!.context_summary.beforeTime ?? null) : null}::timestamptz IS NULL OR (m.created_at,m.id)>(${c.contextControls.enabled && c.contextControls.summarize ? (summaryState!.context_summary.beforeTime ?? null) : null}::timestamptz,${summaryState!.context_summary.beforeId ?? "00000000-0000-0000-0000-000000000000"}::uuid)) ORDER BY m.created_at DESC,m.id DESC LIMIT ${c.contextControls.enabled && c.contextControls.summarize ? 200 : c.historyWindow * 2}`;
+      const fitted = fitHistory(c, model, rows.reverse());
+      const messages: ChatMessage[] = fitted.messages.map(
+        ({ role, content }) => ({
+          role,
+          content,
+        }),
+      );
+      let newSummary: string | null = null;
+      let breakdown: ReturnType<typeof componentPreview> | null = null;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 90000);
+      timer.unref();
+      reply.hijack();
+      const responseHeaders: Record<string, string | number | string[]> = {};
+      for (const [name, value] of Object.entries(reply.getHeaders())) {
+        if (typeof value === "string" || typeof value === "number")
+          responseHeaders[name] = value;
+        else if (Array.isArray(value))
+          responseHeaders[name] = value.map(String);
+      }
+      reply.raw.writeHead(200, {
+        ...responseHeaders,
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Accel-Buffering": "no",
+        Connection: "keep-alive",
+      });
+      const write = (event: string, data: unknown) => {
+        if (!reply.raw.destroyed)
+          reply.raw.write(
+            `event: ${event}\ndata: ${JSON.stringify({ protocolVersion: 1, ...(data as object) })}\n\n`,
+          );
+      };
+      const disconnected = () => {
+        if (!reply.raw.writableEnded) controller.abort();
+      };
+      reply.raw.on("close", disconnected);
+      const heartbeat = setInterval(() => {
+        if (!reply.raw.destroyed) reply.raw.write(": heartbeat\n\n");
+      }, 15000);
+      heartbeat.unref();
+      write("meta", {
+        runId,
+        traceId,
+        conversationId: conversation.id,
+        ...(guestToken ? { guestToken } : {}),
+      });
+      let output = "";
+      let uiBlocks: RenderedBlock[] = [];
+      let artifacts: Artifact[] = [];
+      const messageId = randomUUID();
+      let inputTokens: number | null = null;
+      let outputTokens: number | null = null;
+      let status = "completed";
+      let errorCode: string | null = null;
+      let sources: Citation[] = [];
+      let citations: Citation[] = [];
+      let retrievalMs: number | null = null;
+      let retrievalDiagnostics: Record<string, string | number> = {};
+      let answerKind:
+        "answer" | "clarify" | "no_answer" | "journey" | "handoff" | null =
+        null;
+      let offerHuman = false;
+      try {
+        if (explicitHandoff) {
+          output =
+            "I’ll request human support for this conversation. You can continue in this same chat.";
+          answerKind = "handoff";
+          inputTokens = 0;
+          outputTokens = 0;
+          write("token", { text: output });
+        } else if (journey!.response) {
+          output = journey!.response;
+          answerKind = journey!.handoff ? "handoff" : "journey";
+          offerHuman = journey!.handoff;
+          inputTokens = 0;
+          outputTokens = 0;
+          write("token", { text: output });
+        } else {
+          if (
+            c.contextControls.enabled &&
+            c.contextControls.summarize &&
+            fitted.removed.length
+          ) {
+            const [saved] =
+              await sql`SELECT context_summary FROM conversations WHERE id=${conversation.id}`;
+            try {
+              newSummary = await summarizeHistory(
+                provider,
+                c,
+                fitted.removed,
+                saved!.context_summary.text ?? "",
+                controller.signal,
+              );
+            } catch (e) {
+              if (controller.signal.aborted) throw e;
+              r.log.warn(
+                { runId, code: "SUMMARY_UNAVAILABLE" },
+                "Context summary unavailable; retaining recent turns",
+              );
+            }
+          }
+          const [savedContext] =
+            await sql`SELECT context_summary FROM conversations WHERE id=${conversation.id}`;
+          const summaryText =
+            c.contextControls.enabled && c.contextControls.summarize
+              ? (newSummary ?? savedContext!.context_summary.text ?? "")
+              : "";
+          if (summaryText)
+            continuation.grounding +=
+              "\nUntrusted conversation summary (not approved factual guidance):\n" +
+              JSON.stringify(summaryText);
+          if (
+            !c.contextControls.enabled &&
+            Buffer.byteLength(JSON.stringify(messages)) +
+              Buffer.byteLength(JSON.stringify(c.prompt)) +
+              Buffer.byteLength(continuation.grounding) >
+              model.contextWindow - c.maxOutputTokens
+          )
+            throw new ProviderError("CONTEXT_LIMIT");
+          const knowledgePlan = await planKnowledgeUsage(
+            c,
+            provider,
+            messages,
+            controller.signal,
+            c.contextControls.enabled
+              ? Infinity
+              : model.contextWindow - c.maxOutputTokens,
+            c.rag.usageMode === "automatic" && c.rag.knowledgeBaseIds.length
+              ? await sql<
+                  { name: string; description: string }[]
+                >`SELECT name,description FROM knowledge_bases WHERE id=ANY(${c.rag.knowledgeBaseIds}::uuid[]) AND workspace_id=${conversation.workspace_id} AND organization_id=${conversation.organization_id} AND archived_at IS NULL`
+              : [],
+          );
+          const planningRoute = metered.usage().routing.attempts.at(-1);
+          retrievalDiagnostics = {
+            ...knowledgePlan.diagnostics,
+            provider: planningRoute?.provider ?? model.provider,
+            model: planningRoute?.modelId ?? model.id,
+          };
+          span.addEvent("knowledge.planning", knowledgePlan.diagnostics);
+          if (knowledgePlan.diagnostics.status === "fallback")
+            r.log.warn(
+              {
+                runId,
+                traceId,
+                knowledgePlan: {
+                  ...knowledgePlan.diagnostics,
+                  provider: retrievalDiagnostics.provider,
+                  model: retrievalDiagnostics.model,
+                },
+              },
+              "Knowledge planner used raw-query retrieval fallback",
+            );
+          if (knowledgePlan.retrieve) {
+            const started = performance.now();
+            const retrieval = await enhancedRetrieval(
+              ragTool,
+              provider,
+              messages,
+              knowledgePlan.diagnostics.status === "fallback"
+                ? message
+                : journey!.query,
+              c.rag.knowledgeBaseIds,
+              c.rag,
+              {
+                workspaceId: conversation.workspace_id,
+                organizationId: conversation.organization_id,
+                publicAccess: !!conversation.deployment_id,
+              },
+              controller.signal,
+              c.maxOutputTokens,
+            );
+            sources = retrieval.sources;
+            retrievalDiagnostics = {
+              ...retrievalDiagnostics,
+              ...retrieval.diagnostics,
+            };
+            if (c.contextControls.enabled) {
+              let used = 0;
+              sources = sources.filter((source) => {
+                const size = tokenCount(
+                  source.content,
+                  c.contextControls.tokenizer,
+                );
+                if (used + size > c.contextControls.knowledgeBudget)
+                  return false;
+                used += size;
+                return true;
+              });
+            }
+            retrievalDiagnostics.selectedChunks = sources.length;
+            span.addEvent("knowledge.selected_chunks", {
+              count: sources.length,
+            });
+            retrievalMs = Math.round(performance.now() - started);
+            if (!sources.length && c.answerPolicy.mode !== "grounded")
+              throw new KnowledgeError("NO_RELEVANT_SOURCES");
+            write("sources", { sources });
+          }
+          if (c.answerPolicy.mode === "grounded") {
+            span.addEvent("generation.started", { mode: "grounded" });
+            const result = await generateGroundedAnswer(
+              c,
+              provider,
+              [
+                ...messages.slice(0, -1),
+                { role: "user", content: journey!.query },
+              ],
+              sources,
+              controller.signal,
+              c.contextControls.enabled
+                ? Infinity
+                : model.contextWindow - c.maxOutputTokens,
+              continuation.grounding,
+            );
+            output = result.message;
+            answerKind = result.kind;
+            inputTokens = result.inputTokens;
+            outputTokens = result.outputTokens;
+            offerHuman =
+              result.kind === "no_answer" &&
+              c.answerPolicy.offerHumanOnNoAnswer;
+            write("token", { text: output });
+          } else {
+            const toolsResult = await runAgentTools(
+              {
+                ...c,
+                tools: {
+                  ...c.tools,
+                  toolIds: c.tools.toolIds.filter(
+                    (id) => !continuation.blockedToolIds.includes(id),
+                  ),
+                },
+              },
+              provider,
+              message,
+              {
+                workspaceId: conversation.workspace_id,
+                organizationId: conversation.organization_id,
+                publicAccess: !!conversation.deployment_id,
+                userId: conversation.user_id ?? undefined,
+                runId,
+              },
+              controller.signal,
+              (data) => write("tool", data),
+              c.contextControls.enabled
+                ? Infinity
+                : model.contextWindow - c.maxOutputTokens,
+              continuation.grounding,
+              messages,
+            );
+            toolsResult.inputTokens =
+              toolsResult.inputTokens === null ||
+              knowledgePlan.inputTokens === null
+                ? null
+                : toolsResult.inputTokens + knowledgePlan.inputTokens;
+            toolsResult.outputTokens =
+              toolsResult.outputTokens === null ||
+              knowledgePlan.outputTokens === null
+                ? null
+                : toolsResult.outputTokens + knowledgePlan.outputTokens;
+            const grounding =
+              continuation.grounding +
+              (sources.length ? groundedPrompt(sources) : "") +
+              toolsResult.grounding +
+              (c.generative.enabled
+                ? generativePrompt() +
+                  ` Allowed block types: ${c.generative.allowedBlocks.join(",")}.`
+                : "");
+            // Conservative UTF-8 byte budget avoids sending an oversized context to providers.
+            breakdown = componentPreview(
+              c,
+              model,
+              messages,
+              sources.length ? groundedPrompt(sources) : "",
+              toolsResult.grounding,
+              continuation.grounding,
+            );
+            if (
+              !c.contextControls.enabled &&
+              Buffer.byteLength(JSON.stringify(messages)) +
+                Buffer.byteLength(JSON.stringify(c.prompt)) +
+                Buffer.byteLength(grounding) >
+                model.contextWindow - c.maxOutputTokens
+            )
+              throw new ProviderError("CONTEXT_LIMIT");
+            span.addEvent("generation.started", { mode: "standard" });
+            for await (const event of runtime.run(
+              c,
+              messages,
+              provider,
+              controller.signal,
+              grounding,
+            )) {
+              if (controller.signal.aborted)
+                throw new ProviderError("CANCELLED");
+              if (event.type === "token") {
+                output += event.text;
+                if (output.length > 256000)
+                  throw new ProviderError("OUTPUT_LIMIT");
+                if (!c.generative.enabled) write("token", { text: event.text });
+              } else {
+                inputTokens =
+                  event.inputTokens === null || toolsResult.inputTokens === null
+                    ? null
+                    : event.inputTokens + toolsResult.inputTokens;
+                outputTokens =
+                  event.outputTokens === null ||
+                  toolsResult.outputTokens === null
+                    ? null
+                    : event.outputTokens + toolsResult.outputTokens;
+              }
+            }
+            if (c.generative.enabled) {
+              try {
+                const envelope = responseEnvelope.parse(JSON.parse(output));
+                if (
+                  envelope.blocks.some(
+                    (b) => !c.generative.allowedBlocks.includes(b.type),
+                  )
+                )
+                  throw new Error("Unsupported component");
+                const prepared = await prepareArtifacts(
+                  envelope,
+                  conversation.workspace_id,
+                  conversation.organization_id,
+                );
+                uiBlocks = prepared.blocks;
+                artifacts = prepared.artifacts;
+                if (controller.signal.aborted)
+                  throw new ProviderError("CANCELLED");
+                output = [
+                  envelope.message,
+                  ...envelope.blocks
+                    .filter((b) => b.type === "text")
+                    .map((b) => (b.type === "text" ? b.content : "")),
+                ]
+                  .filter(Boolean)
+                  .join("\n\n");
+              } catch (error) {
+                output = "";
+                if (error instanceof ProviderError) throw error;
+                throw new ProviderError("INVALID_UI_RESPONSE");
+              }
+            }
+          }
+          citations = citedSources(output, sources);
+          if (
+            sources.length &&
+            c.rag.requireCitations &&
+            (!answerKind || answerKind === "answer") &&
+            !citations.length
+          )
+            throw new KnowledgeError("CITATION_REQUIRED");
+          if (
+            sources.length &&
+            [...output.matchAll(/\[(\d+)\]/g)].some(
+              (m) => !sources.some((s) => s.id === Number(m[1])),
+            )
+          )
+            throw new KnowledgeError("INVALID_CITATION");
+        }
+      } catch (e) {
+        citations = citedSources(output, sources);
+        status = controller.signal.aborted ? "cancelled" : "failed";
+        errorCode = controller.signal.aborted
+          ? "CANCELLED"
+          : e instanceof ProviderError ||
+              e instanceof KnowledgeError ||
+              e instanceof ToolError
+            ? e.code
+            : "RUNTIME_ERROR";
+        if (c.generative.enabled) {
+          output = "";
+          uiBlocks = [];
+          await Promise.allSettled(
+            artifacts.map((a) => deleteKnowledge(a.key)),
+          );
+          artifacts = [];
+        }
+        observationError(span, { code: errorCode });
         r.log.warn(
           {
             runId,
             traceId,
-            knowledgePlan: {
-              ...knowledgePlan.diagnostics,
-              provider: retrievalDiagnostics.provider,
-              model: retrievalDiagnostics.model,
-            },
+            code: errorCode,
+            provider: model.provider,
+            modelId: model.modelId,
+            hostname: new URL(model.baseUrl).hostname,
+            httpStatus: e instanceof ProviderError ? e.httpStatus : undefined,
+            providerCode:
+              e instanceof ProviderError ? e.details?.providerCode : undefined,
+            parameter:
+              e instanceof ProviderError ? e.details?.parameter : undefined,
+            retryable: e instanceof ProviderError ? e.retryable : false,
+            temperature: c.temperature,
+            topP: c.topP,
+            maxOutputTokens: c.maxOutputTokens,
+            credentialSelected: !!model.secretId,
+            hint:
+              errorCode === "PROVIDER_HTTP_ERROR"
+                ? "Check model identifier, account access, output token limit and supported sampling parameters."
+                : errorCode === "AUTHENTICATION_FAILED"
+                  ? "Check the selected workspace credential."
+                  : errorCode === "RATE_LIMITED"
+                    ? "Check provider quota and retry later."
+                    : "Use the failure code and trace ID to investigate the run.",
           },
-          "Knowledge planner used raw-query retrieval fallback",
+          "Agent chat failed",
         );
-      if (knowledgePlan.retrieve) {
-        const started = performance.now();
-        const retrieval = await enhancedRetrieval(
-          ragTool,
-          provider,
-          messages,
-          knowledgePlan.diagnostics.status === "fallback"
-            ? message
-            : journey!.query,
-          c.rag.knowledgeBaseIds,
-          c.rag,
-          {
-            workspaceId: conversation.workspace_id,
-            organizationId: conversation.organization_id,
-            publicAccess: !!conversation.deployment_id,
-          },
-          controller.signal,
-          c.maxOutputTokens,
-        );
-        sources = retrieval.sources;
-        retrievalDiagnostics = {
-          ...retrievalDiagnostics,
-          ...retrieval.diagnostics,
-        };
-        if (c.contextControls.enabled) {
-          let used = 0;
-          sources = sources.filter((source) => {
-            const size = tokenCount(
-              source.content,
-              c.contextControls.tokenizer,
-            );
-            if (used + size > c.contextControls.knowledgeBudget) return false;
-            used += size;
-            return true;
-          });
-        }
-        retrievalDiagnostics.selectedChunks = sources.length;
-        span.addEvent("knowledge.selected_chunks", { count: sources.length });
-        retrievalMs = Math.round(performance.now() - started);
-        if (!sources.length && c.answerPolicy.mode !== "grounded")
-          throw new KnowledgeError("NO_RELEVANT_SOURCES");
-        write("sources", { sources });
-      }
-      if (c.answerPolicy.mode === "grounded") {
-        span.addEvent("generation.started", { mode: "grounded" });
-        const result = await generateGroundedAnswer(
-          c,
-          provider,
-          [...messages.slice(0, -1), { role: "user", content: journey!.query }],
-          sources,
-          controller.signal,
-          c.contextControls.enabled
-            ? Infinity
-            : model.contextWindow - c.maxOutputTokens,
-          continuation.grounding,
-        );
-        output = result.message;
-        answerKind = result.kind;
-        inputTokens = result.inputTokens;
-        outputTokens = result.outputTokens;
-        offerHuman =
-          result.kind === "no_answer" && c.answerPolicy.offerHumanOnNoAnswer;
-        write("token", { text: output });
-      } else {
-        const toolsResult = await runAgentTools(
-          {
-            ...c,
-            tools: {
-              ...c.tools,
-              toolIds: c.tools.toolIds.filter(
-                (id) => !continuation.blockedToolIds.includes(id),
-              ),
-            },
-          },
-          provider,
-          message,
-          {
-            workspaceId: conversation.workspace_id,
-            organizationId: conversation.organization_id,
-            publicAccess: !!conversation.deployment_id,
-            userId: conversation.user_id ?? undefined,
-            runId,
-          },
-          controller.signal,
-          (data) => write("tool", data),
-          c.contextControls.enabled
-            ? Infinity
-            : model.contextWindow - c.maxOutputTokens,
-          continuation.grounding,
-          messages,
-        );
-        toolsResult.inputTokens =
-          toolsResult.inputTokens === null || knowledgePlan.inputTokens === null
-            ? null
-            : toolsResult.inputTokens + knowledgePlan.inputTokens;
-        toolsResult.outputTokens =
-          toolsResult.outputTokens === null ||
-          knowledgePlan.outputTokens === null
-            ? null
-            : toolsResult.outputTokens + knowledgePlan.outputTokens;
-        const grounding =
-          continuation.grounding +
-          (sources.length ? groundedPrompt(sources) : "") +
-          toolsResult.grounding +
-          (c.generative.enabled
-            ? generativePrompt() +
-              ` Allowed block types: ${c.generative.allowedBlocks.join(",")}.`
-            : "");
-        // Conservative UTF-8 byte budget avoids sending an oversized context to providers.
-        breakdown = componentPreview(
-          c,
-          model,
-          messages,
-          sources.length ? groundedPrompt(sources) : "",
-          toolsResult.grounding,
-          continuation.grounding,
-        );
-        if (
-          !c.contextControls.enabled &&
-          Buffer.byteLength(JSON.stringify(messages)) +
-            Buffer.byteLength(JSON.stringify(c.prompt)) +
-            Buffer.byteLength(grounding) >
-            model.contextWindow - c.maxOutputTokens
-        )
-          throw new ProviderError("CONTEXT_LIMIT");
-        span.addEvent("generation.started", { mode: "standard" });
-        for await (const event of runtime.run(
-          c,
-          messages,
-          provider,
-          controller.signal,
-          grounding,
-        )) {
-          if (controller.signal.aborted) throw new ProviderError("CANCELLED");
-          if (event.type === "token") {
-            output += event.text;
-            if (output.length > 256000) throw new ProviderError("OUTPUT_LIMIT");
-            if (!c.generative.enabled) write("token", { text: event.text });
-          } else {
-            inputTokens =
-              event.inputTokens === null || toolsResult.inputTokens === null
-                ? null
-                : event.inputTokens + toolsResult.inputTokens;
-            outputTokens =
-              event.outputTokens === null || toolsResult.outputTokens === null
-                ? null
-                : event.outputTokens + toolsResult.outputTokens;
-          }
-        }
-        if (c.generative.enabled) {
-          try {
-            const envelope = responseEnvelope.parse(JSON.parse(output));
+      } finally {
+        clearTimeout(timer);
+        clearInterval(heartbeat);
+        reply.raw.off("close", disconnected);
+        try {
+          await sql.begin(async (tx) => {
+            if (output || uiBlocks.length)
+              await tx`UPDATE conversations SET last_agent_message_at=now() WHERE id=${conversation.id}`;
+            if (output || uiBlocks.length)
+              await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content,citations,ui_blocks) VALUES (${messageId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'assistant',${output},${tx.json(citations.map((s) => ({ ...s })))},${tx.json(uiBlocks as never)})`;
+            for (const a of artifacts)
+              await tx`INSERT INTO generated_artifacts(id,organization_id,workspace_id,message_id,name,content_type,storage_key,byte_size) VALUES (${a.id},${conversation.organization_id},${conversation.workspace_id},${messageId},${a.name},${a.contentType},${a.key},${a.byteSize})`;
+            if (status === "completed" && newSummary)
+              await tx`UPDATE conversations SET context_summary=${tx.json({ text: newSummary, updatedAt: new Date().toISOString(), tokenizer: c.contextControls.tokenizer, beforeTime: (fitted.removed.at(-1) as (typeof rows)[number] | undefined)?.created_at?.toISOString(), beforeId: (fitted.removed.at(-1) as (typeof rows)[number] | undefined)?.id })} WHERE id=${conversation.id}`;
+            await tx`UPDATE agent_runs SET context_breakdown=${tx.json(breakdown ?? componentPreview(c, model, messages, sources.length ? groundedPrompt(sources) : "", "", continuation.grounding))} WHERE id=${runId}`;
+            if (status === "completed")
+              await tx`UPDATE conversations SET journey_state=${tx.json(journey!.state as never)} WHERE id=${conversation.id}`;
             if (
-              envelope.blocks.some(
-                (b) => !c.generative.allowedBlocks.includes(b.type),
-              )
-            )
-              throw new Error("Unsupported component");
-            const prepared = await prepareArtifacts(
-              envelope,
-              conversation.workspace_id,
-              conversation.organization_id,
+              c.modelRouting.enabled ||
+              c.modelRouting.fallbackModelIds.length ||
+              c.rag.queryRewrite ||
+              c.rag.rerank
+            ) {
+              inputTokens = metered.usage().inputTokens;
+              outputTokens = metered.usage().outputTokens;
+            }
+            await tx`UPDATE agent_runs SET answer_kind=${answerKind},status=${status},input_tokens=${inputTokens},output_tokens=${outputTokens},error_code=${errorCode},finished_at=now(),retrieval=${tx.json(sources.map((s) => ({ ...s })))},retrieval_ms=${retrievalMs} WHERE id=${runId}`;
+            await tx`UPDATE agent_runs ar SET input_usd_per_million=p.input_usd_per_million,output_usd_per_million=p.output_usd_per_million FROM model_prices p WHERE ar.id=${runId} AND p.model_id=${model.id} AND p.workspace_id=${conversation.workspace_id} AND ${!c.modelRouting.enabled && !c.modelRouting.fallbackModelIds.length}`;
+            if (
+              c.modelRouting.enabled ||
+              c.modelRouting.fallbackModelIds.length
+            ) {
+              const prices = await tx<
+                {
+                  model_id: string;
+                  input_usd_per_million: number;
+                  output_usd_per_million: number;
+                }[]
+              >`SELECT model_id,input_usd_per_million::float8,output_usd_per_million::float8 FROM model_prices WHERE workspace_id=${conversation.workspace_id}`;
+              const cost = modelUsageCost(metered.usage().modelUsage, prices);
+              if (cost)
+                await tx`UPDATE agent_runs SET input_usd_per_million=${cost.inputRate},output_usd_per_million=${cost.outputRate} WHERE id=${runId}`;
+            }
+            await queueRunWebhooks(tx, {
+              id: runId,
+              workspaceId: conversation.workspace_id,
+              organizationId: conversation.organization_id,
+              status,
+              traceId,
+            });
+          });
+          try {
+            const handedOff =
+              explicitHandoff &&
+              (await handoffExplicitRequest(conversation.id, runId));
+            if (handedOff)
+              write("support", {
+                status: "pending",
+                conversationMode: "waiting_human",
+              });
+            if (!handedOff)
+              await evaluateEscalation(
+                conversation.id,
+                runId,
+                provider,
+                offerHuman
+                  ? answerKind === "handoff"
+                    ? "required_intent"
+                    : "knowledge_gap"
+                  : undefined,
+              );
+          } catch {
+            r.log.warn(
+              { runId, traceId, code: "SUPPORT_DECISION_FAILED" },
+              "Support escalation evaluation failed",
             );
-            uiBlocks = prepared.blocks;
-            artifacts = prepared.artifacts;
-            if (controller.signal.aborted) throw new ProviderError("CANCELLED");
-            output = [
-              envelope.message,
-              ...envelope.blocks
-                .filter((b) => b.type === "text")
-                .map((b) => (b.type === "text" ? b.content : "")),
-            ]
-              .filter(Boolean)
-              .join("\n\n");
-          } catch (error) {
-            output = "";
-            if (error instanceof ProviderError) throw error;
-            throw new ProviderError("INVALID_UI_RESPONSE");
           }
-        }
-      }
-      citations = citedSources(output, sources);
-      if (
-        sources.length &&
-        c.rag.requireCitations &&
-        (!answerKind || answerKind === "answer") &&
-        !citations.length
-      )
-        throw new KnowledgeError("CITATION_REQUIRED");
-      if (
-        sources.length &&
-        [...output.matchAll(/\[(\d+)\]/g)].some(
-          (m) => !sources.some((s) => s.id === Number(m[1])),
-        )
-      )
-        throw new KnowledgeError("INVALID_CITATION");
-    }
-  } catch (e) {
-    citations = citedSources(output, sources);
-    status = controller.signal.aborted ? "cancelled" : "failed";
-    errorCode = controller.signal.aborted
-      ? "CANCELLED"
-      : e instanceof ProviderError ||
-          e instanceof KnowledgeError ||
-          e instanceof ToolError
-        ? e.code
-        : "RUNTIME_ERROR";
-    if (c.generative.enabled) {
-      output = "";
-      uiBlocks = [];
-      await Promise.allSettled(artifacts.map((a) => deleteKnowledge(a.key)));
-      artifacts = [];
-    }
-    span.setStatus({ code: SpanStatusCode.ERROR, message: errorCode });
-    r.log.warn(
-      {
-        runId,
-        traceId,
-        code: errorCode,
-        provider: model.provider,
-        modelId: model.modelId,
-        hostname: new URL(model.baseUrl).hostname,
-        httpStatus: e instanceof ProviderError ? e.httpStatus : undefined,
-        providerCode:
-          e instanceof ProviderError ? e.details?.providerCode : undefined,
-        parameter:
-          e instanceof ProviderError ? e.details?.parameter : undefined,
-        retryable: e instanceof ProviderError ? e.retryable : false,
-        temperature: c.temperature,
-        topP: c.topP,
-        maxOutputTokens: c.maxOutputTokens,
-        credentialSelected: !!model.secretId,
-        hint:
-          errorCode === "PROVIDER_HTTP_ERROR"
-            ? "Check model identifier, account access, output token limit and supported sampling parameters."
-            : errorCode === "AUTHENTICATION_FAILED"
-              ? "Check the selected workspace credential."
-              : errorCode === "RATE_LIMITED"
-                ? "Check provider quota and retry later."
-                : "Use the failure code and trace ID to investigate the run.",
-      },
-      "Agent chat failed",
-    );
-  } finally {
-    clearTimeout(timer);
-    clearInterval(heartbeat);
-    reply.raw.off("close", disconnected);
-    try {
-      await sql.begin(async (tx) => {
-        if (output || uiBlocks.length)
-          await tx`UPDATE conversations SET last_agent_message_at=now() WHERE id=${conversation.id}`;
-        if (output || uiBlocks.length)
-          await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content,citations,ui_blocks) VALUES (${messageId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'assistant',${output},${tx.json(citations.map((s) => ({ ...s })))},${tx.json(uiBlocks as never)})`;
-        for (const a of artifacts)
-          await tx`INSERT INTO generated_artifacts(id,organization_id,workspace_id,message_id,name,content_type,storage_key,byte_size) VALUES (${a.id},${conversation.organization_id},${conversation.workspace_id},${messageId},${a.name},${a.contentType},${a.key},${a.byteSize})`;
-        if (status === "completed" && newSummary)
-          await tx`UPDATE conversations SET context_summary=${tx.json({ text: newSummary, updatedAt: new Date().toISOString(), tokenizer: c.contextControls.tokenizer, beforeTime: (fitted.removed.at(-1) as (typeof rows)[number] | undefined)?.created_at?.toISOString(), beforeId: (fitted.removed.at(-1) as (typeof rows)[number] | undefined)?.id })} WHERE id=${conversation.id}`;
-        await tx`UPDATE agent_runs SET context_breakdown=${tx.json(breakdown ?? componentPreview(c, model, messages, sources.length ? groundedPrompt(sources) : "", "", continuation.grounding))} WHERE id=${runId}`;
-        if (status === "completed")
-          await tx`UPDATE conversations SET journey_state=${tx.json(journey!.state as never)} WHERE id=${conversation.id}`;
-        if (
-          c.modelRouting.enabled ||
-          c.modelRouting.fallbackModelIds.length ||
-          c.rag.queryRewrite ||
-          c.rag.rerank
-        ) {
-          inputTokens = metered.usage().inputTokens;
-          outputTokens = metered.usage().outputTokens;
-        }
-        await tx`UPDATE agent_runs SET answer_kind=${answerKind},status=${status},input_tokens=${inputTokens},output_tokens=${outputTokens},error_code=${errorCode},finished_at=now(),retrieval=${tx.json(sources.map((s) => ({ ...s })))},retrieval_ms=${retrievalMs} WHERE id=${runId}`;
-        await tx`UPDATE agent_runs ar SET input_usd_per_million=p.input_usd_per_million,output_usd_per_million=p.output_usd_per_million FROM model_prices p WHERE ar.id=${runId} AND p.model_id=${model.id} AND p.workspace_id=${conversation.workspace_id} AND ${!c.modelRouting.enabled && !c.modelRouting.fallbackModelIds.length}`;
-        if (c.modelRouting.enabled || c.modelRouting.fallbackModelIds.length) {
-          const prices = await tx<
-            {
-              model_id: string;
-              input_usd_per_million: number;
-              output_usd_per_million: number;
-            }[]
-          >`SELECT model_id,input_usd_per_million::float8,output_usd_per_million::float8 FROM model_prices WHERE workspace_id=${conversation.workspace_id}`;
-          const cost = modelUsageCost(metered.usage().modelUsage, prices);
-          if (cost)
-            await tx`UPDATE agent_runs SET input_usd_per_million=${cost.inputRate},output_usd_per_million=${cost.outputRate} WHERE id=${runId}`;
-        }
-        await queueRunWebhooks(tx, {
-          id: runId,
-          workspaceId: conversation.workspace_id,
-          organizationId: conversation.organization_id,
-          status,
-          traceId,
-        });
-      });
-      try {
-        const handedOff =
-          explicitHandoff &&
-          (await handoffExplicitRequest(conversation.id, runId));
-        if (handedOff)
-          write("support", {
-            status: "pending",
-            conversationMode: "waiting_human",
+          await sql.begin(async (tx) => {
+            await settleTokens(tx, runId, metered.usage().reported);
+            await tx`UPDATE agent_runs SET context_breakdown=context_breakdown || ${tx.json(
+              {
+                providerCalls: metered.usage().requests,
+                quotaChargedTokens: metered.usage().reported,
+                modelRouting: metered.usage().routing,
+                modelUsage: metered.usage().modelUsage,
+                retrievalEnhancements: retrievalDiagnostics,
+              },
+            )}::jsonb WHERE id=${runId}`;
           });
-        if (!handedOff)
-          await evaluateEscalation(
-            conversation.id,
-            runId,
-            provider,
-            offerHuman
-              ? answerKind === "handoff"
-                ? "required_intent"
-                : "knowledge_gap"
-              : undefined,
+          if (errorCode)
+            write("error", {
+              code: errorCode,
+              message:
+                errorCode === "KNOWLEDGE_PLAN_INVALID"
+                  ? "The knowledge usage decision was invalid. Check your model and usage instructions, then retry."
+                  : errorCode === "GROUNDED_RESPONSE_INVALID"
+                    ? "The answer could not be verified. Please clarify your question or request customer care."
+                    : errorCode === "TOOL_REQUIRED"
+                      ? "Your tool policy requires a call, but no relevant safe call was selected. Review the usage policy and tool descriptions."
+                      : errorCode === "NO_RELEVANT_SOURCES"
+                        ? "No relevant knowledge was found. Try another question or check the knowledge sources."
+                        : errorCode === "CITATION_REQUIRED" ||
+                            errorCode === "INVALID_CITATION"
+                          ? "The response could not be verified against its source references."
+                          : errorCode === "KNOWLEDGE_NOT_PUBLIC"
+                            ? "This knowledge is unavailable in public chat."
+                            : errorCode.startsWith("TOOL_") ||
+                                errorCode.startsWith("MCP_")
+                              ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
+                              : c.fallbackResponse,
+              status,
+            });
+          else {
+            if (c.generative.enabled)
+              write("ui", {
+                messageId,
+                message: output,
+                blocks: uiBlocks,
+                actionsEnabled:
+                  !conversation.deployment_id || c.generative.allowPublicForms,
+              });
+            write("done", {
+              messageId,
+              runId,
+              status,
+              inputTokens,
+              outputTokens,
+              citations,
+              retrievalMs,
+            });
+          }
+        } catch {
+          observationError(span, { code: "PERSISTENCE_ERROR" });
+          span.setAttribute("persistence.status", "failed");
+          await Promise.allSettled(
+            artifacts.map((a) => deleteKnowledge(a.key)),
           );
-      } catch {
-        r.log.warn(
-          { runId, traceId, code: "SUPPORT_DECISION_FAILED" },
-          "Support escalation evaluation failed",
-        );
-      }
-      await sql.begin(async (tx) => {
-        await settleTokens(tx, runId, metered.usage().reported);
-        await tx`UPDATE agent_runs SET context_breakdown=context_breakdown || ${tx.json(
-          {
-            providerCalls: metered.usage().requests,
-            quotaChargedTokens: metered.usage().reported,
-            modelRouting: metered.usage().routing,
-            modelUsage: metered.usage().modelUsage,
-            retrievalEnhancements: retrievalDiagnostics,
-          },
-        )}::jsonb WHERE id=${runId}`;
-      });
-      if (errorCode)
-        write("error", {
-          code: errorCode,
-          message:
-            errorCode === "KNOWLEDGE_PLAN_INVALID"
-              ? "The knowledge usage decision was invalid. Check your model and usage instructions, then retry."
-              : errorCode === "GROUNDED_RESPONSE_INVALID"
-                ? "The answer could not be verified. Please clarify your question or request customer care."
-                : errorCode === "TOOL_REQUIRED"
-                  ? "Your tool policy requires a call, but no relevant safe call was selected. Review the usage policy and tool descriptions."
-                  : errorCode === "NO_RELEVANT_SOURCES"
-                    ? "No relevant knowledge was found. Try another question or check the knowledge sources."
-                    : errorCode === "CITATION_REQUIRED" ||
-                        errorCode === "INVALID_CITATION"
-                      ? "The response could not be verified against its source references."
-                      : errorCode === "KNOWLEDGE_NOT_PUBLIC"
-                        ? "This knowledge is unavailable in public chat."
-                        : errorCode.startsWith("TOOL_") ||
-                            errorCode.startsWith("MCP_")
-                          ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
-                          : c.fallbackResponse,
-          status,
-        });
-      else {
-        if (c.generative.enabled)
-          write("ui", {
-            messageId,
-            message: output,
-            blocks: uiBlocks,
-            actionsEnabled:
-              !conversation.deployment_id || c.generative.allowPublicForms,
+          write("error", {
+            code: "PERSISTENCE_ERROR",
+            message: "The response could not be saved.",
           });
-        write("done", {
-          messageId,
-          runId,
-          status,
-          inputTokens,
-          outputTokens,
-          citations,
-          retrievalMs,
-        });
+        } finally {
+          span.setAttribute("run.status", status);
+          if (inputTokens !== null)
+            span.setAttribute("model.input_tokens", inputTokens);
+          if (outputTokens !== null)
+            span.setAttribute("model.output_tokens", outputTokens);
+          observationContent(span, "output", output, true);
+          reply.raw.end();
+        }
       }
-    } catch {
-      await Promise.allSettled(artifacts.map((a) => deleteKnowledge(a.key)));
-      write("error", {
-        code: "PERSISTENCE_ERROR",
-        message: "The response could not be saved.",
-      });
+    } catch (error) {
+      observationError(span, error);
+      throw error;
     } finally {
-      span.setAttribute("run.status", status);
-      if (inputTokens !== null)
-        span.setAttribute("model.input_tokens", inputTokens);
-      if (outputTokens !== null)
-        span.setAttribute("model.output_tokens", outputTokens);
       span.end();
-      reply.raw.end();
     }
-  }
+  });
 }
 export async function recoverInterruptedRuns() {
   await sql`UPDATE tool_executions SET status='failed',error_code='PROCESS_INTERRUPTED',finished_at=now() WHERE status='running' AND started_at<now()-interval '5 minutes'`;

@@ -250,3 +250,7 @@ Approve website hosts in API/worker `KNOWLEDGE_ALLOWED_HOSTS`; Firecrawl also ne
 ### Advanced knowledge processing
 
 Knowledge bases can optionally enable advanced processing for documents with complex tables. It keeps original values, separates tables, combines grouped headers and creates token-aware chunks. Optional LLM assistance selects validated boundaries during ingestion; standard processing remains the default and makes no assistance calls. Sources provide an extraction preview with review warnings. Parent-context expansion is a separate retrieval switch and can increase chat context usage. Existing sources require manual Reingest to apply processing changes; approved releases preserve their indexed context. See [the user guide](docs/user-guide.md#advanced-document-processing-and-financial-tables) for setup and financial-document limitations. Migration **0031** adds these settings and release metadata.
+
+### Langfuse AI traces
+
+Set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` in both API and worker environments, then restart both services. Agent turns and workflow executions export linked retrieval, tool and model observations with timings, usage and safe failures. Content is opt-in with `LANGFUSE_CAPTURE_CONTENT=true`. See [Langfuse setup and trace guide](docs/langfuse.md).

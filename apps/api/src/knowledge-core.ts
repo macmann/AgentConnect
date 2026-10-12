@@ -1,4 +1,4 @@
-import { trace } from "@opentelemetry/api";
+import { observe, observationContent, startObservation } from "./ai-tracing.js";
 import { HttpError } from "./http-error.js";
 import { sql } from "./db.js";
 import { config } from "./config.js";
@@ -113,119 +113,179 @@ export class PostgresRagTool implements RagTool {
     context: RetrievalContext,
     signal: AbortSignal,
   ): Promise<Citation[]> {
-    await validateKnowledgeIds(
-      ids,
-      context.workspaceId,
-      context.organizationId,
-      context.publicAccess,
-    );
-    const bases = await sql<
-      KnowledgeBase[]
-    >`SELECT * FROM knowledge_bases WHERE id=ANY(${ids}) AND workspace_id=${context.workspaceId} AND organization_id=${context.organizationId} AND archived_at IS NULL`;
-    const result: (Citation & { fusion: number })[] = [];
-    const queries = new Map<string, number[]>();
-    for (const kb of bases) {
-      signal.throwIfAborted();
-      let vector = queries.get(kb.embedding_model_id);
-      if (!vector) {
-        const connection = await embeddingConnection(
-          kb.embedding_model_id,
+    return observe(
+      "knowledge.retrieval",
+      "retriever",
+      {
+        "workspace.id": context.workspaceId,
+        "knowledge.base.ids": ids,
+        "retrieval.mode": options.mode,
+        "retrieval.top_k": options.topK,
+        "retrieval.min_score": options.minScore,
+      },
+      async (span) => {
+        observationContent(span, "input", query);
+        await validateKnowledgeIds(
+          ids,
           context.workspaceId,
           context.organizationId,
+          context.publicAccess,
         );
-        const span = trace
-          .getTracer("agentconnect-runtime")
-          .startSpan("knowledge.embedding");
-        try {
-          const vectors = await this.factory(connection).embed(
-            [query],
-            signal,
-            "query",
+        const bases = await sql<
+          KnowledgeBase[]
+        >`SELECT * FROM knowledge_bases WHERE id=ANY(${ids}) AND workspace_id=${context.workspaceId} AND organization_id=${context.organizationId} AND archived_at IS NULL`;
+        const result: (Citation & { fusion: number })[] = [];
+        const queries = new Map<string, number[]>();
+        for (const kb of bases) {
+          signal.throwIfAborted();
+          let vector = queries.get(kb.embedding_model_id);
+          if (!vector) {
+            const connection = await embeddingConnection(
+              kb.embedding_model_id,
+              context.workspaceId,
+              context.organizationId,
+            );
+            vector = await observe(
+              "knowledge.embedding",
+              "embedding",
+              {
+                "langfuse.observation.model.name": connection.modelId,
+                "embedding.dimensions": kb.dimensions,
+              },
+              async (embeddingSpan) => {
+                observationContent(embeddingSpan, "input", query);
+                const vectors = await this.factory(connection).embed(
+                  [query],
+                  signal,
+                  "query",
+                );
+                return validateVectors(vectors, 1, kb.dimensions)[0]!;
+              },
+            );
+            queries.set(kb.embedding_model_id, vector);
+          }
+          const releaseId =
+            options.releasePins?.[kb.id] ?? kb.published_release_id;
+          const approved =
+            !!options.releasePins?.[kb.id] ||
+            options.contentMode === "approved" ||
+            kb.approval_required;
+          if (approved) {
+            const [release] =
+              await sql`SELECT id FROM knowledge_releases WHERE id=${releaseId ?? null} AND knowledge_base_id=${kb.id} AND workspace_id=${context.workspaceId} AND organization_id=${context.organizationId} AND (status='published' OR (${context.publicAccess} = false AND id=${context.candidateReleaseId ?? null} AND status='approved'))`;
+            if (!release)
+              throw new KnowledgeError("KNOWLEDGE_RELEASE_UNAVAILABLE");
+          }
+          const literal = vectorLiteral(vector, kb.dimensions);
+          const dim = sql.unsafe(String(kb.dimensions));
+          const filters = options.sourceIds ?? [];
+          const select = approved
+            ? sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,c.title,c.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,c.kind FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=${releaseId!} AND c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status<>'deleted' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`
+            : sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,d.title,d.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,s.kind FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id JOIN knowledge_documents d ON d.id=c.document_id WHERE c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status='ready' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`;
+          const semantic = await observe(
+            "knowledge.vector_search",
+            "chain",
+            { "knowledge.base.id": kb.id },
+            async () =>
+              await sql`${select} ORDER BY c.embedding::vector(${dim}) <=> ${literal}::vector(${dim}) LIMIT 30`,
           );
-          vector = validateVectors(vectors, 1, kb.dimensions)[0]!;
-        } finally {
-          span.end();
-        }
-        queries.set(kb.embedding_model_id, vector);
-      }
-      const releaseId = options.releasePins?.[kb.id] ?? kb.published_release_id;
-      const approved =
-        !!options.releasePins?.[kb.id] ||
-        options.contentMode === "approved" ||
-        kb.approval_required;
-      if (approved) {
-        const [release] =
-          await sql`SELECT id FROM knowledge_releases WHERE id=${releaseId ?? null} AND knowledge_base_id=${kb.id} AND workspace_id=${context.workspaceId} AND organization_id=${context.organizationId} AND (status='published' OR (${context.publicAccess} = false AND id=${context.candidateReleaseId ?? null} AND status='approved'))`;
-        if (!release) throw new KnowledgeError("KNOWLEDGE_RELEASE_UNAVAILABLE");
-      }
-      const literal = vectorLiteral(vector, kb.dimensions);
-      const dim = sql.unsafe(String(kb.dimensions));
-      const filters = options.sourceIds ?? [];
-      const select = approved
-        ? sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,c.title,c.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,c.kind FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=${releaseId!} AND c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status<>'deleted' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`
-        : sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,d.title,d.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,s.kind FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id JOIN knowledge_documents d ON d.id=c.document_id WHERE c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status='ready' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`;
-      const semantic =
-        await sql`${select} ORDER BY c.embedding::vector(${dim}) <=> ${literal}::vector(${dim}) LIMIT 30`;
-      const lexical =
-        options.mode === "hybrid"
-          ? await sql`${select} AND c.search_vector @@ websearch_to_tsquery('simple',${query}) ORDER BY lexical_score DESC LIMIT 30`
-          : [];
-      const fusionSpan = trace
-        .getTracer("agentconnect-runtime")
-        .startSpan("knowledge.ranking_fusion");
-      const pool = new Map<
-        string,
-        { row: Record<string, unknown>; fusion: number }
-      >();
-      semantic.forEach((row, index) =>
-        pool.set(row.id, { row, fusion: 1 / (60 + index + 1) }),
-      );
-      lexical.forEach((row, index) => {
-        const old = pool.get(row.id);
-        pool.set(row.id, {
-          row,
-          fusion: (old?.fusion ?? 0) + 1 / (60 + index + 1),
-        });
-      });
-      fusionSpan.setAttribute("candidates", pool.size);
-      fusionSpan.end();
-      for (const { row, fusion } of pool.values()) {
-        const vectorScore = Math.max(0, Math.min(1, Number(row.vector_score)));
-        if (vectorScore < options.minScore) continue;
-        result.push({
-          id: 0,
-          chunkId: String(row.id),
-          documentId: String(row.document_id),
-          sourceId: String(row.source_id),
-          knowledgeBaseId: String(row.knowledge_base_id),
-          content:
-            typeof row.parent_content === "string" &&
-            row.parent_content.includes(String(row.content))
-              ? row.parent_content
-              : String(row.content),
-          ...(row.parent_content
-            ? { contextExpanded: row.parent_content !== row.content }
-            : {}),
-          page: row.page as number | null,
-          heading: row.heading as string | null,
-          title: String(row.title),
-          sourceUrl: row.source_url as string | null,
-          score: vectorScore,
-          vectorScore,
-          lexicalScore: Number(row.lexical_score),
-          fusion:
+          const lexical =
             options.mode === "hybrid"
-              ? fusion + (row.kind === "qa" ? 0.0001 : 0)
-              : vectorScore,
-        });
-      }
-    }
-    result.sort(
-      (a, b) => b.fusion - a.fusion || a.chunkId.localeCompare(b.chunkId),
+              ? await observe(
+                  "knowledge.lexical_search",
+                  "chain",
+                  { "knowledge.base.id": kb.id },
+                  async () =>
+                    await sql`${select} AND c.search_vector @@ websearch_to_tsquery('simple',${query}) ORDER BY lexical_score DESC LIMIT 30`,
+                )
+              : [];
+          const fusionSpan = startObservation(
+            "knowledge.ranking_fusion",
+            "chain",
+          );
+          const pool = new Map<
+            string,
+            { row: Record<string, unknown>; fusion: number }
+          >();
+          semantic.forEach((row, index) =>
+            pool.set(row.id, { row, fusion: 1 / (60 + index + 1) }),
+          );
+          lexical.forEach((row, index) => {
+            const old = pool.get(row.id);
+            pool.set(row.id, {
+              row,
+              fusion: (old?.fusion ?? 0) + 1 / (60 + index + 1),
+            });
+          });
+          fusionSpan.setAttribute("candidates", pool.size);
+          fusionSpan.end();
+          for (const { row, fusion } of pool.values()) {
+            const vectorScore = Math.max(
+              0,
+              Math.min(1, Number(row.vector_score)),
+            );
+            if (vectorScore < options.minScore) continue;
+            result.push({
+              id: 0,
+              chunkId: String(row.id),
+              documentId: String(row.document_id),
+              sourceId: String(row.source_id),
+              knowledgeBaseId: String(row.knowledge_base_id),
+              content:
+                typeof row.parent_content === "string" &&
+                row.parent_content.includes(String(row.content))
+                  ? row.parent_content
+                  : String(row.content),
+              ...(row.parent_content
+                ? { contextExpanded: row.parent_content !== row.content }
+                : {}),
+              page: row.page as number | null,
+              heading: row.heading as string | null,
+              title: String(row.title),
+              sourceUrl: row.source_url as string | null,
+              score: vectorScore,
+              vectorScore,
+              lexicalScore: Number(row.lexical_score),
+              fusion:
+                options.mode === "hybrid"
+                  ? fusion + (row.kind === "qa" ? 0.0001 : 0)
+                  : vectorScore,
+            });
+          }
+        }
+        result.sort(
+          (a, b) => b.fusion - a.fusion || a.chunkId.localeCompare(b.chunkId),
+        );
+        const selected = result
+          .slice(0, options.topK)
+          .map(({ fusion, ...r }, i) => (void fusion, { ...r, id: i + 1 }));
+        span.setAttribute("retrieval.results", selected.length);
+        span.setAttribute(
+          "retrieval.matches",
+          JSON.stringify(
+            selected.map(
+              ({
+                chunkId,
+                sourceId,
+                knowledgeBaseId,
+                score,
+                vectorScore,
+                lexicalScore,
+              }) => ({
+                chunkId,
+                sourceId,
+                knowledgeBaseId,
+                score,
+                vectorScore,
+                lexicalScore,
+              }),
+            ),
+          ),
+        );
+        observationContent(span, "output", selected);
+        return selected;
+      },
     );
-    return result
-      .slice(0, options.topK)
-      .map(({ fusion, ...r }, i) => (void fusion, { ...r, id: i + 1 }));
   }
 }
 

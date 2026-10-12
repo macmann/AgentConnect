@@ -1,4 +1,4 @@
-import { trace } from "@opentelemetry/api";
+import { observe } from "./ai-tracing.js";
 import {
   ProviderError,
   type ChatMessage,
@@ -12,12 +12,7 @@ import type {
 import type { AgentConfig } from "@agentconnect/schemas/agents";
 
 async function stage<T>(name: string, operation: () => Promise<T>): Promise<T> {
-  const span = trace.getTracer("agentconnect-runtime").startSpan(name);
-  try {
-    return await operation();
-  } finally {
-    span.end();
-  }
+  return observe(name, "chain", {}, operation);
 }
 
 async function jsonResponse(
@@ -101,7 +96,7 @@ export async function enhancedRetrieval(
   const candidateCount = options.rerank
     ? Math.max(options.topK, options.candidateCount)
     : options.topK;
-  let sources = await stage("knowledge.retrieval", () =>
+  let sources = await stage("knowledge.search", () =>
     rag.execute(
       rewritten,
       ids,
