@@ -5,6 +5,8 @@ import {
 } from "./ai-tracing.js";
 import { validateCustomerActions } from "./customer-workflows.js";
 import { routedProvider, modelUsageCost } from "./model-routing.js";
+import { agentReranker } from "./agent-reranking.js";
+import { validateRerankerSelection } from "./rerankers.js";
 import { enhancedRetrieval } from "./rag-enhancements.js";
 import { advanceJourney, generateGroundedAnswer } from "./bank-runtime.js";
 import {
@@ -178,8 +180,9 @@ export async function modelSnapshot(
   c?: AgentConfig,
 ): Promise<ModelSnapshot> {
   const [m] =
-    await sql`SELECT id,provider,model_id,base_url,secret_id,capabilities,context_window,max_output_tokens FROM model_configurations WHERE id=${modelId} AND workspace_id=${workspaceId} AND archived_at IS NULL`;
+    await sql`SELECT id,organization_id,provider,model_id,base_url,secret_id,capabilities,context_window,max_output_tokens FROM model_configurations WHERE id=${modelId} AND workspace_id=${workspaceId} AND archived_at IS NULL`;
   if (!m) throw new HttpError(400, "Select a model from this workspace");
+  if (c) await validateRerankerSelection(c, workspaceId, m.organization_id);
   return modelSnapshotSchema.parse({
     id: m.id,
     provider: m.provider,
@@ -517,6 +520,14 @@ async function streamChat(
               },
               controller.signal,
               c.maxOutputTokens,
+              agentReranker(
+                c,
+                model,
+                conversation.workspace_id,
+                conversation.organization_id,
+                factory,
+                metered,
+              ),
             );
             sources = retrieval.sources;
             retrievalDiagnostics = {

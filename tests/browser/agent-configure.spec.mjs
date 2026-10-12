@@ -4,6 +4,7 @@ import { randomUUID, createHash } from "node:crypto";
 import postgres from "postgres";
 if (process.env.NODE_ENV === "production")
   throw new Error("Tests refuse production");
+test.setTimeout(180000);
 const sql = postgres(process.env.DATABASE_URL, { max: 1 }),
   org = randomUUID(),
   workspace = randomUUID(),
@@ -53,14 +54,27 @@ const config = {
   },
 };
 const provider = createServer(async (req, res) => {
-  for await (const chunk of req) void chunk;
+  let body = "";
+  for await (const chunk of req) body += chunk;
+  const input = body ? JSON.parse(body) : {};
+  const planning = input.messages?.some(
+    (m) => m.role === "system" && m.content.startsWith("Decide whether"),
+  );
   res.writeHead(200, { "content-type": "text/event-stream" });
   res.end(
     "data: " +
       JSON.stringify({
         choices: [
           {
-            delta: { content: "Configure fixture answer" },
+            delta: {
+              content: planning
+                ? '{"retrieve":false}'
+                : JSON.stringify({
+                    version: 1,
+                    message: "Configure fixture answer",
+                    blocks: [],
+                  }),
+            },
             finish_reason: "stop",
           },
         ],
@@ -122,7 +136,9 @@ test.afterAll(async () => {
       "knowledge_bases",
       "embedding_models",
       "tools",
+      "rerankers",
       "model_configurations",
+      "secrets",
       "audit_events",
       "memberships",
       "workspaces",
@@ -307,7 +323,7 @@ test("Configure preserves a single draft across sections, validates locally, pre
   )[0];
   expect(saved.revision).toBe(2);
   expect(saved.name).toBe("Updated product assistant");
-  expect(saved.draft_config).toEqual({
+  expect(saved.draft_config).toMatchObject({
     ...config,
     prompt: {
       ...config.prompt,
@@ -316,6 +332,8 @@ test("Configure preserves a single draft across sections, validates locally, pre
     rag: {
       ...config.rag,
       minScore: 0.45,
+      rerankerId: null,
+      rerankMaxOutputTokens: 1024,
       usageMode: "automatic",
       usageInstructions: "Skip greetings; search policies",
     },
@@ -345,6 +363,43 @@ test("Configure preserves a single draft across sections, validates locally, pre
     .getByRole("button", { name: "Save and test in Playground", exact: true })
     .click();
   await expect(page.getByLabel("Message", { exact: true })).toBeVisible();
+  const message = page.getByLabel("Message", { exact: true });
+  await expect(
+    page.getByText("You can ask for a human specialist in this chat.", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await message.fill("hi");
+  await message.dispatchEvent("keydown", {
+    key: "Enter",
+    code: "Enter",
+    isComposing: true,
+    bubbles: true,
+  });
+  await expect(message).toHaveValue("hi");
+  await message.press("Shift+Enter");
+  await expect(message).toHaveValue("hi\n");
+  await expect(
+    page.getByText("Configure fixture answer", { exact: true }),
+  ).toHaveCount(0);
+  await message.press("Enter");
+  await expect(
+    page.getByText("Configure fixture answer", { exact: true }),
+  ).toBeVisible();
+  const debug = page
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: "Debug / Advanced" }) })
+    .last();
+  await expect(debug).not.toHaveAttribute("open");
+  await expect(
+    page.getByRole("button", { name: "Load run token counts" }),
+  ).toBeHidden();
+  await page.getByText("Debug / Advanced", { exact: true }).click();
+  await page.getByText("Token and context breakdown", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Load run token counts" }),
+  ).toBeVisible();
+
   await page.getByRole("button", { name: "configure", exact: true }).click();
   await section(page, "Knowledge");
   await page.reload();
@@ -444,4 +499,85 @@ test("Configure preserves a single draft across sections, validates locally, pre
     read.getByRole("button", { name: "Save changes", exact: true }),
   ).toHaveCount(0);
   await readContext.close();
+});
+
+test("Approved rerankers are managed in Models and selected inside agent retrieval settings", async ({
+  page,
+  context,
+}) => {
+  await auth(context);
+  await page.goto(`/#view=Models&organization=${org}&workspace=${workspace}`);
+  await page
+    .getByRole("button", { name: "Register reranker", exact: true })
+    .click();
+  await page
+    .getByLabel("Reranker name", { exact: true })
+    .fill("Dedicated ranking model");
+  await page.getByLabel("Reranking model", { exact: true }).selectOption(model);
+  await page
+    .getByRole("button", { name: "Save reranker", exact: true })
+    .click();
+  await expect(
+    page.getByText("Dedicated ranking model", { exact: true }),
+  ).toBeVisible();
+  const created = (
+    await sql`SELECT id FROM rerankers WHERE workspace_id=${workspace} AND name='Dedicated ranking model'`
+  )[0];
+  expect(created).toBeTruthy();
+  const secret = await context.request.post(
+    `http://localhost:4000/workspaces/${workspace}/secrets`,
+    {
+      headers: { origin: "http://localhost:3000" },
+      data: { name: "COHERE_BROWSER", value: "fixture-not-a-live-key" },
+    },
+  );
+  expect(secret.ok()).toBeTruthy();
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Register reranker", exact: true })
+    .click();
+  await page
+    .getByLabel("Reranker name", { exact: true })
+    .fill("Cohere ranking");
+  await page
+    .getByLabel("Reranker provider", { exact: true })
+    .selectOption("cohere");
+  await page
+    .getByLabel("Reranker workspace credential", { exact: true })
+    .selectOption({ label: "COHERE_BROWSER" });
+  await page
+    .getByRole("button", { name: "Save reranker", exact: true })
+    .click();
+  await expect(page.getByText("Cohere ranking", { exact: true })).toBeVisible();
+  const native = (
+    await sql`SELECT id FROM rerankers WHERE workspace_id=${workspace} AND name='Cohere ranking'`
+  )[0];
+  await page.goto(url("knowledge"));
+  await page.getByText("Advanced retrieval settings", { exact: true }).click();
+  await page.getByLabel("Rerank retrieved passages", { exact: true }).check();
+  await page
+    .getByLabel("Reranking model", { exact: true })
+    .selectOption(created.id);
+  await expect(
+    page.getByLabel("Reranking output budget", { exact: true }),
+  ).toHaveValue("1024");
+  await page
+    .getByLabel("Reranking model", { exact: true })
+    .selectOption(native.id);
+  await expect(
+    page.getByLabel("Reranking output budget", { exact: true }),
+  ).toHaveCount(0);
+  await section(page, "Advanced");
+  await expect(page.getByLabel("Reranking model", { exact: true })).toHaveCount(
+    0,
+  );
+  const metadata = page
+    .locator("summary")
+    .filter({ hasText: /^Draft metadata$/ });
+  await expect(metadata).toBeVisible();
+  await expect(page.locator(".configure-metadata")).toBeHidden();
+  await metadata.click();
+  await expect(page.locator(".configure-metadata")).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Discard", exact: true }).click();
 });

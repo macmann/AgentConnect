@@ -162,3 +162,11 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 - Workflow node hierarchy, parallel branches, retries and stable traces across approval resumes.
 - Reported token usage, first-token timing, metadata filtering and opt-in bounded content capture with credential masking.
 - Asynchronous export and graceful shutdown flushing; application histories remain the durable record. See [setup](langfuse.md).
+
+## Approved rerankers and focused diagnostics
+
+- Agent-selectable workspace rerankers: registered LLMs or native Cohere `/v2/rerank`.
+- Configurable LLM ranking output budget, metered auxiliary usage and safe retrieval-order fallback.
+- Vector, lexical and RRF ranking metadata in Langfuse; optional bounded content capture.
+- Playground Enter-to-send, Shift+Enter multiline input and IME-safe composition.
+- Closed Debug / Advanced panels, field-help disclosures and compact Publish/Advanced views.

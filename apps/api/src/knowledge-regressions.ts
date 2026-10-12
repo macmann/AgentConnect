@@ -184,6 +184,7 @@ export async function assertKnowledgeRegressionGate(
     "knowledge_bases",
     "knowledge_sources",
     "tools",
+    "rerankers",
     "embedding_models",
     "mcp_connectors",
     "secrets",

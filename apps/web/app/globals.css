@@ -4780,29 +4780,110 @@ input[type="range"] {
   font-size: 0.875rem;
 }
 
-.chat-markdown { white-space: normal; min-width: 0; overflow-wrap: anywhere; line-height: 1.65; }
-.chat-markdown > :first-child { margin-top: 0; }
-.chat-markdown > :last-child { margin-bottom: 0; }
-.chat-markdown p, .chat-markdown ul, .chat-markdown ol, .chat-markdown blockquote { margin: .65rem 0; }
-.chat-markdown ul, .chat-markdown ol { padding-left: 1.5rem; }
-.chat-markdown ul { list-style: disc; }
-.chat-markdown ol { list-style: decimal; }
-.chat-markdown li + li { margin-top: .25rem; }
-.chat-markdown h1, .chat-markdown h2, .chat-markdown h3, .chat-markdown h4 { margin: 1rem 0 .5rem; font-weight: 650; line-height: 1.3; }
-.chat-markdown h1 { font-size: 1.5rem; }
-.chat-markdown h2 { font-size: 1.3rem; }
-.chat-markdown h3 { font-size: 1.15rem; }
-.chat-markdown a { color: var(--accent); text-decoration: underline; }
-.chat-markdown blockquote { border-left: 3px solid var(--line); padding-left: .85rem; color: var(--muted); }
-.chat-markdown code { font-family: ui-monospace, monospace; font-size: .9em; background: var(--surface); padding: .15em .3em; border-radius: 4px; }
-.chat-markdown pre { max-width: 100%; overflow-x: auto; padding: .85rem; border: 1px solid var(--line); border-radius: 8px; white-space: pre; background: var(--surface); }
-.chat-markdown pre code { padding: 0; background: transparent; }
-.chat-markdown-table { max-width: 100%; overflow-x: auto; margin: .75rem 0; }
-.chat-markdown-table table { width: 100%; border-collapse: collapse; }
-.chat-markdown-table th, .chat-markdown-table td { border: 1px solid var(--line); padding: .5rem .65rem; text-align: left; }
-.chat-markdown-table th { font-weight: 650; background: var(--surface); }
-.answer-report { font-size: .875rem; white-space: normal; margin-top: .5rem; }
-.answer-report .review-form { width: 100%; }
+.chat-markdown {
+  white-space: normal;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+}
+.chat-markdown > :first-child {
+  margin-top: 0;
+}
+.chat-markdown > :last-child {
+  margin-bottom: 0;
+}
+.chat-markdown p,
+.chat-markdown ul,
+.chat-markdown ol,
+.chat-markdown blockquote {
+  margin: 0.65rem 0;
+}
+.chat-markdown ul,
+.chat-markdown ol {
+  padding-left: 1.5rem;
+}
+.chat-markdown ul {
+  list-style: disc;
+}
+.chat-markdown ol {
+  list-style: decimal;
+}
+.chat-markdown li + li {
+  margin-top: 0.25rem;
+}
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4 {
+  margin: 1rem 0 0.5rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.chat-markdown h1 {
+  font-size: 1.5rem;
+}
+.chat-markdown h2 {
+  font-size: 1.3rem;
+}
+.chat-markdown h3 {
+  font-size: 1.15rem;
+}
+.chat-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.chat-markdown blockquote {
+  border-left: 3px solid var(--line);
+  padding-left: 0.85rem;
+  color: var(--muted);
+}
+.chat-markdown code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  background: var(--surface);
+  padding: 0.15em 0.3em;
+  border-radius: 4px;
+}
+.chat-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  white-space: pre;
+  background: var(--surface);
+}
+.chat-markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+.chat-markdown-table {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+.chat-markdown-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.chat-markdown-table th,
+.chat-markdown-table td {
+  border: 1px solid var(--line);
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+}
+.chat-markdown-table th {
+  font-weight: 650;
+  background: var(--surface);
+}
+.answer-report {
+  font-size: 0.875rem;
+  white-space: normal;
+  margin-top: 0.5rem;
+}
+.answer-report .review-form {
+  width: 100%;
+}
 
 .attachment-selection {
   display: flex;
@@ -4816,4 +4897,73 @@ input[type="range"] {
 .attachment-disabled-help {
   flex-basis: 100%;
   color: var(--muted);
+}
+
+.reranker-registry {
+  margin-top: 24px;
+}
+.reranker-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+  border-top: 1px solid var(--line);
+}
+.reranker-row > div:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.reranker-row p {
+  margin: 4px 0 0;
+}
+.chat-panel > details {
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+}
+.chat-panel details > details {
+  margin-top: 12px;
+}
+.field-help > summary {
+  cursor: pointer;
+  color: var(--primary);
+}
+.field-help > small {
+  display: block;
+  margin-top: 6px;
+}
+@media (max-width: 700px) {
+  .reranker-row {
+    padding: 16px;
+  }
+}
+
+.configure-field-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+.configure-field-heading > label {
+  margin: 0;
+}
+.configure-help > summary {
+  list-style: none;
+  font-size: 15px;
+}
+.configure-help > summary::-webkit-details-marker {
+  display: none;
+}
+.configure-help[open] > small {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  max-width: min(360px, 100%);
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px #0002;
 }

@@ -258,3 +258,11 @@ Current bounds: 50 reports per queue page, 100 regression examples per dataset a
 ### Markdown in Playground
 
 AI responses in Playground and hosted chat render headings, bold/italic text, lists, links, blockquotes, fenced code and GitHub-style tables. Formatting survives conversation restoration. Wide tables and code scroll inside the message on mobile. Raw HTML is skipped, unsafe URL schemes are blocked, and Markdown images display their alternate text without fetching remote content. Customer messages remain plain text; stored response content is unchanged.
+
+### Separate knowledge rerankers
+
+Administrators can register an approved reranker under **Models → Rerankers**. Use a registered language model for JSON relevance scoring, or the native **Cohere rerank API** with a workspace API-key secret. Builders select it under **Agent → Configure → Knowledge → Advanced retrieval settings → Reranking model**. Keep **Use agent answer model** to retain the default behavior. Reranking remains opt-in. LLM ranking has its own output budget; native Cohere does not use an LLM output-token setting. Removed or disabled entries preserve retrieval order rather than blocking the answer.
+
+### Playground and advanced controls
+
+Press **Enter** to send a message, or **Shift+Enter** to add a line. IME composition does not send prematurely. Human support requests and active handoff statuses remain in the same chat; the generic specialist advertisement is omitted. Open **Debug / Advanced → Token and context breakdown** when you need technical diagnostics. Configuration field explanations, Publish explanations and Advanced groups use click/keyboard disclosures so normal operation stays compact.

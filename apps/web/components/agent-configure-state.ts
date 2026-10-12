@@ -47,6 +47,8 @@ const labels: Record<string, string> = {
   topP: "Top-P",
   historyWindow: "Conversation memory",
   topK: "Retrieved passages",
+  rerankerId: "Reranking model",
+  rerankMaxOutputTokens: "Reranking output budget",
   minScore: "Minimum relevance",
   maxCalls: "Maximum tool calls",
   usageMode: "Usage policy",

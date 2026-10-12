@@ -98,6 +98,20 @@ export function routedProvider(
     code?: string;
   }[] = [];
   return {
+    addAuxiliary: (
+      provider: ChatProvider,
+      model: ModelSnapshot,
+      config: AgentConfig,
+    ) => {
+      const meter = controlledProvider(
+        tracedProvider(provider, model),
+        config,
+        model,
+      );
+      meters.push(meter);
+      meterModels.push(model.id);
+      return meter.provider;
+    },
     usage: () => ({
       estimated: meters.reduce((n, m) => n + m.usage().estimated, 0),
       reported: meters.reduce((n, m) => n + m.usage().reported, 0),

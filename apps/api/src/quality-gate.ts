@@ -10,7 +10,7 @@ export async function qualityFingerprint(
   db: typeof sql | TransactionSql = sql,
 ) {
   const dependencies =
-    await db`SELECT 'knowledge' AS kind,id::text,revision::text AS revision FROM knowledge_bases WHERE workspace_id=${workspaceId} UNION ALL SELECT 'source',id::text,concat(revision,':',status,':',updated_at) FROM knowledge_sources WHERE workspace_id=${workspaceId} UNION ALL SELECT 'tool',id::text,concat(revision,':',enabled,':',archived_at) FROM tools WHERE workspace_id=${workspaceId} UNION ALL SELECT 'model',id::text,concat(revision,':',archived_at) FROM model_configurations WHERE workspace_id=${workspaceId} UNION ALL SELECT 'embedding',id::text,to_jsonb(embedding_models)::text FROM embedding_models WHERE workspace_id=${workspaceId} UNION ALL SELECT 'connector',id::text,concat(revision,':',enabled) FROM mcp_connectors WHERE workspace_id=${workspaceId} UNION ALL SELECT 'credential',id::text,ciphertext::text FROM secrets WHERE workspace_id=${workspaceId} ORDER BY kind,id`;
+    await db`SELECT 'knowledge' AS kind,id::text,revision::text AS revision FROM knowledge_bases WHERE workspace_id=${workspaceId} UNION ALL SELECT 'source',id::text,concat(revision,':',status,':',updated_at) FROM knowledge_sources WHERE workspace_id=${workspaceId} UNION ALL SELECT 'tool',id::text,concat(revision,':',enabled,':',archived_at) FROM tools WHERE workspace_id=${workspaceId} UNION ALL SELECT 'model',id::text,concat(revision,':',archived_at) FROM model_configurations WHERE workspace_id=${workspaceId} UNION ALL SELECT 'reranker',id::text,concat(revision,':',enabled,':',archived_at) FROM rerankers WHERE workspace_id=${workspaceId} UNION ALL SELECT 'embedding',id::text,to_jsonb(embedding_models)::text FROM embedding_models WHERE workspace_id=${workspaceId} UNION ALL SELECT 'connector',id::text,concat(revision,':',enabled) FROM mcp_connectors WHERE workspace_id=${workspaceId} UNION ALL SELECT 'credential',id::text,ciphertext::text FROM secrets WHERE workspace_id=${workspaceId} ORDER BY kind,id`;
   return createHash("sha256")
     .update(JSON.stringify([config, model, dependencies]))
     .digest("hex");
@@ -34,6 +34,7 @@ export async function assertQualityGate(
     "knowledge_bases",
     "knowledge_sources",
     "tools",
+    "rerankers",
     "embedding_models",
     "mcp_connectors",
     "secrets",

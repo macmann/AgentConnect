@@ -186,8 +186,46 @@ export class PostgresRagTool implements RagTool {
             "knowledge.vector_search",
             "chain",
             { "knowledge.base.id": kb.id },
-            async () =>
-              await sql`${select} ORDER BY c.embedding::vector(${dim}) <=> ${literal}::vector(${dim}) LIMIT 30`,
+            async (searchSpan) => {
+              const rows =
+                await sql`${select} ORDER BY c.embedding::vector(${dim}) <=> ${literal}::vector(${dim}) LIMIT 30`;
+              searchSpan.setAttribute("retrieval.results", rows.length);
+              searchSpan.setAttribute(
+                "retrieval.matches",
+                JSON.stringify(
+                  rows.map((row, i) => ({
+                    chunkId: row.id,
+                    sourceId: row.source_id,
+                    rank: i + 1,
+                    score: Number(row.vector_score),
+                  })),
+                ),
+              );
+              searchSpan.setAttribute(
+                "langfuse.observation.metadata",
+                JSON.stringify({
+                  knowledgeBaseId: kb.id,
+                  results: rows.map((row, i) => ({
+                    chunkId: row.id,
+                    sourceId: row.source_id,
+                    rank: i + 1,
+                    score: Number(row.vector_score),
+                  })),
+                }),
+              );
+              observationContent(searchSpan, "input", query);
+              observationContent(
+                searchSpan,
+                "output",
+                rows.map((row, i) => ({
+                  chunkId: row.id,
+                  rank: i + 1,
+                  score: Number(row.vector_score),
+                  content: row.content,
+                })),
+              );
+              return rows;
+            },
           );
           const lexical =
             options.mode === "hybrid"
@@ -195,8 +233,46 @@ export class PostgresRagTool implements RagTool {
                   "knowledge.lexical_search",
                   "chain",
                   { "knowledge.base.id": kb.id },
-                  async () =>
-                    await sql`${select} AND c.search_vector @@ websearch_to_tsquery('simple',${query}) ORDER BY lexical_score DESC LIMIT 30`,
+                  async (searchSpan) => {
+                    const rows =
+                      await sql`${select} AND c.search_vector @@ websearch_to_tsquery('simple',${query}) ORDER BY lexical_score DESC LIMIT 30`;
+                    searchSpan.setAttribute("retrieval.results", rows.length);
+                    searchSpan.setAttribute(
+                      "retrieval.matches",
+                      JSON.stringify(
+                        rows.map((row, i) => ({
+                          chunkId: row.id,
+                          sourceId: row.source_id,
+                          rank: i + 1,
+                          score: Number(row.lexical_score),
+                        })),
+                      ),
+                    );
+                    searchSpan.setAttribute(
+                      "langfuse.observation.metadata",
+                      JSON.stringify({
+                        knowledgeBaseId: kb.id,
+                        results: rows.map((row, i) => ({
+                          chunkId: row.id,
+                          sourceId: row.source_id,
+                          rank: i + 1,
+                          score: Number(row.lexical_score),
+                        })),
+                      }),
+                    );
+                    observationContent(searchSpan, "input", query);
+                    observationContent(
+                      searchSpan,
+                      "output",
+                      rows.map((row, i) => ({
+                        chunkId: row.id,
+                        rank: i + 1,
+                        score: Number(row.lexical_score),
+                        content: row.content,
+                      })),
+                    );
+                    return rows;
+                  },
                 )
               : [];
           const fusionSpan = startObservation(
@@ -217,6 +293,40 @@ export class PostgresRagTool implements RagTool {
               fusion: (old?.fusion ?? 0) + 1 / (60 + index + 1),
             });
           });
+          const fused = [...pool.values()]
+            .map(({ row, fusion }) => ({
+              chunkId: String(row.id),
+              sourceId: String(row.source_id),
+              vectorRank:
+                semantic.findIndex((r) => r.id === row.id) + 1 || null,
+              lexicalRank:
+                lexical.findIndex((r) => r.id === row.id) + 1 || null,
+              rrfScore: fusion,
+              score:
+                options.mode === "hybrid"
+                  ? fusion + (row.kind === "qa" ? 0.0001 : 0)
+                  : Math.max(0, Math.min(1, Number(row.vector_score))),
+              eligible:
+                Math.max(0, Math.min(1, Number(row.vector_score))) >=
+                options.minScore,
+            }))
+            .sort(
+              (a, b) => b.score - a.score || a.chunkId.localeCompare(b.chunkId),
+            )
+            .map((r, i) => ({ ...r, rank: i + 1 }));
+          fusionSpan.setAttribute("retrieval.mode", options.mode);
+          fusionSpan.setAttribute("retrieval.rrf_constant", 60);
+          fusionSpan.setAttribute("retrieval.matches", JSON.stringify(fused));
+          fusionSpan.setAttribute(
+            "langfuse.observation.metadata",
+            JSON.stringify({
+              knowledgeBaseId: kb.id,
+              mode: options.mode,
+              rrfConstant: 60,
+              results: fused,
+            }),
+          );
+          observationContent(fusionSpan, "output", fused);
           fusionSpan.setAttribute("candidates", pool.size);
           fusionSpan.end();
           for (const { row, fusion } of pool.values()) {

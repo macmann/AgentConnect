@@ -731,22 +731,28 @@ export function ChatPanel({
         }
       />
       {support.state &&
-        (support.state.access.entryMode !== "disabled" ||
+        (support.state.access.canRequest ||
+          support.state.access.offer ||
           handoffOpen ||
           supportPaused) && (
           <div className="chat-support-status" aria-label="Human support">
-            <p role="status">
-              {handoffOpen
-                ? support.state.status !== "active"
-                  ? "Waiting for a specialist. Messages here go to support."
-                  : "You are chatting with human support."
-                : supportPaused
-                  ? "AI chat is paused until support restores it."
-                  : support.state.access.businessHours &&
-                      !support.state.access.businessHours.open
-                    ? support.state.access.businessHours.message
-                    : "You can ask for a human specialist in this chat."}
-            </p>
+            {(handoffOpen ||
+              supportPaused ||
+              (support.state.access.businessHours &&
+                !support.state.access.businessHours.open)) && (
+              <p role="status">
+                {handoffOpen
+                  ? support.state.status !== "active"
+                    ? "Waiting for a specialist. Messages here go to support."
+                    : "You are chatting with human support."
+                  : supportPaused
+                    ? "AI chat is paused until support restores it."
+                    : support.state.access.businessHours &&
+                        !support.state.access.businessHours.open
+                      ? support.state.access.businessHours.message
+                      : null}
+              </p>
+            )}
             {support.state.access.canRequest && !handoffOpen && (
               <Button
                 type="button"
@@ -800,6 +806,26 @@ export function ChatPanel({
           }
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (
+              e.key === "Enter" &&
+              !e.shiftKey &&
+              !e.nativeEvent.isComposing &&
+              e.keyCode !== 229
+            ) {
+              e.preventDefault();
+              if (
+                !e.repeat &&
+                !busy &&
+                !support.sending &&
+                !supportPaused &&
+                !supportLoading &&
+                !restoring &&
+                input.trim()
+              )
+                e.currentTarget.form?.requestSubmit();
+            }
+          }}
           maxLength={handoffOpen ? 4000 : 12000}
           disabled={
             busy ||
@@ -831,27 +857,28 @@ export function ChatPanel({
       </form>
       {diagnostics && conversation.current && !busy && (
         <details>
-          <summary>Token and context breakdown</summary>
-          <Button
-            type="button"
-            className="secondary"
-            onClick={() =>
-              void requestJson(`/conversations/${conversation.current}/context`)
-                .then(setContextPreview)
-                .catch((e) => setError(e.message))
-            }
-          >
-            Load run token counts
-          </Button>
-          {contextPreview !== null && (
-            <pre>{JSON.stringify(contextPreview, null, 2)}</pre>
-          )}
+          <summary>Debug / Advanced</summary>
+          {traceId && <div className="chat-trace">Trace {traceId} · Saved</div>}
+          <details>
+            <summary>Token and context breakdown</summary>
+            <Button
+              type="button"
+              className="secondary"
+              onClick={() =>
+                void requestJson(
+                  `/conversations/${conversation.current}/context`,
+                )
+                  .then(setContextPreview)
+                  .catch((e) => setError(e.message))
+              }
+            >
+              Load run token counts
+            </Button>
+            {contextPreview !== null && (
+              <pre>{JSON.stringify(contextPreview, null, 2)}</pre>
+            )}
+          </details>
         </details>
-      )}
-      {traceId && (
-        <div className="chat-trace">
-          Trace {traceId.slice(0, 12)} · {busy ? "Streaming" : "Saved"}
-        </div>
       )}
     </section>
   );
