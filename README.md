@@ -1,3 +1,11 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="apps/web/public/agent-connex-logo.svg">
+    <source media="(prefers-color-scheme: light)" srcset="apps/web/public/agent-connex-logo-light.svg">
+    <img src="apps/web/public/agent-connex-logo-light.svg" alt="Agent Connex logo" width="360">
+  </picture>
+</p>
+
 # Agent Connex
 
 Agent Connex is a workspace-based AI assistant platform for building, testing and publishing grounded agents, multi-agent workflows and customer support experiences. Teams manage models, knowledge, tools, customer conversations and human handoffs in one application.
@@ -17,19 +25,57 @@ An **agent** answers questions using its instructions, selected model and approv
 
 ## Product screenshots
 
-These screenshots are captured from the running application with sample data and local provider fixtures. They demonstrate the UI; they are not live-provider acceptance evidence.
+Explore Agent Studio, grounded answers, the customer widget and human support. These captures use sample data and local provider fixtures.
 
-### Configure a grounded agent
+### Create and configure a RAG agent
 
-![RAG agent overview](docs/screenshots/rag-agent-overview.png)
+Configure the model, prompt and attached knowledge in focused sections, then test in Playground before publishing.
 
-![Attach knowledge and configure retrieval](docs/screenshots/rag-agent-knowledge.png)
+![Agent Studio overview with configuration readiness and attached knowledge](docs/screenshots/rag-agent-overview.png)
 
-### Customer chat widget
+<details>
+<summary>Knowledge attachments and retrieval settings</summary>
 
-![Embedded customer chat on desktop](docs/screenshots/chat-widget-desktop.png)
+![Agent knowledge configuration with attached sources and retrieval options](docs/screenshots/rag-agent-knowledge.png)
 
-[Mobile widget screenshot](docs/screenshots/chat-widget-mobile.png) · [Grounded chat with citations](docs/screenshots/rag-agent-chat.png)
+</details>
+
+<details>
+<summary>Prompt configuration and grounded Playground chat</summary>
+
+![Structured agent prompt configuration](docs/screenshots/rag-agent-prompt.png)
+
+![Grounded Playground response with knowledge citations](docs/screenshots/rag-agent-chat.png)
+
+</details>
+
+### Customer chat widget — light and dark
+
+Publish an agent to your website with rich responses, conversation history and a theme switcher.
+
+<table>
+  <tr>
+    <th>Light theme</th>
+    <th>Dark theme</th>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/chat-widget-desktop.png" alt="Customer chat widget in light theme with rich response components" width="320"></td>
+    <td><img src="docs/screenshots/chat-widget-dark.png" alt="Customer chat widget in dark theme with conversation history and rich responses" width="320"></td>
+  </tr>
+</table>
+
+[View the mobile widget](docs/screenshots/chat-widget-mobile.png) · [View Agent Studio in dark theme](docs/screenshots/rag-agent-dark.png)
+
+<details>
+<summary>Workflow builder and human support console</summary>
+
+Compose versioned agent workflows and manage customer handoffs from the support workspace.
+
+![Workflow builder in dark theme](docs/screenshots/workflow-dark.png)
+
+![Human support console with case details and conversation history](docs/support-console/desktop.png)
+
+</details>
 
 ## What you can build
 
