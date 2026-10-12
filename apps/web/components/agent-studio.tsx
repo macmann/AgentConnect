@@ -104,6 +104,7 @@ export type Config = {
     typeof import("@agentconnect/schemas/customer-experience").contextControls
   >;
   language: string;
+  languageMode?: "auto" | "fixed";
   timezone: string;
   welcomeMessage: string;
   conversationStarters: string[];
@@ -172,6 +173,7 @@ function emptyDraft(modelId: string): Draft {
       maxOutputTokens: 1024,
       historyWindow: 10,
       language: "English",
+      languageMode: "auto",
       timezone: "UTC",
       welcomeMessage: "How can I help you today?",
       conversationStarters: [],

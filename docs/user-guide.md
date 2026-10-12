@@ -208,7 +208,7 @@ Use the **Dark / Light** switcher at the top of any product page. The initial th
 4. Start the crawl and wait for **Ready**. The source shows indexed page count. Inspect chunks or use the **Retrieval playground** to verify an answer and its page URL before using the content.
 5. In **Agents → Configure → Knowledge**, attach the knowledge base, save the draft and test in **Playground**. Website passages use the same RAG settings, citations, knowledge approval rules and public-access checks as uploaded documents. Publish normally when ready.
 
-Both API and worker must approve the website hostname in `KNOWLEDGE_ALLOWED_HOSTS`, preserving existing entries. Firecrawl requires public HTTPS targets and outbound access to `api.firecrawl.dev`; the service endpoint is fixed and the key is sent only there. Built-in crawling stays on the starting origin, respects robots.txt, blocks redirects, discovers menu links, removes navigation text and preserves tables. Firecrawl results are checked against the same origin/path scope before indexing.
+Both API and worker must approve the website hostname in `KNOWLEDGE_ALLOWED_HOSTS`, preserving existing entries. Firecrawl requires public HTTPS targets and outbound access to `api.firecrawl.dev`; the service endpoint is fixed and the key is sent only there. Built-in crawling stays on the starting origin, respects robots.txt, follows up to five same-origin redirects, checks path and robots rules at every hop, discovers menu links, removes navigation text and preserves tables. Firecrawl results are checked against the same origin/path scope before indexing.
 
 Use **Reingest** on a website source to recrawl using its saved settings and current credential; replacement is atomic after successful indexing. To change URL, crawler or crawl limits, create a replacement website source and remove the old one. Removing a source removes its searchable content. A Firecrawl key cannot be deleted while an active website source references it; rotate the key in Secrets or remove the source first. Automatic scheduled recrawls are not included.
 
@@ -266,3 +266,16 @@ Administrators can register an approved reranker under **Models → Rerankers**.
 ### Playground and advanced controls
 
 Press **Enter** to send a message, or **Shift+Enter** to add a line. IME composition does not send prematurely. Human support requests and active handoff statuses remain in the same chat; the generic specialist advertisement is omitted. Open **Debug / Advanced → Token and context breakdown** when you need technical diagnostics. Configuration field explanations, Publish explanations and Advanced groups use click/keyboard disclosures so normal operation stays compact.
+
+### Response language
+
+In **Agent → Configure → Overview → Locale**, choose **Response language**:
+
+- **Match user language:** answer in the latest user's language, adapting when they switch languages. Explicit requests for an output language are honored. For mixed-language questions, use the dominant language. Messages with only numbers or emoji fall back to the previous meaningful user message, then the configured fallback language.
+- **Fixed language:** answer in the configured Language regardless of the question's language.
+
+New agents created in the studio default to matching the user. Existing agents retain their fixed-language behavior. Save and start a **New chat** to test a changed setting; publish a new version and deploy it to update customer chat. The policy also applies to workflow agent responses and rich-response prose, while preserving JSON keys, citations and identifiers. Approved-knowledge no-answer replies are localized in automatic mode without allowing unsupported answers. Language quality depends on the selected model. Welcome messages, starters, workflow-authored text and model-unavailable fallback text remain as entered; configure those texts for your audience.
+
+Website registration errors now identify the exact rejected hostname and required API/worker configuration. `KNOWLEDGE_ALLOWED_HOSTS=www.yomabank.com` allows `https://www.yomabank.com/`, but not `https://yomabank.com/`. Environment values are loaded when services start; restart both API and worker after edits, and check inherited environment overrides if the running API still rejects the host. Rejected submissions emit `Website crawl request rejected` with safe codes, hostname, configured-host count, approval status and invalid field paths; no credentials, query strings or request bodies are logged.
+
+The built-in crawler follows up to five redirects within the original origin. It checks endpoint approval and pins/validates DNS on every hop, obeys robots.txt and path filters before fetching redirected pages, resolves relative links against the landing-page URL, and retains redirect provenance. Cross-origin/credential-bearing redirects remain blocked; loops and excessive chains fail with `WEBSITE_REDIRECT_LIMIT`. Use the direct landing URL if a site redirects to another origin, and explicitly approve that host. URL whitespace is normalized and HTTP(S)/credential/path settings are validated before browser submission.

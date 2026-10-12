@@ -51,10 +51,27 @@ const page = (url = "https://crawl.example.com/help") => ({
   metadata: { sourceURL: url, title: "Help" },
 });
 test("Website defaults crawl a site and validate provider credentials and budgets", () => {
+  assert.equal(
+    websiteInput.safeParse({ url: "not a website URL" }).success,
+    false,
+  );
   const parsed = websiteInput.parse({ url: options.url });
   assert.equal(parsed.crawler, "builtin");
   assert.equal(parsed.maxPages, 20);
   assert.equal(parsed.maxDepth, 2);
+  assert.equal(
+    websiteInput.parse({
+      url: " https://crawl.example.com/ ",
+      crawler: "firecrawl",
+      secretId: "00000000-0000-4000-8000-000000000001",
+    }).url,
+    "https://crawl.example.com/",
+  );
+  for (const url of [
+    "ftp://crawl.example.com/",
+    "https://user:password@crawl.example.com/",
+  ])
+    assert.equal(websiteInput.safeParse({ url }).success, false);
   assert.equal(
     websiteInput.safeParse({ url: options.url, crawler: "firecrawl" }).success,
     false,

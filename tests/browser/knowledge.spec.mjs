@@ -22,6 +22,10 @@ const provider = createServer(async (req, res) => {
         .end("User-agent: *\nDisallow: /private\n");
       return;
     }
+    if (req.url === "/website") {
+      res.writeHead(301, { location: "/landing/" }).end();
+      return;
+    }
     res
       .writeHead(200, { "content-type": "text/html" })
       .end(

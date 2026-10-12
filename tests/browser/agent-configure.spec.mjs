@@ -53,6 +53,7 @@ const config = {
     allowPublicForms: false,
   },
 };
+const answerRequests = [];
 const provider = createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
@@ -60,6 +61,22 @@ const provider = createServer(async (req, res) => {
   const planning = input.messages?.some(
     (m) => m.role === "system" && m.content.startsWith("Decide whether"),
   );
+  const system =
+    input.messages?.find((m) => m.role === "system")?.content ?? "";
+  const query = input.messages?.at(-1)?.content ?? "";
+  let answer = "Configure fixture answer";
+  if (!planning) {
+    answerRequests.push({ system, query });
+    if (system.includes("Response language policy:") && query === "Hola")
+      answer = "Hola, ¿en qué puedo ayudarte?";
+    if (system.includes("Response language policy:") && query === "Bonjour")
+      answer = "Bonjour, comment puis-je vous aider ?";
+    if (
+      system.endsWith("Respond in French.") ||
+      system.includes("Respond in French.")
+    )
+      answer = "Bonjour, comment puis-je vous aider ?";
+  }
   res.writeHead(200, { "content-type": "text/event-stream" });
   res.end(
     "data: " +
@@ -71,7 +88,7 @@ const provider = createServer(async (req, res) => {
                 ? '{"retrieve":false}'
                 : JSON.stringify({
                     version: 1,
-                    message: "Configure fixture answer",
+                    message: answer,
                     blocks: [],
                   }),
             },
@@ -83,9 +100,9 @@ const provider = createServer(async (req, res) => {
       "\n\ndata: [DONE]\n\n",
   );
 });
-test.beforeAll(async () => {
+async function waitForApiBudget(minRemaining = 200) {
   const budget = await fetch("http://localhost:4000/auth/me");
-  if (Number(budget.headers.get("x-ratelimit-remaining") ?? 300) < 200)
+  if (Number(budget.headers.get("x-ratelimit-remaining") ?? 300) < minRemaining)
     await new Promise((resolve) =>
       setTimeout(
         resolve,
@@ -101,6 +118,9 @@ test.beforeAll(async () => {
         ),
       ),
     );
+}
+test.beforeAll(async () => {
+  await waitForApiBudget();
   await new Promise((r) => provider.listen(4551, "127.0.0.1", r));
   await sql.begin(async (tx) => {
     await tx`INSERT INTO organizations(id,name) VALUES (${org},'Agent configure browser')`;
@@ -182,6 +202,7 @@ test("Configure preserves a single draft across sections, validates locally, pre
 }) => {
   test.setTimeout(180000);
   page.setDefaultTimeout(15000);
+  await waitForApiBudget();
   await auth(context);
   await page.goto(url("overview"));
   await expect(page.getByLabel("Agent name", { exact: true })).toHaveValue(
@@ -580,4 +601,82 @@ test("Approved rerankers are managed in Models and selected inside agent retriev
   await expect(page.locator(".configure-metadata")).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Discard", exact: true }).click();
+});
+
+test("Response language saves, appears in compiled prompts, and is snapshotted for new Playground chats", async ({
+  page,
+  context,
+}) => {
+  page.setDefaultTimeout(15000);
+  await waitForApiBudget(280);
+  await auth(context);
+  await sql`UPDATE agents SET draft_config=jsonb_set(jsonb_set(draft_config,'{tools,usageMode}','"disabled"',true),'{rag,usageMode}','"automatic"',true) WHERE id=${agent}`;
+  await sql`UPDATE knowledge_sources SET status='ready' WHERE id=${source}`;
+  await sql`UPDATE tools SET enabled=true WHERE id=${tool}`;
+  await page.goto(url("overview"));
+  await expect(
+    page.getByLabel("Response language", { exact: true }),
+  ).toHaveValue("fixed");
+  await page
+    .getByLabel("Response language", { exact: true })
+    .selectOption("auto");
+  await expect(
+    page.getByLabel("Fallback language", { exact: true }),
+  ).toHaveValue("English");
+  await section(page, "Prompt");
+  await page.getByText("Preview compiled prompt", { exact: true }).click();
+  await expect(page.locator(".configure-prompt-preview")).toContainText(
+    "language of the latest user message",
+  );
+  await page
+    .getByRole("button", { name: "Save and test in Playground", exact: true })
+    .click();
+  await expect(page.getByLabel("Message", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
+  const message = page.getByLabel("Message", { exact: true });
+  await message.fill("Hola");
+  await message.press("Enter");
+  await expect(
+    page.getByText("Hola, ¿en qué puedo ayudarte?", { exact: true }),
+  ).toBeVisible();
+  expect(answerRequests.at(-1).system).toContain("Response language policy:");
+  await message.fill("Bonjour");
+  await message.press("Enter");
+  await expect(
+    page.getByText("Bonjour, comment puis-je vous aider ?", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "configure", exact: true }).click();
+  await section(page, "Overview");
+  await page
+    .getByLabel("Response language", { exact: true })
+    .selectOption("fixed");
+  await page.getByLabel("Language", { exact: true }).fill("French");
+  await page
+    .getByRole("button", { name: "Save and test in Playground", exact: true })
+    .click();
+  await expect(page.getByLabel("Message", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
+  await message.fill("Hello");
+  await message.press("Enter");
+  await expect(
+    page.getByText("Bonjour, comment puis-je vous aider ?", { exact: true }),
+  ).toBeVisible();
+  expect(answerRequests.at(-1).system).toContain("Respond in French.");
+  expect(answerRequests.at(-1).system).not.toContain(
+    "Response language policy:",
+  );
+  const saved = (
+    await sql`SELECT draft_config FROM agents WHERE id=${agent}`
+  )[0];
+  expect(saved.draft_config.languageMode).toBe("fixed");
+  expect(saved.draft_config.language).toBe("French");
+  await page.reload();
+  await page.getByRole("button", { name: "configure", exact: true }).click();
+  await section(page, "Overview");
+  await expect(
+    page.getByLabel("Response language", { exact: true }),
+  ).toHaveValue("fixed");
+  await expect(page.getByLabel("Language", { exact: true })).toHaveValue(
+    "French",
+  );
 });

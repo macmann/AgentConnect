@@ -76,6 +76,7 @@ export const agentConfig = z
     maxOutputTokens: z.number().int().min(1).max(2000000).default(1024),
     historyWindow: z.number().int().min(1).max(50).default(10),
     language: z.string().max(50).default("English"),
+    languageMode: z.enum(["auto", "fixed"]).default("fixed"),
     timezone: z.string().max(100).default("UTC"),
     welcomeMessage: z.string().max(2000).default("How can I help you today?"),
     conversationStarters: z

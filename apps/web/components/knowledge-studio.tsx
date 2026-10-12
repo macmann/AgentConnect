@@ -1,4 +1,5 @@
 "use client";
+import { websiteInput } from "@agentconnect/schemas/knowledge";
 import {
   AdvancedKnowledgeSettings,
   processingFromForm,
@@ -285,8 +286,8 @@ export function KnowledgeStudio({
         setNotice("Q&A queued for ingestion");
       }
       if (form === "website") {
-        await requestJson(path + "/website", "POST", {
-          url: value("url"),
+        const parsed = websiteInput.safeParse({
+          url: value("url").trim(),
           crawler,
           secretId:
             crawler === "firecrawl" ? value("crawlSecretId") || null : null,
@@ -301,6 +302,25 @@ export function KnowledgeStudio({
             .map((s) => s.trim())
             .filter(Boolean),
         });
+        if (!parsed.success) {
+          const labels: Record<string, string> = {
+            url: "Website URL",
+            secretId: "Firecrawl credential",
+            maxPages: "Page limit",
+            maxDepth: "Crawl depth",
+            allowedPaths: "Allowed path prefixes",
+            blockedPaths: "Blocked path prefixes",
+          };
+          throw new Error(
+            parsed.error.issues
+              .map(
+                (i) =>
+                  `${labels[String(i.path[0])] ?? "Website settings"}: ${i.message}`,
+              )
+              .join("; "),
+          );
+        }
+        await requestJson(path + "/website", "POST", parsed.data);
         setNotice(
           "Website crawl queued. Once Ready, attach this knowledge base in Agent Configure → Knowledge.",
         );
@@ -738,10 +758,12 @@ export function KnowledgeStudio({
                 <p className="muted">
                   Crawl only this website, within the page and depth limits.
                   Path prefixes are comma-separated (for example /help,
-                  /products). Website hosts must be approved in the API and
-                  worker KNOWLEDGE_ALLOWED_HOSTS settings. The built-in crawler
-                  respects robots.txt, blocks redirects and extracts static
-                  HTML; use Firecrawl for rendered content.
+                  /products). Website hosts must match the exact hostname
+                  (including www) approved in the API and worker
+                  KNOWLEDGE_ALLOWED_HOSTS settings. Restart both after editing
+                  the repository-root .env. The built-in crawler respects
+                  robots.txt, follows bounded same-origin redirects and extracts
+                  static HTML; use Firecrawl for rendered content.
                 </p>
               </>
             )}
@@ -1050,9 +1072,18 @@ export function KnowledgeStudio({
                                   : s.error_code ===
                                       "FIRECRAWL_CREDITS_REQUIRED"
                                     ? ": Add credits to your Firecrawl account."
-                                    : s.error_code === "EMPTY_DOCUMENT"
-                                      ? ": Try Firecrawl for JavaScript-rendered pages."
-                                      : ""}
+                                    : s.error_code ===
+                                        "WEBSITE_REDIRECT_BLOCKED"
+                                      ? ": Redirect leaves the starting origin or has an invalid target. Use the final website URL and approve its exact host."
+                                      : s.error_code ===
+                                          "WEBSITE_REDIRECT_LIMIT"
+                                        ? ": Redirect loop or more than five redirects. Use the direct landing-page URL."
+                                        : s.error_code ===
+                                            "WEBSITE_PATH_BLOCKED"
+                                          ? ": A redirect target falls outside the allowed path prefixes or into a blocked path."
+                                          : s.error_code === "EMPTY_DOCUMENT"
+                                            ? ": Try Firecrawl for JavaScript-rendered pages."
+                                            : ""}
                               </small>
                             )}
                           </td>

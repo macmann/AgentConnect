@@ -170,3 +170,16 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 - Vector, lexical and RRF ranking metadata in Langfuse; optional bounded content capture.
 - Playground Enter-to-send, Shift+Enter multiline input and IME-safe composition.
 - Closed Debug / Advanced panels, field-help disclosures and compact Publish/Advanced views.
+
+## Agent response language
+
+- Match the latest user's language or choose a fixed response language in Agent Overview.
+- Automatic language switching, explicit language requests and configured fallback for ambiguous messages.
+- Shared policy across Playground, deployments, workflow agents and rich-response prose; versioned with agent configuration.
+- Localized approved-knowledge no-answer replies with evidence safeguards intact.
+
+## Website crawler resilience
+
+- Bounded same-origin redirects with DNS, robots and path checks at each hop.
+- Landing-page provenance and correct relative-link discovery.
+- Safe terminal rejection diagnostics and actionable host/URL validation errors.
