@@ -1,4 +1,7 @@
 "use client";
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { requestJson } from "./agent-client";
 import { BookOpen, Wrench, ArrowUpRight, Plus } from "lucide-react";
 import { Button } from "./button";
 
@@ -35,6 +38,48 @@ export function AgentAttachments({
   onToggle: (id: string, checked: boolean) => void;
   canManage: boolean;
 }) {
+  const cache = useQueryClient();
+  const [enabling, setEnabling] = useState<string | null>(null);
+  const [enableError, setEnableError] = useState("");
+  const [notice, setNotice] = useState("");
+  async function enableTool(id: string) {
+    if (!canManage || kind !== "tools" || enabling) return;
+    setEnabling(id);
+    setEnableError("");
+    setNotice("");
+    try {
+      const tool = await requestJson<{
+        name: string;
+        description: string;
+        config: unknown;
+        public_access: boolean;
+        timeout_ms: number;
+        revision: number;
+      }>(`/tools/${id}`);
+      await requestJson(`/tools/${id}`, "PUT", {
+        name: tool.name,
+        description: tool.description,
+        config: tool.config,
+        publicAccess: tool.public_access,
+        timeoutMs: tool.timeout_ms,
+        revision: tool.revision,
+        enabled: true,
+        readOnlyAcknowledged: true,
+      });
+      await cache.invalidateQueries({ queryKey: ["tools"] });
+      setNotice(
+        "Tool enabled for this workspace. Select it to attach, then save your agent.",
+      );
+    } catch (error) {
+      setEnableError(
+        error instanceof Error
+          ? error.message
+          : "Could not enable this tool. Try again.",
+      );
+    } finally {
+      setEnabling(null);
+    }
+  }
   const knowledge = kind === "knowledge";
   const Icon = knowledge ? BookOpen : Wrench;
   const title = knowledge ? "Attached knowledge" : "Attached tools";
@@ -66,6 +111,16 @@ export function AgentAttachments({
           <ArrowUpRight size={15} aria-hidden="true" />
         </button>
       </div>
+      {enableError && (
+        <p className="attachment-status error" role="alert">
+          {enableError}
+        </p>
+      )}
+      {notice && (
+        <p className="attachment-status" role="status">
+          {notice}
+        </p>
+      )}
       {loading ? (
         <p className="attachment-status" role="status">
           Loading {knowledge ? "knowledge bases" : "tools"}…
@@ -93,37 +148,64 @@ export function AgentAttachments({
               </p>
               <div className="attachment-options">
                 {items.map((item) => (
-                  <label
+                  <div
                     key={item.id}
                     className={`attachment-option${selected.includes(item.id) ? " is-selected" : ""}`}
                   >
-                    <input
-                      type="checkbox"
-                      aria-label={`${item.name} · ${item.public_access ? "Public chat enabled" : "Workspace only"}`}
-                      checked={selected.includes(item.id)}
-                      disabled={
-                        !selected.includes(item.id) &&
-                        (item.enabled === false ||
-                          selected.length >= (knowledge ? 5 : 8))
-                      }
-                      onChange={(e) => onToggle(item.id, e.target.checked)}
-                    />
-                    <span className="attachment-option-name">
-                      {item.name}
-                      <small className="attachment-health">
-                        {knowledge
-                          ? `${item.ready_count ?? 0} / ${item.source_count ?? 0} sources ready${item.failed_count ? ` · ${item.failed_count} failed` : ""}${item.indexing_count ? ` · ${item.indexing_count} indexing` : ""}`
-                          : `${item.enabled === false ? "Disabled" : "Enabled"}${item.kind || item.type ? ` · ${item.kind ?? item.type}` : ""}`}
+                    <label className="attachment-selection">
+                      <input
+                        type="checkbox"
+                        aria-describedby={
+                          item.enabled === false
+                            ? `${kind}-${item.id}-help`
+                            : undefined
+                        }
+                        aria-label={`${item.name} · ${item.public_access ? "Public chat enabled" : "Workspace only"}`}
+                        checked={selected.includes(item.id)}
+                        disabled={
+                          !selected.includes(item.id) &&
+                          (item.enabled === false ||
+                            selected.length >= (knowledge ? 5 : 8))
+                        }
+                        onChange={(e) => onToggle(item.id, e.target.checked)}
+                      />
+                      <span className="attachment-option-name">
+                        {item.name}
+                        <small className="attachment-health">
+                          {knowledge
+                            ? `${item.ready_count ?? 0} / ${item.source_count ?? 0} sources ready${item.failed_count ? ` · ${item.failed_count} failed` : ""}${item.indexing_count ? ` · ${item.indexing_count} indexing` : ""}`
+                            : `${item.enabled === false ? "Disabled" : "Enabled"}${item.kind || item.type ? ` · ${item.kind ?? item.type}` : ""}`}
+                        </small>
+                      </span>
+                      <span
+                        className={`attachment-access${item.public_access ? " is-public" : ""}`}
+                      >
+                        {item.public_access
+                          ? "Public chat enabled"
+                          : "Workspace only"}
+                      </span>
+                    </label>
+                    {!knowledge && item.enabled === false && canManage && (
+                      <Button
+                        type="button"
+                        disabled={!!enabling}
+                        aria-label={`Enable ${item.name}`}
+                        onClick={() => void enableTool(item.id)}
+                      >
+                        {enabling === item.id ? "Enabling…" : "Enable tool"}
+                      </Button>
+                    )}
+                    {item.enabled === false && (
+                      <small
+                        id={`${kind}-${item.id}-help`}
+                        className="attachment-disabled-help"
+                      >
+                        {canManage
+                          ? "Disabled in this workspace. Enable the tool before attaching it. Enabling applies across the workspace."
+                          : "Disabled in this workspace. Ask a workspace administrator to enable this tool before attaching it."}
                       </small>
-                    </span>
-                    <span
-                      className={`attachment-access${item.public_access ? " is-public" : ""}`}
-                    >
-                      {item.public_access
-                        ? "Public chat enabled"
-                        : "Workspace only"}
-                    </span>
-                  </label>
+                    )}
+                  </div>
                 ))}
               </div>
               <p className="attachment-footnote">

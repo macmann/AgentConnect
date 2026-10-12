@@ -454,7 +454,7 @@ function UsagePolicy(p: SectionProps & { kind: "rag" | "tools" }) {
           ? "Attachments remain configured. No retrieval or tool planning runs."
           : p.kind === "rag"
             ? "Automatic adds a model decision before retrieval. Required retrieval still fails if no relevant sources are found."
-            : "The planner chooses relevant read-only tools. Always requires at least one call; it does not call every attached tool."}
+            : "Automatic uses available read-only tools and continues without tools if none are available. Disabled or unavailable attachments are skipped during chat. Always requires valid attachments and at least one call; it does not call every attached tool."}
       </p>
     </Group>
   );

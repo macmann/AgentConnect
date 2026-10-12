@@ -1,3 +1,4 @@
+import { agentConfig } from "@agentconnect/schemas/agents";
 import { capturedSpans } from "./tracing-fixture.js";
 import { ProviderError } from "@agentconnect/provider-sdk";
 import {
@@ -918,4 +919,84 @@ test("Cancellation during retry backoff aborts waiting and never makes the next 
   assert(
     !result.nodes.some((n: { node_id: string }) => n.node_id === "output"),
   );
+});
+
+test("Workflow agents continue after optional attachment revocation while explicit tool nodes remain mandatory", async () => {
+  const [tool] =
+    await sql`SELECT id FROM tools WHERE workspace_id=${workspace} AND enabled=true AND archived_at IS NULL LIMIT 1`;
+  assert(tool);
+  const [source] = await sql`SELECT * FROM agent_versions WHERE id=${research}`;
+  const snapshot = agentConfig.parse(source!.config);
+  snapshot.tools = {
+    ...snapshot.tools,
+    toolIds: [tool.id],
+    usageMode: "automatic",
+  };
+  const versionId = randomUUID();
+  await sql`INSERT INTO agent_versions(id,agent_id,workspace_id,organization_id,version,name,public_description,config,model_snapshot,model_id,published_by) SELECT ${versionId},agent_id,workspace_id,organization_id,99,name,public_description,${sql.json(snapshot)},model_snapshot,model_id,published_by FROM agent_versions WHERE id=${research}`;
+  const agentWorkflow = await create(
+    "Optional tools workflow",
+    graph(
+      [
+        node("input", "input"),
+        node("agent", "agent", { agentVersionId: versionId }),
+        node("output", "output"),
+      ],
+      [
+        ["input", "agent"],
+        ["agent", "output"],
+      ],
+    ),
+  );
+  const toolWorkflow = await create(
+    "Explicit tool workflow",
+    graph(
+      [
+        node("input", "input"),
+        node("tool", "tool", { toolId: tool.id }),
+        node("output", "output"),
+      ],
+      [
+        ["input", "tool"],
+        ["tool", "output"],
+      ],
+    ),
+  );
+  const [before] =
+    await sql`SELECT count(*)::int AS count FROM tool_executions WHERE tool_id=${tool.id}`;
+  try {
+    await sql`UPDATE tools SET enabled=false WHERE id=${tool.id}`;
+    const id = await run(agentWorkflow);
+    await processWorkflowRun({ providerFactory: provider });
+    const result = await inspect(id);
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.equal(result.output, "research: refund policy");
+    const { validateWorkflowDependencies } =
+      await import("../src/workflow-runtime.js");
+    const [savedGraph] =
+      await sql`SELECT draft_graph FROM workflows WHERE id=${agentWorkflow}`;
+    await assert.rejects(
+      validateWorkflowDependencies(
+        workflowGraph.parse(savedGraph!.draft_graph),
+        { workspaceId: workspace, organizationId: org },
+      ),
+      { code: "TOOL_UNAVAILABLE" },
+    );
+    await validateWorkflowDependencies(
+      workflowGraph.parse(savedGraph!.draft_graph),
+      { workspaceId: workspace, organizationId: org, publicAccess: true },
+      true,
+    );
+    const [after] =
+      await sql`SELECT count(*)::int AS count FROM tool_executions WHERE tool_id=${tool.id}`;
+    assert.equal(after!.count, before!.count);
+    const required = await call("POST", `/workflows/${toolWorkflow}/runs`, {
+      input: "lookup",
+      revision: 1,
+    });
+    assert.equal(required.statusCode, 400);
+    assert.equal(required.json().error, "TOOL_UNAVAILABLE");
+  } finally {
+    await sql`UPDATE tools SET enabled=true WHERE id=${tool.id}`;
+  }
 });

@@ -4803,3 +4803,17 @@ input[type="range"] {
 .chat-markdown-table th { font-weight: 650; background: var(--surface); }
 .answer-report { font-size: .875rem; white-space: normal; margin-top: .5rem; }
 .answer-report .review-form { width: 100%; }
+
+.attachment-selection {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: min(240px, 100%);
+  cursor: pointer;
+}
+.attachment-disabled-help {
+  flex-basis: 100%;
+  color: var(--muted);
+}

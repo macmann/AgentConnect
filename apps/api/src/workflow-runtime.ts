@@ -87,12 +87,13 @@ export async function closeWorkflowSaver() {
 export async function validateWorkflowDependencies(
   graph: WorkflowGraph,
   ctx: ToolContext,
+  runtime = false,
 ) {
   const analysis = analyzeWorkflow(graph);
   if (analysis.errors.length) throw new WorkflowError("WORKFLOW_GRAPH_INVALID");
   for (const n of graph.nodes) {
     if (n.type === "agent")
-      await workflowAgentVersion(n.data.agentVersionId!, ctx);
+      await workflowAgentVersion(n.data.agentVersionId!, ctx, runtime);
     if (n.type === "tool") await validateToolIds([n.data.toolId!], ctx);
   }
   return analysis;
