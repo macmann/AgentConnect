@@ -27,6 +27,7 @@ import { registerWorkflowRoutes } from "./workflows.js";
 import { WorkflowError } from "./workflow-runtime.js";
 import { registerToolRoutes } from "./tools.js";
 import { ToolError } from "./tool-runtime.js";
+import { registerRerankers } from "./rerankers.js";
 import { registerKnowledgeRoutes } from "./knowledge.js";
 import { KnowledgeError } from "@agentconnect/rag/parsers";
 import { ProviderError } from "@agentconnect/provider-sdk";
@@ -711,7 +712,7 @@ export async function buildApp(
       if ((error as { code?: string }).code === "23503")
         throw new HttpError(
           409,
-          "Secret is in use by a model, embedding provider, or connector. Change or remove its references before deleting, or edit the secret to replace its value.",
+          "Secret is in use by a model, reranker, embedding provider, or connector. Change or remove its references before deleting, or edit the secret to replace its value.",
         );
       throw error;
     }
@@ -734,6 +735,7 @@ export async function buildApp(
     await redis.quit();
     await closeDb();
   });
+  await registerRerankers(app);
   await registerKnowledgeRoutes(app, options.embeddingFactory);
   await registerToolRoutes(app);
   await registerWorkflowRoutes(app);

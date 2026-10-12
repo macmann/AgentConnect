@@ -1,4 +1,7 @@
 "use client";
+import { useQuery } from "@tanstack/react-query";
+import { requestJson } from "./agent-client";
+import type { RerankerOption } from "./reranker-registry";
 import { ContextControls } from "./context-controls";
 import { ModelRoutingControls } from "./model-routing-controls";
 import { BankExperienceEditor } from "./bank-experience-editor";
@@ -460,6 +463,12 @@ function UsagePolicy(p: SectionProps & { kind: "rag" | "tools" }) {
   );
 }
 export function KnowledgeSection(p: SectionProps) {
+  const rerankers = useQuery({
+    queryKey: ["rerankers", p.workspaceId],
+    queryFn: () =>
+      requestJson<RerankerOption[]>(`/workspaces/${p.workspaceId}/rerankers`),
+  });
+
   const c = p.draft.config;
   return (
     <>
@@ -642,7 +651,10 @@ export function KnowledgeSection(p: SectionProps) {
       </Group>
       <details
         className="configure-details"
-        open={p.issues.some((i) => /topK|minScore/.test(i.field)) || undefined}
+        open={
+          p.issues.some((i) => /topK|minScore|rerank/.test(i.field)) ||
+          undefined
+        }
       >
         <summary>Advanced retrieval settings</summary>
         <label className="checkbox-label">
@@ -671,10 +683,89 @@ export function KnowledgeSection(p: SectionProps) {
           Rerank retrieved passages
         </label>
         <p className="muted">
-          The configured model ranks candidates against the original question.
+          The selected reranker ranks candidates against the original question.
           Access, approved-release and minimum relevance checks still apply.
-          Adds a model call; malformed rankings retain retrieval order.
+          Adds a reranking request; invalid rankings retain retrieval order.
         </p>
+        {c.rag.rerank && (
+          <>
+            <Field
+              field="config.rag.rerankerId"
+              label="Reranking model"
+              issues={p.issues}
+              help="Choose the answer model, a separate approved language model, or a dedicated Cohere reranker. Unavailable rerankers retain retrieval order."
+            >
+              {(a) => (
+                <select
+                  {...a}
+                  value={c.rag.rerankerId ?? ""}
+                  onChange={(e) =>
+                    config(p, "rag", {
+                      ...c.rag,
+                      rerankerId: e.target.value || null,
+                    })
+                  }
+                >
+                  <option value="">Use agent answer model</option>
+                  {rerankers.data?.map((r) => (
+                    <option key={r.id} value={r.id} disabled={!r.available}>
+                      {r.name} · {r.provider === "cohere" ? "Cohere" : "LLM"}
+                      {!r.available ? " (unavailable)" : ""}
+                    </option>
+                  ))}
+                  {c.rag.rerankerId &&
+                    !rerankers.isLoading &&
+                    !rerankers.data?.some((r) => r.id === c.rag.rerankerId) && (
+                      <option value={c.rag.rerankerId}>
+                        Unavailable reranker
+                      </option>
+                    )}
+                </select>
+              )}
+            </Field>
+            {rerankers.isError && (
+              <p role="alert">
+                Could not load rerankers.{" "}
+                <Button type="button" onClick={() => void rerankers.refetch()}>
+                  Retry
+                </Button>
+              </p>
+            )}
+            <Button
+              type="button"
+              className="secondary"
+              onClick={() => p.manage("Models")}
+            >
+              Manage rerankers
+            </Button>
+            {(!c.rag.rerankerId ||
+              rerankers.data?.find((r) => r.id === c.rag.rerankerId)
+                ?.provider === "llm") && (
+              <Field
+                field="config.rag.rerankMaxOutputTokens"
+                label="Reranking output budget"
+                issues={p.issues}
+                help="Output-token allowance for the ranking call. Reasoning models may need a larger budget; the selected model limits still apply."
+              >
+                {(a) => (
+                  <input
+                    {...a}
+                    type="number"
+                    min={128}
+                    max={2000000}
+                    value={c.rag.rerankMaxOutputTokens ?? 1024}
+                    onChange={(e) =>
+                      config(p, "rag", {
+                        ...c.rag,
+                        rerankMaxOutputTokens: Number(e.target.value),
+                      })
+                    }
+                  />
+                )}
+              </Field>
+            )}
+          </>
+        )}
         {c.rag.rerank && (
           <Field
             field="config.rag.candidateCount"
@@ -1168,34 +1259,46 @@ export function AdvancedSection(p: SectionProps) {
           ))}
         </div>
       </Group>
-      <PromptPreview draft={p.draft} />
-      <ContextControls draft={p.draft} update={p.update} />
-      <ModelRoutingControls
-        draft={p.draft}
-        models={p.models}
-        update={p.update}
-        issues={p.issues}
-      />
-      <Group title="Draft metadata">
-        <dl className="configure-metadata">
-          <dt>Draft revision</dt>
-          <dd>{p.draft.revision}</dd>
-          <dt>Schema version</dt>
-          <dd>{p.draft.config.schemaVersion}</dd>
-          <dt>Context window</dt>
-          <dd>
-            {m
-              ? `${m.context_window.toLocaleString()} tokens`
-              : "Model unavailable"}
-          </dd>
-          <dt>Model output limit</dt>
-          <dd>
-            {m
-              ? `${m.max_output_tokens.toLocaleString()} tokens`
-              : "Model unavailable"}
-          </dd>
-        </dl>
-      </Group>
+      <details className="configure-details">
+        <summary>Compiled prompt</summary>
+        <PromptPreview draft={p.draft} />
+      </details>
+      <details className="configure-details">
+        <summary>Token budgets and context optimization</summary>
+        <ContextControls draft={p.draft} update={p.update} />
+      </details>
+      <details className="configure-details">
+        <summary>Model routing and failover</summary>
+        <ModelRoutingControls
+          draft={p.draft}
+          models={p.models}
+          update={p.update}
+          issues={p.issues}
+        />
+      </details>
+      <details className="configure-details">
+        <summary>Draft metadata</summary>
+        <Group title="Draft metadata">
+          <dl className="configure-metadata">
+            <dt>Draft revision</dt>
+            <dd>{p.draft.revision}</dd>
+            <dt>Schema version</dt>
+            <dd>{p.draft.config.schemaVersion}</dd>
+            <dt>Context window</dt>
+            <dd>
+              {m
+                ? `${m.context_window.toLocaleString()} tokens`
+                : "Model unavailable"}
+            </dd>
+            <dt>Model output limit</dt>
+            <dd>
+              {m
+                ? `${m.max_output_tokens.toLocaleString()} tokens`
+                : "Model unavailable"}
+            </dd>
+          </dl>
+        </Group>
+      </details>
     </>
   );
 }

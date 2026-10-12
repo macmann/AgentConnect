@@ -81,8 +81,8 @@ test("readiness returns deterministic service codes for simultaneous dependency 
   });
 });
 test("release schema and vector requirements reject missing and unsupported extension versions", () => {
-  assert.equal(requiredMigrations.length, 32);
-  assert.equal(requiredMigrations.at(-1), "0032");
+  assert.equal(requiredMigrations.length, 33);
+  assert.equal(requiredMigrations.at(-1), "0033");
   for (const v of [
     undefined,
     "",

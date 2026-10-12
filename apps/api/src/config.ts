@@ -47,6 +47,7 @@ const schema = z.object({
     .enum(["true", "false"])
     .default("true")
     .transform((v) => v === "true"),
+  RERANK_ALLOWED_HOSTS: z.string().default("api.cohere.com"),
   MODEL_ALLOWED_HOSTS: z
     .string()
     .default(

@@ -112,6 +112,8 @@ export const ragConfig = z
   .object({
     queryRewrite: z.boolean().default(false),
     rerank: z.boolean().default(false),
+    rerankerId: z.uuid().nullable().default(null),
+    rerankMaxOutputTokens: z.number().int().min(128).max(2000000).default(1024),
     candidateCount: z.number().int().min(5).max(30).default(15),
     knowledgeBaseIds: z.array(z.uuid()).max(5).default([]),
     contentMode: z.enum(["current", "approved"]).default("current"),
@@ -126,6 +128,8 @@ export const ragConfig = z
   .default({
     queryRewrite: false,
     rerank: false,
+    rerankerId: null,
+    rerankMaxOutputTokens: 1024,
     candidateCount: 15,
     knowledgeBaseIds: [],
     contentMode: "current",

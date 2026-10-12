@@ -1,5 +1,6 @@
 import { observe, observationContent } from "./ai-tracing.js";
 import { routedProvider } from "./model-routing.js";
+import { agentReranker } from "./agent-reranking.js";
 import { enhancedRetrieval } from "./rag-enhancements.js";
 import { tokenCount } from "./context-control.js";
 import { generateGroundedAnswer } from "./bank-runtime.js";
@@ -169,6 +170,14 @@ export async function executeAgentSnapshot(
               },
               signal,
               c.maxOutputTokens,
+              agentReranker(
+                c,
+                model,
+                ctx.workspaceId,
+                ctx.organizationId,
+                factory,
+                metered,
+              ),
             )
           ).sources
         : [];

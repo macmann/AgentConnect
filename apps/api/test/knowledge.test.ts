@@ -482,6 +482,9 @@ test("RAG assembles untrusted passages and persists actual cited references with
   for (const name of [
     "knowledge.retrieval",
     "knowledge.embedding",
+    "knowledge.vector_search",
+    "knowledge.lexical_search",
+    "knowledge.ranking_fusion",
     "model.generate",
   ]) {
     assert(
@@ -503,6 +506,31 @@ test("RAG assembles untrusted passages and persists actual cited references with
         s.attributes["langfuse.observation.usage_details"],
     ),
   );
+  for (const name of [
+    "knowledge.vector_search",
+    "knowledge.lexical_search",
+    "knowledge.ranking_fusion",
+  ]) {
+    const searchStage = children.find((s) => s.name === name)!;
+    const matches = JSON.parse(
+      String(searchStage.attributes["retrieval.matches"]),
+    );
+    assert.ok(matches.length > 0, name);
+    assert.deepEqual(
+      JSON.parse(
+        String(searchStage.attributes["langfuse.observation.metadata"]),
+      ).results,
+      matches,
+    );
+    assert.ok(
+      matches.every(
+        (m: { chunkId: string; rank: number }) => m.chunkId && m.rank > 0,
+      ),
+    );
+    assert.ok(
+      !JSON.stringify(searchStage.attributes).includes("Refunds are available"),
+    );
+  }
   assert(children.every((s) => !s.attributes["langfuse.observation.input"]));
 
   const publicChat = await call(

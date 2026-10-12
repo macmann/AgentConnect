@@ -1,4 +1,5 @@
 "use client";
+import { RerankerRegistry } from "./reranker-registry";
 import { WorkspaceSaveBar } from "./workspace-sections";
 import { useState, useRef, useEffect, type FormEvent } from "react";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
@@ -79,6 +80,8 @@ export type Config = {
   rag: {
     queryRewrite?: boolean;
     rerank?: boolean;
+    rerankerId?: string | null;
+    rerankMaxOutputTokens?: number;
     candidateCount?: number;
     knowledgeBaseIds: string[];
     topK: number;
@@ -290,306 +293,314 @@ export function Models({
     }
   }
   return (
-    <section className="panel">
-      <div className="panel-header">
-        <div>
-          <h3>Model registry</h3>
-          <p>
-            Workspace-owned providers. Credentials stay encrypted on the server.
-          </p>
-        </div>
-        {canManage && (
-          <Button
-            onClick={() => {
-              setEditing(null);
-              setProvider("openai");
-              setCredential("");
-              setFormOpen(!formOpen || !!editing);
-              setError("");
-              setNotice("");
-            }}
-          >
-            <Plus size={15} />
-            Register model
-          </Button>
-        )}
-      </div>
-      {error && (
-        <p className="error-banner" role="alert">
-          {error}
-        </p>
-      )}
-      {notice && (
-        <p className="notice" role="status">
-          {notice}
-        </p>
-      )}
-      {deleting && (
-        <div className="notice" role="alert">
-          <p>
-            Delete {deleting.name} from the registry? Published versions and
-            historical runs are retained. Active agent drafts must switch to
-            another model first.
-          </p>
-          <Button className="danger" disabled={busy} onClick={deleteModel}>
-            Delete model
-          </Button>
-          <Button
-            className="secondary"
-            disabled={busy}
-            onClick={() => setDeleting(null)}
-          >
-            Cancel deletion
-          </Button>
-        </div>
-      )}
-      {formOpen && (
-        <form
-          ref={formRef}
-          key={editing?.id ?? "new"}
-          className="studio-form"
-          onSubmit={create}
-        >
-          {editing && <h4>Edit model: {editing.name}</h4>}
-          <h4>Model connection</h4>
-          <p className="muted">
-            Choose the exact provider model and the credential saved in this
-            workspace.
-          </p>
-          <div className="form-grid">
-            <label>
-              Display name
-              <input
-                name="name"
-                required
-                maxLength={100}
-                defaultValue={editing?.name ?? ""}
-              />
-            </label>
-            <label>
-              Provider
-              <select
-                value={provider}
-                onChange={(e) => setProvider(e.target.value)}
-              >
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="gemini">Google Gemini</option>
-                <option value="openai-compatible">OpenAI-compatible</option>
-              </select>
-            </label>
-            <label>
-              Model identifier
-              <input
-                name="modelId"
-                defaultValue={editing?.model_id ?? ""}
-                required
-                placeholder="Provider model identifier"
-                maxLength={150}
-              />
-            </label>
-            <label>
-              Workspace credential
-              <select
-                name="secretId"
-                value={credential}
-                onChange={(e) => setCredential(e.target.value)}
-                required={provider !== "openai-compatible"}
-              >
-                <option value="">
-                  {provider === "openai-compatible"
-                    ? "None (no authentication)"
-                    : "Select encrypted secret"}
-                </option>
-                {secrets.data?.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-              <small>
-                For hosted providers such as DeepSeek, select the API-key secret
-                saved in this workspace. Saving a secret does not select it
-                automatically. Values are never returned here.
-              </small>
-            </label>
-            {secrets.error && (
-              <p className="error-banner" role="alert">
-                Cannot load workspace credentials: {secrets.error.message}
-              </p>
-            )}
-            {provider === "openai-compatible" && (
-              <label>
-                Base URL
-                <input
-                  name="baseUrl"
-                  defaultValue={editing?.base_url ?? ""}
-                  type="url"
-                  required
-                  placeholder="https://approved-host.example/v1"
-                />
-                <small>
-                  Custom hosts require server approval through
-                  MODEL_ALLOWED_HOSTS. Restart the API and worker after changing
-                  that setting.
-                </small>
-              </label>
-            )}
+    <>
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>Model registry</h3>
+            <p>
+              Workspace-owned providers. Credentials stay encrypted on the
+              server.
+            </p>
           </div>
-          <details className="workspace-advanced-settings">
-            <summary>Model limits & supported parameters</summary>
+          {canManage && (
+            <Button
+              onClick={() => {
+                setEditing(null);
+                setProvider("openai");
+                setCredential("");
+                setFormOpen(!formOpen || !!editing);
+                setError("");
+                setNotice("");
+              }}
+            >
+              <Plus size={15} />
+              Register model
+            </Button>
+          )}
+        </div>
+        {error && (
+          <p className="error-banner" role="alert">
+            {error}
+          </p>
+        )}
+        {notice && (
+          <p className="notice" role="status">
+            {notice}
+          </p>
+        )}
+        {deleting && (
+          <div className="notice" role="alert">
+            <p>
+              Delete {deleting.name} from the registry? Published versions and
+              historical runs are retained. Active agent drafts must switch to
+              another model first.
+            </p>
+            <Button className="danger" disabled={busy} onClick={deleteModel}>
+              Delete model
+            </Button>
+            <Button
+              className="secondary"
+              disabled={busy}
+              onClick={() => setDeleting(null)}
+            >
+              Cancel deletion
+            </Button>
+          </div>
+        )}
+        {formOpen && (
+          <form
+            ref={formRef}
+            key={editing?.id ?? "new"}
+            className="studio-form"
+            onSubmit={create}
+          >
+            {editing && <h4>Edit model: {editing.name}</h4>}
+            <h4>Model connection</h4>
             <p className="muted">
-              Use the limits and sampling capabilities supported by this
-              provider model. These settings are available to every agent using
-              it.
+              Choose the exact provider model and the credential saved in this
+              workspace.
             </p>
             <div className="form-grid">
               <label>
-                Context window
+                Display name
                 <input
-                  name="contextWindow"
-                  type="number"
-                  defaultValue={editing?.context_window ?? 32768}
-                  min={256}
-                  max={2000000}
+                  name="name"
                   required
+                  maxLength={100}
+                  defaultValue={editing?.name ?? ""}
                 />
               </label>
               <label>
-                Maximum output tokens
+                Provider
+                <select
+                  value={provider}
+                  onChange={(e) => setProvider(e.target.value)}
+                >
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="gemini">Google Gemini</option>
+                  <option value="openai-compatible">OpenAI-compatible</option>
+                </select>
+              </label>
+              <label>
+                Model identifier
                 <input
-                  name="maxOutputTokens"
-                  type="number"
-                  defaultValue={editing?.max_output_tokens ?? 4096}
-                  min={1}
-                  max={2000000}
+                  name="modelId"
+                  defaultValue={editing?.model_id ?? ""}
                   required
+                  placeholder="Provider model identifier"
+                  maxLength={150}
                 />
-              </label>
-            </div>
-            <div className="checkbox-row">
-              <label>
-                <input
-                  name="temperature"
-                  type="checkbox"
-                  defaultChecked={editing?.capabilities.temperature ?? true}
-                />
-                Supports temperature
               </label>
               <label>
-                <input
-                  name="topP"
-                  type="checkbox"
-                  defaultChecked={editing?.capabilities.topP ?? true}
-                />
-                Supports top-p
+                Workspace credential
+                <select
+                  name="secretId"
+                  value={credential}
+                  onChange={(e) => setCredential(e.target.value)}
+                  required={provider !== "openai-compatible"}
+                >
+                  <option value="">
+                    {provider === "openai-compatible"
+                      ? "None (no authentication)"
+                      : "Select encrypted secret"}
+                  </option>
+                  {secrets.data?.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  For hosted providers such as DeepSeek, select the API-key
+                  secret saved in this workspace. Saving a secret does not
+                  select it automatically. Values are never returned here.
+                </small>
               </label>
+              {secrets.error && (
+                <p className="error-banner" role="alert">
+                  Cannot load workspace credentials: {secrets.error.message}
+                </p>
+              )}
+              {provider === "openai-compatible" && (
+                <label>
+                  Base URL
+                  <input
+                    name="baseUrl"
+                    defaultValue={editing?.base_url ?? ""}
+                    type="url"
+                    required
+                    placeholder="https://approved-host.example/v1"
+                  />
+                  <small>
+                    Custom hosts require server approval through
+                    MODEL_ALLOWED_HOSTS. Restart the API and worker after
+                    changing that setting.
+                  </small>
+                </label>
+              )}
             </div>
-          </details>
-          <WorkspaceSaveBar>
-            <span>
-              {editing
-                ? "Editing model configuration"
-                : "New model configuration"}
-            </span>
-            <div className="studio-actions">
-              <Button disabled={busy} type="submit">
-                {busy ? "Saving…" : editing ? "Save changes" : "Save model"}
-              </Button>
-              <Button
-                type="button"
-                className="secondary"
-                disabled={busy}
-                onClick={() => {
-                  setEditing(null);
-                  setFormOpen(false);
-                }}
-              >
-                Cancel
-              </Button>
-            </div>
-          </WorkspaceSaveBar>
-        </form>
-      )}
-      {models.isPending ? (
-        <p className="empty">Loading models…</p>
-      ) : models.error ? (
-        <p className="error-banner">{models.error.message}</p>
-      ) : models.data?.length ? (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Provider / model</th>
-                <th>Context</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {models.data.map((m) => (
-                <tr key={m.id}>
-                  <td>{m.name}</td>
-                  <td>
-                    {m.provider}
-                    <small className="block muted">{m.model_id}</small>
-                  </td>
-                  <td className="numeric">
-                    {m.context_window.toLocaleString()}
-                  </td>
-                  <td>
-                    {canManage && (
-                      <>
-                        <Button
-                          className="secondary"
-                          disabled={busy}
-                          onClick={() => {
-                            setEditing(m);
-                            setProvider(m.provider);
-                            setCredential(m.secret_id ?? "");
-                            setFormOpen(true);
-                            setError("");
-                            setNotice("");
-                          }}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          className="danger"
-                          disabled={busy}
-                          onClick={() => {
-                            setDeleting(m);
-                            setError("");
-                            setNotice("");
-                          }}
-                        >
-                          Delete
-                        </Button>
-                        <Button
-                          className="secondary"
-                          disabled={busy}
-                          onClick={() => testModel(m)}
-                        >
-                          Test connection
-                        </Button>
-                      </>
-                    )}
-                  </td>
+            <details className="workspace-advanced-settings">
+              <summary>Model limits & supported parameters</summary>
+              <p className="muted">
+                Use the limits and sampling capabilities supported by this
+                provider model. These settings are available to every agent
+                using it.
+              </p>
+              <div className="form-grid">
+                <label>
+                  Context window
+                  <input
+                    name="contextWindow"
+                    type="number"
+                    defaultValue={editing?.context_window ?? 32768}
+                    min={256}
+                    max={2000000}
+                    required
+                  />
+                </label>
+                <label>
+                  Maximum output tokens
+                  <input
+                    name="maxOutputTokens"
+                    type="number"
+                    defaultValue={editing?.max_output_tokens ?? 4096}
+                    min={1}
+                    max={2000000}
+                    required
+                  />
+                </label>
+              </div>
+              <div className="checkbox-row">
+                <label>
+                  <input
+                    name="temperature"
+                    type="checkbox"
+                    defaultChecked={editing?.capabilities.temperature ?? true}
+                  />
+                  Supports temperature
+                </label>
+                <label>
+                  <input
+                    name="topP"
+                    type="checkbox"
+                    defaultChecked={editing?.capabilities.topP ?? true}
+                  />
+                  Supports top-p
+                </label>
+              </div>
+            </details>
+            <WorkspaceSaveBar>
+              <span>
+                {editing
+                  ? "Editing model configuration"
+                  : "New model configuration"}
+              </span>
+              <div className="studio-actions">
+                <Button disabled={busy} type="submit">
+                  {busy ? "Saving…" : editing ? "Save changes" : "Save model"}
+                </Button>
+                <Button
+                  type="button"
+                  className="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    setEditing(null);
+                    setFormOpen(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </WorkspaceSaveBar>
+          </form>
+        )}
+        {models.isPending ? (
+          <p className="empty">Loading models…</p>
+        ) : models.error ? (
+          <p className="error-banner">{models.error.message}</p>
+        ) : models.data?.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Provider / model</th>
+                  <th>Context</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="empty">
-          <h3>Connect your first model</h3>
-          <p>
-            Register a provider and encrypted workspace credential to enable
-            agent chat.
-          </p>
-        </div>
-      )}
-    </section>
+              </thead>
+              <tbody>
+                {models.data.map((m) => (
+                  <tr key={m.id}>
+                    <td>{m.name}</td>
+                    <td>
+                      {m.provider}
+                      <small className="block muted">{m.model_id}</small>
+                    </td>
+                    <td className="numeric">
+                      {m.context_window.toLocaleString()}
+                    </td>
+                    <td>
+                      {canManage && (
+                        <>
+                          <Button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() => {
+                              setEditing(m);
+                              setProvider(m.provider);
+                              setCredential(m.secret_id ?? "");
+                              setFormOpen(true);
+                              setError("");
+                              setNotice("");
+                            }}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            className="danger"
+                            disabled={busy}
+                            onClick={() => {
+                              setDeleting(m);
+                              setError("");
+                              setNotice("");
+                            }}
+                          >
+                            Delete
+                          </Button>
+                          <Button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() => testModel(m)}
+                          >
+                            Test connection
+                          </Button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty">
+            <h3>Connect your first model</h3>
+            <p>
+              Register a provider and encrypted workspace credential to enable
+              agent chat.
+            </p>
+          </div>
+        )}
+      </section>
+      <RerankerRegistry
+        workspaceId={workspaceId}
+        canManage={canManage}
+        models={models.data ?? []}
+      />
+    </>
   );
 }
 export function AgentStudio({
@@ -1101,18 +1112,24 @@ export function AgentStudio({
                     navigateSection(next);
                   }}
                 />
-                <p className="muted">
-                  Readiness checks saved configuration and workspace
-                  attachments. Provider connectivity and quality gates are
-                  checked when publishing.
-                </p>
+                <details className="field-help">
+                  <summary>About readiness checks</summary>
+                  <p className="muted">
+                    Readiness checks saved configuration and workspace
+                    attachments. Provider connectivity and quality gates are
+                    checked when publishing.
+                  </p>
+                </details>
                 <div className="publish-heading">
                   <div>
                     <h3>Immutable versions</h3>
-                    <p className="muted">
-                      A deployment keeps its published prompt and model
-                      settings.
-                    </p>
+                    <details className="field-help">
+                      <summary>About published versions</summary>
+                      <p className="muted">
+                        A deployment keeps its published prompt and model
+                        settings.
+                      </p>
+                    </details>
                   </div>
                   {canBuild && (
                     <Button

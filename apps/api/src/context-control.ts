@@ -274,7 +274,11 @@ export async function reserveTokens(
           Math.max(
             c.maxOutputTokens,
             controls.summarize ? controls.summaryMaxTokens : 0,
-            c.rag.rerank ? 1024 : c.rag.queryRewrite ? 256 : 0,
+            c.rag.rerank
+              ? c.rag.rerankMaxOutputTokens
+              : c.rag.queryRewrite
+                ? 256
+                : 0,
             supportDecision ? 512 : 0,
           )));
   await tx`INSERT INTO customer_token_usage(workspace_id,organization_id,subject,day) VALUES(${conversation.workspace_id},${conversation.organization_id},${subject},(now() AT TIME ZONE 'UTC')::date) ON CONFLICT DO NOTHING`;

@@ -24,7 +24,15 @@ export function ConfigureField({
     );
   return (
     <div className="configure-field">
-      <label htmlFor={id}>{label}</label>
+      <div className="configure-field-heading">
+        <label htmlFor={id}>{label}</label>
+        {help && (
+          <details className="field-help configure-help">
+            <summary aria-label={`Help for ${label}`}>ⓘ</summary>
+            <small id={`${id}-help`}>{help}</small>
+          </details>
+        )}
+      </div>
       {children({
         id,
         "aria-invalid": !!error,
@@ -33,7 +41,6 @@ export function ConfigureField({
             .filter(Boolean)
             .join(" ") || undefined,
       })}
-      {help && <small id={`${id}-help`}>{help}</small>}
       {error && (
         <p id={`${id}-error`} className="configure-field-error">
           {error.message}

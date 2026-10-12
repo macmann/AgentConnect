@@ -136,7 +136,7 @@ pnpm storage:init
 pnpm dev
 ```
 
-Migration **0032** adds per-answer reports and verified knowledge corrections; **0030–0031** add connector OAuth and opt-in advanced knowledge processing. Migrations are tracked and repeatable; use the supported migration command instead of editing tables manually. Existing connector credentials remain supported.
+Migration **0033** adds approved workspace LLM/Cohere rerankers. Migration **0032** adds per-answer reports and verified knowledge corrections; **0030–0031** add connector OAuth and opt-in advanced knowledge processing. Migrations are tracked and repeatable; use the supported migration command instead of editing tables manually. Existing connector credentials remain supported.
 
 Each migration and its tracking row commit in a separate transaction. A session advisory lock serializes concurrent migration commands. If a migration fails, earlier migrations remain applied; fix the reported migration error and rerun `pnpm db:migrate`. The failed migration is rolled back and retried. Error output contains only a safe code and, when available, the migration version.
 
@@ -150,6 +150,7 @@ Each migration and its tracking row commit in a separate transaction. A session 
 | `MASTER_KEY`                                                      | Workspace-secret encryption key; retain securely                  |
 | `WEB_ORIGIN`, `PORT`, `NEXT_PUBLIC_API_URL`                       | Web origin and API connection                                     |
 | `S3_*`, `TEMPORAL_ADDRESS`                                        | Internal artifact storage and orchestration infrastructure        |
+| `RERANK_ALLOWED_HOSTS`                                            | Approved native reranker endpoints (default `api.cohere.com`)     |
 | `MODEL_ALLOWED_HOSTS`, `MODEL_PRIVATE_HOSTS`                      | Approved model and embedding endpoints                            |
 | `CONNECTOR_ALLOWED_HOSTS`, `CONNECTOR_PRIVATE_HOSTS`              | Approved knowledge-source endpoints                               |
 | `TOOL_ALLOWED_HOSTS`, `TOOL_PRIVATE_HOSTS`, `TOOL_DATABASE_HOSTS` | Approved tool destinations                                        |
