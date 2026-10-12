@@ -148,6 +148,7 @@ after(async () => {
         "knowledge_documents",
         "knowledge_sources",
         "knowledge_bases",
+        "evaluation_datasets",
         "embedding_models",
         "audit_events",
         "memberships",

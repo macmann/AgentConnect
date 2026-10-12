@@ -236,3 +236,25 @@ Playground keeps the active conversation for each agent and signed-in user acros
 Ask for a human specialist in the message box to request support automatically when policy and business hours allow it. AI and human replies, named join/leave notices, and the return to AI appear in that same transcript. The same message box sends to the support team while a case is queued or active. The support request button remains available as an alternative.
 
 CS agents see the customer's AI conversation and, when handoff summaries are enabled, a private generated brief. Summary generation runs in the background; the full conversation remains available if generation fails. Private operator notes and briefs are never shown to the customer.
+
+### Report an answer and verify a correction
+
+In hosted chat, choose **Report this answer** under the specific AI response. Select **Incorrect answer**, **Not helpful**, or **Still unresolved**, then explain what was missing. The website widget has the same option. Reporting does not overwrite the original message or train the model. If available, **Also request human support** starts a support case in the same conversation; reporting remains saved even if support is unavailable. Negative conversation ratings also create a report for the latest AI answer.
+
+Reviewers use **Operations → Answer reports**:
+
+1. Filter by **Reported** and open the report. **Claim report** assigns it to you; revision checks prevent another reviewer overwriting your work.
+2. Filter by **Reviewing**, add a review note, select an approval-required knowledge base and propose the corrected answer. Reviewers without knowledge-management permission can investigate, while an owner/administrator manages the correction. Reports can also be dismissed with a recorded reason; dismissal does not claim the answer was fixed.
+3. A different administrator opens **Operations → Knowledge gaps**, approves the correction and adds it as an unpublished knowledge source. Wait for indexing to finish.
+4. A **Corrections: <knowledge base>** dataset is created automatically in **Quality**. Each correction retains the reported question, an expected answer and its expected source. Exact-answer checks are conservative defaults. For acceptable paraphrases, replace `expectedAnswer` with reviewed `contains` terms and, where useful, `forbidden` terms. Keep the correction example ID, original input and expected source. Every active correction must remain covered. Candidate exact-answer comparisons ignore numeric citation markers.
+5. In **Knowledge → Releases**, include the corrected sources, submit the candidate and have another administrator approve it. Open **Correction verification**; **Run correction regressions** tests the private approved candidate against every affected saved draft and active published agent version. No live knowledge pointer is changed during these checks.
+6. Inspect failed case outputs in **Quality**. Correct the content, agent instructions or checks as needed, then run fresh tests. All candidate cases must pass; changed datasets, source/model dependencies or agent configurations invalidate older evidence. Candidate checks cannot satisfy a normal agent-publication gate.
+7. Publish the candidate. The server enforces the regression gate, even if a client bypasses the UI. The report becomes **Verified**. Confirm the outcome in the report, add a verification note and close it. Unpinned agents use the current knowledge release; pinned agents require an explicit version/deployment update. A report cannot be closed as corrected if its verified knowledge is no longer live for that customer's agent.
+
+The original answer stays visible. The customer can see report status on reopening the chat and can report a closed answer again, which reopens the review. Closing a reviewed issue is separate from customer-confirmed resolution and CSAT.
+
+Current bounds: 50 reports per queue page, 100 regression examples per dataset and the existing durable evaluation leases/deadlines. Candidate evaluations support standard text agents; the existing restriction on rich-response offline evaluation remains explicit. Model judges and deterministic checks are evidence for review, not proof that every future answer is correct. Corrections do not fine-tune the underlying model.
+
+### Markdown in Playground
+
+AI responses in Playground and hosted chat render headings, bold/italic text, lists, links, blockquotes, fenced code and GitHub-style tables. Formatting survives conversation restoration. Wide tables and code scroll inside the message on mobile. Raw HTML is skipped, unsafe URL schemes are blocked, and Markdown images display their alternate text without fetching remote content. Customer messages remain plain text; stored response content is unchanged.

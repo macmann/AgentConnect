@@ -37,6 +37,7 @@ export const migrationFiles: Record<string, string> = {
   "0029": "0029_workflow_depth.sql",
   "0030": "0030_connector_oauth.sql",
   "0031": "0031_advanced_knowledge.sql",
+  "0032": "0032_answer_feedback_loop.sql",
 };
 
 export class MigrationFailure extends Error {

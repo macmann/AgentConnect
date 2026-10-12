@@ -16,6 +16,8 @@ type Run = {
   id: string;
   agent_id: string;
   dataset_id: string;
+  candidate_release_id?: string | null;
+  candidate_version_id?: string | null;
   status: string;
   summary: {
     passRate: number;
@@ -466,7 +468,8 @@ export function QualityStudio({
                     (r) =>
                       r.agent_id === agentId &&
                       r.dataset_id === datasetId &&
-                      r.status === "completed",
+                      r.status === "completed" &&
+                      !r.candidate_release_id,
                   )
                   .map((r) => (
                     <option key={r.id} value={r.id}>
@@ -610,6 +613,7 @@ export function QualityStudio({
               onClick={() => setSelected(r.id)}
             >
               {r.id.slice(0, 8)} · {r.status}
+              {r.candidate_release_id ? " · Private knowledge candidate" : ""}
               {r.summary
                 ? ` · ${Math.round(r.summary.passRate * 100)}% pass`
                 : ""}
@@ -621,6 +625,15 @@ export function QualityStudio({
               <h4>
                 Run {selected.slice(0, 8)} · {detail.data.status}
               </h4>
+              {detail.data.candidate_release_id && (
+                <p>
+                  Private knowledge candidate —{" "}
+                  {detail.data.candidate_version_id
+                    ? "published agent version"
+                    : "saved draft"}
+                  . This run does not authorize normal agent publication.
+                </p>
+              )}
               {detail.data.error_code && (
                 <p className="error">{detail.data.error_code}</p>
               )}

@@ -18,6 +18,8 @@ export interface RetrievalContext {
   workspaceId: string;
   organizationId: string;
   publicAccess: boolean;
+  /** Internal offline evaluation only; customer routes never set this. */
+  candidateReleaseId?: string;
 }
 export interface RagTool {
   execute(

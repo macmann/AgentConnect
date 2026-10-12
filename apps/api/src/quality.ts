@@ -1,3 +1,10 @@
+import {
+  candidateRelease,
+  previewConfig,
+  assertCorrectionCoverage,
+  regressionDataset,
+} from "./knowledge-regressions.js";
+import { modelSnapshotSchema } from "./agent-models.js";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -174,7 +181,7 @@ export async function registerQualityRoutes(app: FastifyInstance) {
         id(params(r).workspaceId),
         "quality:read",
       );
-    return sql`SELECT id,agent_id,dataset_id,agent_revision,dataset_revision,evaluator,status,summary,error_code,baseline_run_id,created_at FROM evaluation_runs WHERE workspace_id=${w.id} ORDER BY created_at DESC LIMIT 100`;
+    return sql`SELECT id,agent_id,dataset_id,agent_revision,dataset_revision,evaluator,status,summary,error_code,baseline_run_id,candidate_release_id,candidate_version_id,created_at FROM evaluation_runs WHERE workspace_id=${w.id} ORDER BY created_at DESC LIMIT 100`;
   });
   app.get("/workspaces/:workspaceId/evaluations/:evaluationId", async (r) => {
     const u = await actor(r),
@@ -184,7 +191,7 @@ export async function registerQualityRoutes(app: FastifyInstance) {
         "quality:read",
       );
     const [run] =
-      await sql`SELECT id,status,summary,error_code,examples_snapshot,baseline_run_id FROM evaluation_runs WHERE id=${id(params(r).evaluationId)} AND workspace_id=${w.id}`;
+      await sql`SELECT id,status,summary,error_code,examples_snapshot,baseline_run_id,candidate_release_id,candidate_version_id FROM evaluation_runs WHERE id=${id(params(r).evaluationId)} AND workspace_id=${w.id}`;
     if (!run) throw new HttpError(404, "Evaluation unavailable");
     return {
       ...run,
@@ -230,13 +237,58 @@ export async function registerQualityRoutes(app: FastifyInstance) {
           400,
           "Each deterministic example needs an expected answer, required term, forbidden term or expected source",
         );
-      const c = agentConfig.parse(a.draft_config);
+      if (body.candidateVersionId && !body.candidateReleaseId)
+        throw new HttpError(
+          400,
+          "Candidate versions require a knowledge release",
+        );
+      const release = body.candidateReleaseId
+        ? await candidateRelease(body.candidateReleaseId, w.id, tx)
+        : null;
+      let version;
+      if (body.candidateVersionId) {
+        [version] =
+          await tx`SELECT * FROM agent_versions WHERE id=${body.candidateVersionId} AND agent_id=${a.id} AND workspace_id=${w.id}`;
+        if (!version)
+          throw new HttpError(404, "Published agent version unavailable");
+      }
+      const c = release
+        ? previewConfig(
+            version?.config ?? a.draft_config,
+            release.knowledge_base_id,
+            release.id,
+          )
+        : agentConfig.parse(a.draft_config);
+      if (release) {
+        const regression = await regressionDataset(
+          release.knowledge_base_id,
+          tx,
+        );
+        if (!regression || regression.id !== d.id)
+          throw new HttpError(
+            400,
+            "Use this knowledge base's correction regression dataset",
+          );
+        await assertCorrectionCoverage(
+          release.id,
+          release.knowledge_base_id,
+          d,
+          tx,
+        );
+        if (body.evaluator.minScore !== 1)
+          throw new HttpError(
+            400,
+            "Candidate correction checks require a minimum score of 1",
+          );
+      }
       if (c.generative.enabled)
         throw new HttpError(
           400,
           "Structured generative agents are not yet supported by offline evaluation",
         );
-      const model = await modelSnapshot(c.modelId, w.id, c);
+      const model = version
+        ? modelSnapshotSchema.parse(version.model_snapshot)
+        : await modelSnapshot(c.modelId, w.id, c);
       validateAgentModel(c, model);
       const judge =
         body.evaluator.mode === "judge"
@@ -247,14 +299,14 @@ export async function registerQualityRoutes(app: FastifyInstance) {
       const fingerprint = await qualityFingerprint(c, model, w.id, tx);
       if (body.baselineRunId) {
         const [baseline] =
-          await tx`SELECT id FROM evaluation_runs WHERE id=${body.baselineRunId} AND workspace_id=${w.id} AND agent_id=${a.id} AND dataset_id=${d.id} AND dataset_revision=${d.revision} AND evaluator=${tx.json(body.evaluator)} AND status='completed'`;
+          await tx`SELECT id FROM evaluation_runs WHERE id=${body.baselineRunId} AND workspace_id=${w.id} AND agent_id=${a.id} AND dataset_id=${d.id} AND dataset_revision=${d.revision} AND evaluator=${tx.json(body.evaluator)} AND status='completed' AND candidate_release_id IS NOT DISTINCT FROM ${body.candidateReleaseId ?? null} AND candidate_version_id IS NOT DISTINCT FROM ${body.candidateVersionId ?? null}`;
         if (!baseline)
           throw new HttpError(
             400,
             "Baseline must be a completed evaluation of this agent, dataset revision and evaluator",
           );
       }
-      await tx`INSERT INTO evaluation_runs(id,organization_id,workspace_id,agent_id,dataset_id,requested_by,agent_revision,dataset_revision,config_snapshot,model_snapshot,examples_snapshot,evaluator,judge_snapshot,prices_snapshot,fingerprint,baseline_run_id) VALUES (${runId},${w.organization_id},${w.id},${a.id},${d.id},${u.id},${a.revision},${d.revision},${tx.json(c)},${tx.json(model)},${tx.json(examples)},${tx.json(body.evaluator)},${judge ? tx.json(judge) : null},${tx.json(prices)},${fingerprint},${body.baselineRunId ?? null})`;
+      await tx`INSERT INTO evaluation_runs(id,organization_id,workspace_id,agent_id,dataset_id,requested_by,agent_revision,dataset_revision,config_snapshot,model_snapshot,examples_snapshot,evaluator,judge_snapshot,prices_snapshot,fingerprint,baseline_run_id,candidate_release_id,candidate_version_id) VALUES (${runId},${w.organization_id},${w.id},${a.id},${d.id},${u.id},${a.revision},${d.revision},${tx.json(c)},${tx.json(model)},${tx.json(examples)},${tx.json(body.evaluator)},${judge ? tx.json(judge) : null},${tx.json(prices)},${fingerprint},${body.baselineRunId ?? null},${body.candidateReleaseId ?? null},${body.candidateVersionId ?? null})`;
       await audit(
         tx,
         r,

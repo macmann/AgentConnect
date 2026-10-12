@@ -113,12 +113,15 @@ export async function processEvaluationRun(
           signal,
           providerFactory,
           embeddingFactory,
+          run.candidate_release_id ?? undefined,
         );
         output = answer.output;
         if (!output.trim()) throw new ProviderError("EMPTY_PROVIDER_RESPONSE");
         const deterministic = deterministicScore(
           e,
-          output,
+          run.candidate_release_id
+            ? output.replace(/\[\d+\]/g, "").trim()
+            : output,
           answer.sources.map((s) => s.sourceId),
         );
         score = deterministic.score;

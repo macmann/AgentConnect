@@ -23,7 +23,7 @@ import { HttpError } from "./http-error.js";
 import { productLogo, productLogoLight } from "./brand-assets.js";
 import { widgetBundle } from "./widget-bundle.js";
 export function widgetDeploymentPath(r: FastifyRequest) {
-  return /^\/public\/widgets\/([0-9a-f-]{36})(?:\/(?:messages\/[0-9a-f-]{36}\/actions\/[a-z][a-z0-9_]{0,39}|artifacts\/[0-9a-f-]{36}\/grant|chat|sessions|history(?:\/[0-9a-f-]{36})?|conversations(?:\/[0-9a-f-]{36}\/(?:handoff(?:\/stream)?|feedback|workflows(?:\/[0-9a-f-]{36})?))?))?$/.exec(
+  return /^\/public\/widgets\/([0-9a-f-]{36})(?:\/(?:messages\/[0-9a-f-]{36}\/actions\/[a-z][a-z0-9_]{0,39}|artifacts\/[0-9a-f-]{36}\/grant|chat|sessions|history(?:\/[0-9a-f-]{36})?|conversations(?:\/[0-9a-f-]{36}\/(?:handoff(?:\/stream)?|feedback|answer-reports\/[0-9a-f-]{36}|workflows(?:\/[0-9a-f-]{36})?))?))?$/.exec(
     r.url.split("?")[0]!,
   )?.[1];
 }

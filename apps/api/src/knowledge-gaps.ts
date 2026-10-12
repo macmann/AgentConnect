@@ -1,4 +1,9 @@
 import {
+  addCorrectionRegression,
+  prepareCorrectionRegression,
+  type CorrectionDraft,
+} from "./knowledge-regressions.js";
+import {
   defaultEmbeddingFactory,
   embeddingConnection,
 } from "./knowledge-core.js";
@@ -27,7 +32,7 @@ export async function registerKnowledgeGaps(
       ),
       { from, to } = dateRange(r.query);
     const rows =
-      await sql`SELECT ar.id AS run_id,ar.conversation_id,ar.answer_kind,ar.error_code,q.content AS question,cr.id AS review_id,cr.rating,cr.corrected_response,cr.label,ar.started_at,cf.rating AS customer_rating,cf.resolved AS customer_resolved,EXISTS(SELECT 1 FROM support_cases sc WHERE sc.conversation_id=ar.conversation_id) AS handed_off FROM agent_runs ar JOIN LATERAL(SELECT content FROM messages WHERE run_id=ar.id AND role='user' ORDER BY created_at,id LIMIT 1) q ON true LEFT JOIN LATERAL(SELECT cr.* FROM conversation_reviews cr JOIN messages m ON m.id=cr.message_id WHERE m.run_id=ar.id ORDER BY cr.created_at DESC,cr.id DESC LIMIT 1) cr ON true LEFT JOIN customer_feedback cf ON cf.conversation_id=ar.conversation_id WHERE ar.workspace_id=${w.id} AND ar.organization_id=${w.organization_id} AND ar.started_at>=${from} AND ar.started_at<${to} AND (ar.answer_kind='no_answer' OR ar.error_code IN ('NO_RELEVANT_SOURCES','CITATION_REQUIRED','INVALID_CITATION','GROUNDED_RESPONSE_INVALID') OR cr.rating='dislike' OR cf.rating<=2 OR cf.resolved=false) ORDER BY ar.started_at DESC,ar.id DESC LIMIT 1001`;
+      await sql`SELECT ar.id AS run_id,ar.conversation_id,ar.answer_kind,ar.error_code,EXISTS(SELECT 1 FROM answer_issues ai JOIN messages am ON am.id=ai.message_id WHERE am.run_id=ar.id) AS answer_reported,q.content AS question,cr.id AS review_id,cr.rating,cr.corrected_response,cr.label,ar.started_at,cf.rating AS customer_rating,cf.resolved AS customer_resolved,EXISTS(SELECT 1 FROM support_cases sc WHERE sc.conversation_id=ar.conversation_id) AS handed_off FROM agent_runs ar JOIN LATERAL(SELECT content FROM messages WHERE run_id=ar.id AND role='user' ORDER BY created_at,id LIMIT 1) q ON true LEFT JOIN LATERAL(SELECT cr.* FROM conversation_reviews cr JOIN messages m ON m.id=cr.message_id WHERE m.run_id=ar.id ORDER BY cr.created_at DESC,cr.id DESC LIMIT 1) cr ON true LEFT JOIN customer_feedback cf ON cf.conversation_id=ar.conversation_id WHERE ar.workspace_id=${w.id} AND ar.organization_id=${w.organization_id} AND ar.started_at>=${from} AND ar.started_at<${to} AND (ar.answer_kind='no_answer' OR ar.error_code IN ('NO_RELEVANT_SOURCES','CITATION_REQUIRED','INVALID_CITATION','GROUNDED_RESPONSE_INVALID') OR cr.rating='dislike' OR cf.rating<=2 OR cf.resolved=false OR EXISTS(SELECT 1 FROM answer_issues ai JOIN messages am ON am.id=ai.message_id WHERE am.run_id=ar.id)) ORDER BY ar.started_at DESC,ar.id DESC LIMIT 1001`;
     const assignments =
       await sql`SELECT run_id,group_key,method FROM knowledge_gap_assignments WHERE workspace_id=${w.id} AND organization_id=${w.organization_id}`;
     const groups = new Map<
@@ -72,9 +77,11 @@ export async function registerKnowledgeGaps(
           ? "Customer dissatisfaction"
           : row.customer_resolved === false
             ? "Customer marked unresolved"
-            : row.rating === "dislike"
-              ? "Poor operator review"
-              : (row.error_code ?? "No approved answer");
+            : row.answer_reported
+              ? "Customer reported this answer"
+              : row.rating === "dislike"
+                ? "Poor operator review"
+                : (row.error_code ?? "No approved answer");
       if (!group.reasons.includes(reason)) group.reasons.push(reason);
       if (group.examples.length < 1000) group.examples.push(row);
       groups.set(key, group);
@@ -156,7 +163,7 @@ export async function registerKnowledgeGaps(
         .parse(r.body);
       const range = dateRange({ from: d.from, to: d.to });
       const rows =
-        await sql`SELECT ar.id,q.content AS question FROM agent_runs ar JOIN LATERAL(SELECT content FROM messages WHERE run_id=ar.id AND role='user' ORDER BY created_at,id LIMIT 1) q ON true LEFT JOIN customer_feedback cf ON cf.conversation_id=ar.conversation_id WHERE ar.workspace_id=${w.id} AND ar.organization_id=${w.organization_id} AND ar.started_at>=${range.from} AND ar.started_at<${range.to} AND (ar.answer_kind='no_answer' OR ar.error_code IN ('NO_RELEVANT_SOURCES','CITATION_REQUIRED','INVALID_CITATION','GROUNDED_RESPONSE_INVALID') OR cf.rating<=2 OR cf.resolved=false OR EXISTS(SELECT 1 FROM conversation_reviews cr JOIN messages m ON m.id=cr.message_id WHERE m.run_id=ar.id AND cr.rating='dislike')) ORDER BY ar.started_at DESC,ar.id DESC LIMIT 301`;
+        await sql`SELECT ar.id,q.content AS question FROM agent_runs ar JOIN LATERAL(SELECT content FROM messages WHERE run_id=ar.id AND role='user' ORDER BY created_at,id LIMIT 1) q ON true LEFT JOIN customer_feedback cf ON cf.conversation_id=ar.conversation_id WHERE ar.workspace_id=${w.id} AND ar.organization_id=${w.organization_id} AND ar.started_at>=${range.from} AND ar.started_at<${range.to} AND (ar.answer_kind='no_answer' OR ar.error_code IN ('NO_RELEVANT_SOURCES','CITATION_REQUIRED','INVALID_CITATION','GROUNDED_RESPONSE_INVALID') OR cf.rating<=2 OR cf.resolved=false OR EXISTS(SELECT 1 FROM conversation_reviews cr JOIN messages m ON m.id=cr.message_id WHERE m.run_id=ar.id AND cr.rating='dislike') OR EXISTS(SELECT 1 FROM answer_issues ai JOIN messages am ON am.id=ai.message_id WHERE am.run_id=ar.id)) ORDER BY ar.started_at DESC,ar.id DESC LIMIT 301`;
       const items = rows.slice(0, 300),
         conn = await embeddingConnection(d.modelId, w.id, w.organization_id),
         provider = factory(conn),
@@ -309,6 +316,19 @@ export async function registerKnowledgeGaps(
         const [draft] =
           await tx`SELECT * FROM knowledge_improvements WHERE id=${id(params(r).improvementId)} AND workspace_id=${w.id} AND organization_id=${w.organization_id} FOR UPDATE`;
         if (!draft) throw new HttpError(404, "Knowledge draft not found");
+        if (draft.answer_issue_id && data.action !== "reject") {
+          const [current] =
+            await tx`SELECT status,review_id FROM answer_issues WHERE id=${draft.answer_issue_id}`;
+          if (
+            !current ||
+            current.review_id !== draft.review_id ||
+            current.status !== "fix_ready"
+          )
+            throw new HttpError(
+              409,
+              "The customer report changed. Review its latest details before approving or ingesting this correction.",
+            );
+        }
         if (data.action !== "materialize") {
           if (draft.status !== "draft")
             throw new HttpError(409, "This correction was already reviewed");
@@ -319,6 +339,8 @@ export async function registerKnowledgeGaps(
             );
           if (data.action === "reject" && !data.note)
             throw new HttpError(400, "Add a rejection note");
+          if (data.action === "reject" && draft.answer_issue_id)
+            await tx`UPDATE answer_issues SET status='reviewing',revision=revision+1,updated_at=clock_timestamp() WHERE id=${draft.answer_issue_id} AND review_id=${draft.review_id} AND status='fix_ready'`;
           await tx`UPDATE knowledge_improvements SET status=${data.action === "approve" ? "approved" : "rejected"},reviewer_id=${u.id},review_note=${data.note},updated_at=now() WHERE id=${draft.id}`;
         } else {
           if (draft.status !== "approved")
@@ -334,6 +356,7 @@ export async function registerKnowledgeGaps(
               409,
               "Knowledge base must remain active and require approved releases",
             );
+          await prepareCorrectionRegression(tx, draft as CorrectionDraft);
           const source = await addSource(
             r,
             kb,
@@ -351,6 +374,18 @@ export async function registerKnowledgeGaps(
             },
             null,
             tx,
+          );
+          await addCorrectionRegression(
+            tx,
+            draft as {
+              id: string;
+              knowledge_base_id: string;
+              workspace_id: string;
+              organization_id: string;
+              question: string;
+              answer: string;
+            },
+            source.id,
           );
           await tx`UPDATE knowledge_improvements SET status='materialized',source_id=${source.id},updated_at=now() WHERE id=${draft.id}`;
         }

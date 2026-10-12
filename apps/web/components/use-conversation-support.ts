@@ -16,6 +16,7 @@ export type ConversationSupport = {
   access: {
     entryMode: string;
     canRequest: boolean;
+    canRequestExplicit?: boolean;
     offer: { id: string; reason_code: string } | null;
     businessHours?: { open: boolean; message: string; timezone: string } | null;
   };

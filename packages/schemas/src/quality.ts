@@ -44,6 +44,8 @@ export const runInput = z
     datasetId: z.uuid(),
     revision: z.number().int().positive(),
     baselineRunId: z.uuid().optional(),
+    candidateReleaseId: z.uuid().optional(),
+    candidateVersionId: z.uuid().optional(),
     evaluator,
   })
   .strict();

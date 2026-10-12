@@ -1,4 +1,5 @@
 "use client";
+import { AnswerIssues } from "./answer-issues";
 import { CustomerInsights } from "./customer-insights";
 import { KnowledgeGaps } from "./knowledge-gaps";
 import { useState, type FormEvent } from "react";
@@ -99,7 +100,7 @@ export function OperationsStudio({
     "Analytics",
     "Insights",
     ...(permitted(role as Role, "conversation:review")
-      ? ["Knowledge gaps"]
+      ? ["Answer reports", "Knowledge gaps"]
       : []),
     "Pricing",
     ...(canManage ? ["API keys", "Webhooks", "Members"] : []),
@@ -270,6 +271,12 @@ export function OperationsStudio({
           ...(permitted(role as Role, "conversation:review")
             ? [
                 {
+                  id: "Answer reports",
+                  label: "Answer reports",
+                  description:
+                    "Review customer reports and verify corrections.",
+                },
+                {
                   id: "Knowledge gaps",
                   label: "Knowledge gaps",
                   description:
@@ -344,6 +351,9 @@ export function OperationsStudio({
           </div>
         )}
         {tab === "Insights" && <CustomerInsights workspaceId={workspaceId} />}
+        {tab === "Answer reports" && (
+          <AnswerIssues workspaceId={workspaceId} role={role as Role} />
+        )}
         {tab === "Knowledge gaps" && (
           <KnowledgeGaps workspaceId={workspaceId} role={role as Role} />
         )}

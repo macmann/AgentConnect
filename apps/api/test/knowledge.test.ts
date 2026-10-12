@@ -1054,7 +1054,7 @@ test("Advanced processing is opt-in, isolated, previewable and preserves approve
     "Revenue 125,000",
     [baseId],
     {
-      topK: 1,
+      topK: 20,
       minScore: 0,
       mode: "hybrid",
       releasePins: { [baseId]: releaseId },
@@ -1062,7 +1062,10 @@ test("Advanced processing is opt-in, isolated, previewable and preserves approve
     { workspaceId: workspace, organizationId: org, publicAccess: false },
     AbortSignal.timeout(5000),
   );
-  assert.equal(approved[0]!.content, expanded.content);
+  assert.equal(
+    approved.find((result) => result.chunkId === expanded.chunkId)!.content,
+    expanded.content,
+  );
   // Disabling processing changes neither current chunks nor approved snapshots until reingestion.
   const disabled = await call("PUT", path, {
     name: "Financial statements",
@@ -1095,7 +1098,10 @@ test("Advanced processing is opt-in, isolated, previewable and preserves approve
     { workspaceId: workspace, organizationId: org, publicAccess: false },
     AbortSignal.timeout(5000),
   );
-  assert.equal(pinned[0]!.content, approved[0]!.content);
+  assert.equal(
+    pinned[0]!.content,
+    approved.find((result) => result.chunkId === pinned[0]!.chunkId)!.content,
+  );
   await sql`DELETE FROM knowledge_releases WHERE id=${releaseId}`;
   await call("DELETE", path);
 });

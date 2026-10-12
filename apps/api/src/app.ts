@@ -1,3 +1,4 @@
+import { registerAnswerIssues } from "./answer-issues.js";
 import { startMessagingWorker } from "./messaging-worker.js";
 import {
   registerMessagingChannels,
@@ -741,6 +742,7 @@ export async function buildApp(
   await registerChannelRoutes(app);
   await registerMessagingChannels(app, options.messagingHttp);
   await registerCustomerFeedback(app);
+  await registerAnswerIssues(app);
   await registerCustomerWorkflows(app);
   await registerSupportRoutes(
     app,
