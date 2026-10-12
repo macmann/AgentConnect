@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { requestJson } from "./agent-client";
+import { KnowledgeVerification } from "./knowledge-verification";
 import { Button } from "./button";
 type Release = {
   id: string;
@@ -11,6 +12,7 @@ type Release = {
   status: string;
   author_id: string;
   review_note: string;
+  regression_required: boolean;
   chunk_count: number;
   source_count: number;
   created_at: string;
@@ -20,8 +22,10 @@ export function KnowledgeReleases({
   role,
   sources,
   publishedId,
+  workspaceId,
 }: {
   baseId: string;
+  workspaceId: string;
   role: string;
   sources: { id: string; title: string; status: string }[];
   publishedId?: string | null;
@@ -174,6 +178,15 @@ export function KnowledgeReleases({
                 : ""} · {r.source_count} sources · {r.chunk_count} passages
             </p>
             <p>{r.notes}</p>
+            {r.regression_required &&
+              ["approved", "published"].includes(r.status) && (
+                <KnowledgeVerification
+                  baseId={baseId}
+                  releaseId={r.id}
+                  workspaceId={workspaceId}
+                  canTest={manage}
+                />
+              )}
             {r.review_note && <p>Reviewer: {r.review_note}</p>}
             <div className="actions">
               <Button

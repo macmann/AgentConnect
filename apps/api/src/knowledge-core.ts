@@ -155,7 +155,7 @@ export class PostgresRagTool implements RagTool {
         kb.approval_required;
       if (approved) {
         const [release] =
-          await sql`SELECT id FROM knowledge_releases WHERE id=${releaseId ?? null} AND knowledge_base_id=${kb.id} AND workspace_id=${context.workspaceId} AND organization_id=${context.organizationId} AND status='published'`;
+          await sql`SELECT id FROM knowledge_releases WHERE id=${releaseId ?? null} AND knowledge_base_id=${kb.id} AND workspace_id=${context.workspaceId} AND organization_id=${context.organizationId} AND (status='published' OR (${context.publicAccess} = false AND id=${context.candidateReleaseId ?? null} AND status='approved'))`;
         if (!release) throw new KnowledgeError("KNOWLEDGE_RELEASE_UNAVAILABLE");
       }
       const literal = vectorLiteral(vector, kb.dimensions);
@@ -240,6 +240,7 @@ export async function validateKnowledgeSelection(
   organizationId: string,
   publicAccess = false,
   requireReady = false,
+  candidateReleaseId?: string,
 ) {
   await validateKnowledgeIds(
     rag.knowledgeBaseIds,
@@ -260,7 +261,7 @@ export async function validateKnowledgeSelection(
     )
       continue;
     const [release] =
-      await sql`SELECT r.id FROM knowledge_releases r WHERE r.id=${pin ?? kb?.published_release_id ?? null} AND r.knowledge_base_id=${baseId} AND r.workspace_id=${workspaceId} AND r.organization_id=${organizationId} AND r.status='published' AND EXISTS(SELECT 1 FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=r.id AND s.status<>'deleted')`;
+      await sql`SELECT r.id FROM knowledge_releases r WHERE r.id=${pin ?? kb?.published_release_id ?? null} AND r.knowledge_base_id=${baseId} AND r.workspace_id=${workspaceId} AND r.organization_id=${organizationId} AND (r.status='published' OR (${publicAccess}=false AND r.id=${candidateReleaseId ?? null} AND r.status='approved')) AND EXISTS(SELECT 1 FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=r.id AND s.status<>'deleted')`;
     if (!release)
       throw new HttpError(
         400,

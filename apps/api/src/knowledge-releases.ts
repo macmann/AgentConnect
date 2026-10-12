@@ -1,3 +1,8 @@
+import {
+  assertKnowledgeRegressionGate,
+  regressionDataset,
+  releaseTargets,
+} from "./knowledge-regressions.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -15,7 +20,27 @@ export async function registerKnowledgeReleases(
   const base = "/knowledge-bases/:knowledgeBaseId/releases";
   app.get(base, async (r) => {
     const { kb } = await owned(r);
-    return sql`SELECT r.*,count(c.id)::int AS chunk_count,count(DISTINCT c.source_id)::int AS source_count FROM knowledge_releases r LEFT JOIN knowledge_release_chunks c ON c.release_id=r.id WHERE r.knowledge_base_id=${kb.id} AND r.workspace_id=${kb.workspace_id} GROUP BY r.id ORDER BY r.version DESC LIMIT 100`;
+    return sql`SELECT r.*,EXISTS(SELECT 1 FROM knowledge_regression_datasets k WHERE k.knowledge_base_id=r.knowledge_base_id) AS regression_required,count(c.id)::int AS chunk_count,count(DISTINCT c.source_id)::int AS source_count FROM knowledge_releases r LEFT JOIN knowledge_release_chunks c ON c.release_id=r.id WHERE r.knowledge_base_id=${kb.id} AND r.workspace_id=${kb.workspace_id} GROUP BY r.id ORDER BY r.version DESC LIMIT 100`;
+  });
+  app.get(base + "/:releaseId/verification", async (r) => {
+    const { kb } = await owned(r);
+    const [release] =
+      await sql`SELECT id,status FROM knowledge_releases WHERE id=${id(params(r).releaseId)} AND knowledge_base_id=${kb.id} AND workspace_id=${kb.workspace_id}`;
+    if (!release) throw new HttpError(404, "Knowledge release not found");
+    const dataset = await regressionDataset(kb.id);
+    const targets = dataset ? await releaseTargets(kb.id, kb.workspace_id) : [];
+    return {
+      dataset: dataset
+        ? { id: dataset.id, name: dataset.name, revision: dataset.revision }
+        : null,
+      targets: targets.map((t) => ({
+        agentId: t.agent_id,
+        name: t.name,
+        revision: t.revision,
+        versionId: t.version_id,
+      })),
+      runs: await sql`SELECT id,agent_id,candidate_version_id,status,summary,error_code,created_at FROM evaluation_runs WHERE candidate_release_id=${release.id} ORDER BY created_at DESC LIMIT 100`,
+    };
   });
   app.get(base + "/:releaseId/chunks", async (r) => {
     const { kb } = await owned(r);
@@ -110,6 +135,9 @@ export async function registerKnowledgeReleases(
       if (data.action === "reject" && !data.note.trim())
         throw new HttpError(400, "Provide a reason for rejection");
       if (data.action === "publish") {
+        const [current] =
+          await tx`SELECT published_release_id FROM knowledge_bases WHERE id=${kb.id}`;
+        if (current?.published_release_id === release.id) return release;
         const [missing] =
           await tx`SELECT 1 FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=${release.id} AND s.status='deleted' LIMIT 1`;
         if (missing)
@@ -117,7 +145,19 @@ export async function registerKnowledgeReleases(
             409,
             "A snapshotted source was removed; create a new release",
           );
+        await assertKnowledgeRegressionGate(
+          tx,
+          kb.id,
+          release.id,
+          kb.workspace_id,
+        );
         await tx`UPDATE knowledge_bases SET published_release_id=${release.id},revision=revision+1 WHERE id=${kb.id}`;
+      }
+      if (data.action === "publish") {
+        const issues =
+          await tx`UPDATE answer_issues SET status='verified',verification_release_id=${release.id},revision=revision+1,updated_at=clock_timestamp() WHERE status='fix_ready' AND id IN (SELECT i.answer_issue_id FROM knowledge_improvements i JOIN knowledge_release_chunks c ON c.source_id=i.source_id WHERE c.release_id=${release.id} AND i.knowledge_base_id=${kb.id} AND i.status='materialized' AND i.review_id=answer_issues.review_id) RETURNING id`;
+        for (const issue of issues)
+          await tx`INSERT INTO answer_issue_events(id,issue_id,workspace_id,organization_id,actor_id,kind,note) VALUES(${randomUUID()},${issue.id},${kb.workspace_id},${kb.organization_id},${u.id},'verified','Candidate regression checks passed and the reviewed knowledge release was published.')`;
       }
       const state = {
         submit: "review",

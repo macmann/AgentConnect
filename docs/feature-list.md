@@ -143,3 +143,14 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 - Source extraction preview with table samples, warnings and reported processing-model usage; manual Reingest applies changed settings to existing sources.
 - Durable per-job settings snapshots and immutable parent-context metadata in approved knowledge releases.
 - Financial extraction requires review; spreadsheet display formats/formula evaluation and deterministic financial calculations remain outside this feature.
+
+## Answer feedback and verified improvement
+
+- Per-answer customer reports in hosted chat and the widget, with optional explicit human-support consent.
+- Scoped, paginated reviewer queue, assignment, optimistic revisions and private event history.
+- Reported/reviewing/fix-ready/verified/closed progression, reasoned dismissal and customer reopening.
+- Reviewed corrections reuse conversation reviews, approval-required knowledge drafts and ingestion.
+- Automatic Quality regression cases and private candidate-release evaluations of affected drafts and deployed versions.
+- Server-enforced correction coverage, full passing checks and current dependency fingerprints before knowledge publication.
+- Customer-visible report status excludes internal notes and proposed corrections.
+- Markdown-rendered AI replies in Playground/hosted chat, including tables/code, safe links and skipped raw HTML.

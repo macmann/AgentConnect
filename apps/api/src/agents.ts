@@ -849,6 +849,7 @@ async function streamChat(
               !conversation.deployment_id || c.generative.allowPublicForms,
           });
         write("done", {
+          messageId,
           runId,
           status,
           inputTokens,

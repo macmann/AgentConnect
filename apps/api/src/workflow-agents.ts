@@ -79,6 +79,7 @@ export async function executeAgentSnapshot(
   signal: AbortSignal,
   providerOverride?: ProviderFactory,
   embeddingOverride?: EmbeddingFactory,
+  candidateReleaseId?: string,
 ) {
   validateModelSet(c, model);
   await validateKnowledgeSelection(
@@ -87,6 +88,7 @@ export async function executeAgentSnapshot(
     ctx.organizationId,
     !!ctx.publicAccess,
     !!ctx.publicAccess,
+    candidateReleaseId,
   );
   await validateToolIds(c.tools.toolIds, ctx);
   const factory: ProviderFactory =
@@ -142,6 +144,7 @@ export async function executeAgentSnapshot(
             workspaceId: ctx.workspaceId,
             organizationId: ctx.organizationId,
             publicAccess: !!ctx.publicAccess,
+            candidateReleaseId,
           },
           signal,
           c.maxOutputTokens,

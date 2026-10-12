@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { QuickAction } from "@agentconnect/schemas/bank-experience";
 import { ArrowUp, Square, RefreshCw, Sparkles } from "lucide-react";
+import { ChatMarkdown } from "./chat-markdown";
+import { AnswerReport } from "./answer-report";
 import { CustomerFeedback } from "./customer-feedback";
 import { CustomerWorkflow } from "./customer-workflow";
 import { GenerativeResponse } from "./generative-response";
@@ -348,7 +350,11 @@ export function ChatPanel({
             setMessages((m) =>
               m.map((item, i) =>
                 i === m.length - 1
-                  ? { ...item, citations: data.citations ?? [] }
+                  ? {
+                      ...item,
+                      messageId: data.messageId ?? item.messageId,
+                      citations: data.citations ?? [],
+                    }
                   : item,
               ),
             );
@@ -662,14 +668,18 @@ export function ChatPanel({
             }
           >
             <small>{m.label}</small>
-            <div>
-              {m.content ||
-                (m.blocks?.length
-                  ? null
-                  : busy
-                    ? "Thinking…"
-                    : "No response content.")}
-            </div>
+            {m.role === "assistant" && !m.system && m.content ? (
+              <ChatMarkdown content={m.content} />
+            ) : (
+              <div>
+                {m.content ||
+                  (m.blocks?.length
+                    ? null
+                    : busy
+                      ? "Thinking…"
+                      : "No response content.")}
+              </div>
+            )}
             {m.blocks && m.messageId && (
               <GenerativeResponse
                 blocks={m.blocks}
@@ -680,6 +690,23 @@ export function ChatPanel({
             )}
             {m.citations && <Citations sources={m.citations} />}
             {m.tools && <ToolTraces traces={m.tools} />}
+            {publicBase &&
+              conversationId &&
+              guest.current &&
+              m.role === "assistant" &&
+              !m.system &&
+              m.messageId && (
+                <AnswerReport
+                  base={publicBase}
+                  conversationId={conversationId}
+                  messageId={m.messageId}
+                  token={guest.current}
+                  canRequestSupport={
+                    !!support.state?.access.canRequestExplicit && !handoffOpen
+                  }
+                  onSupportRequested={() => setHandoffRequested(true)}
+                />
+              )}
           </div>
         ))}
         <div ref={bottom} />

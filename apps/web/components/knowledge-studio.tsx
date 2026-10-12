@@ -936,6 +936,7 @@ export function KnowledgeStudio({
           </div>
           {tab === "releases" && (
             <KnowledgeReleases
+              workspaceId={workspaceId}
               key={selected}
               baseId={selected}
               role={role}

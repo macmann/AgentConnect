@@ -402,3 +402,29 @@ export async function queueMissingHandoffBrief(
   // A claimed manual case needs a summary, not a second routing decision.
   await tx`UPDATE support_cases SET policy_snapshot=${tx.json({ ...current, policy: { ...current.policy, aiTriageEnabled: false } })},triage_status='pending' WHERE id=${caseId}`;
 }
+
+/** Report-form consent is an explicit human request, independent of model wording. */
+export async function requestReportedAnswerHandoff(conversationId: string) {
+  return sql.begin(async (tx) => {
+    const [row] =
+      await tx`SELECT * FROM conversations WHERE id=${conversationId} FOR UPDATE`;
+    if (!row) throw new HttpError(404, "Conversation unavailable");
+    const c = row as Conversation;
+    const current = await effectivePolicy(tx, c),
+      access = await customerHandoffState(tx, c);
+    if (!access.canRequestExplicit)
+      throw new HttpError(
+        403,
+        "Human support is unavailable under the current policy or schedule",
+      );
+    if (row.conversation_mode === "returning_to_ai")
+      throw new HttpError(
+        409,
+        "Wait for the current support transition to finish before requesting another specialist",
+      );
+    if (row.conversation_mode !== "ai") return;
+    await tx`UPDATE support_offers SET status='expired' WHERE conversation_id=${c.id} AND status='offered' AND expires_at<=now()`;
+    await tx`INSERT INTO support_offers(id,organization_id,workspace_id,conversation_id,reason_code,policy_snapshot,signals) VALUES(${randomUUID()},${c.organization_id},${c.workspace_id},${c.id},'explicit_request',${tx.json(current)},${tx.json({ reportedAnswer: true })}) ON CONFLICT DO NOTHING`;
+    await confirmHandoff(tx, c, null);
+  });
+}

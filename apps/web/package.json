@@ -18,6 +18,8 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-hook-form": "^7.71.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwindcss": "^4.2.1",
     "zod": "4.6.5"
   },

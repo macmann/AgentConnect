@@ -46,7 +46,7 @@ export async function assertQualityGate(
     tx,
   );
   const [run] =
-    await tx`SELECT summary FROM evaluation_runs WHERE agent_id=${agent.id} AND agent_revision=${agent.revision} AND dataset_id=${settings.datasetId} AND dataset_revision=${dataset.revision} AND evaluator=${tx.json(settings.evaluator)} AND fingerprint=${fingerprint} AND status='completed' ORDER BY finished_at DESC LIMIT 1`;
+    await tx`SELECT summary FROM evaluation_runs WHERE agent_id=${agent.id} AND agent_revision=${agent.revision} AND dataset_id=${settings.datasetId} AND dataset_revision=${dataset.revision} AND evaluator=${tx.json(settings.evaluator)} AND fingerprint=${fingerprint} AND status='completed' AND candidate_release_id IS NULL ORDER BY finished_at DESC LIMIT 1`;
   if (
     !run ||
     run.summary.failedCases > 0 ||
