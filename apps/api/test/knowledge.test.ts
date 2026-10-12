@@ -1,3 +1,4 @@
+import { capturedSpans } from "./tracing-fixture.js";
 import { parseHTML } from "@agentconnect/rag/parsers";
 import { executeAgentSnapshot } from "../src/workflow-agents.js";
 import { modelSnapshotSchema } from "../src/agent-models.js";
@@ -470,6 +471,40 @@ test("RAG assembles untrusted passages and persists actual cited references with
     await sql`SELECT retrieval,retrieval_ms FROM agent_runs WHERE id=${events[0]!.data.runId}`;
   assert.equal(run!.retrieval.length, 1);
   assert.ok(run!.retrieval_ms >= 0);
+  const spans = capturedSpans();
+  const root = spans.find(
+    (s) => s.attributes["run.id"] === events[0]!.data.runId,
+  )!;
+  assert.equal(root.spanContext().traceId, events[0]!.data.traceId);
+  const children = spans.filter(
+    (s) => s.spanContext().traceId === root.spanContext().traceId,
+  );
+  for (const name of [
+    "knowledge.retrieval",
+    "knowledge.embedding",
+    "model.generate",
+  ]) {
+    assert(
+      children.some((s) => s.name === name),
+      name,
+    );
+  }
+  const retrieval = children.find((s) => s.name === "knowledge.retrieval")!;
+  const search = children.find((s) => s.name === "knowledge.search")!;
+  assert.equal(
+    retrieval.parentSpanContext?.spanId,
+    search.spanContext().spanId,
+  );
+  assert.equal(search.parentSpanContext?.spanId, root.spanContext().spanId);
+  assert(
+    children.some(
+      (s) =>
+        s.name === "model.generate" &&
+        s.attributes["langfuse.observation.usage_details"],
+    ),
+  );
+  assert(children.every((s) => !s.attributes["langfuse.observation.input"]));
+
   const publicChat = await call(
     "POST",
     `/public/deployments/${deploymentId}/chat`,

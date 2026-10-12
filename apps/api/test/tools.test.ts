@@ -1,3 +1,4 @@
+import { capturedSpans } from "./tracing-fixture.js";
 import { createBraveSearchAdapter } from "../src/web-search.js";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -342,6 +343,21 @@ test("HTTP tools validate arguments, redact credentials and persist test traces"
     await sql`SELECT * FROM tool_executions WHERE id=${r.json().executionId}`;
   assert.equal(trace?.status, "completed");
   assert(!JSON.stringify(trace).includes("fixture-tool-secret"));
+  const exported = capturedSpans().filter(
+    (s) => s.attributes["tool.id"] === httpTool,
+  );
+  assert(
+    exported.some(
+      (s) =>
+        s.attributes["langfuse.observation.type"] === "tool" &&
+        s.attributes["tool.name"],
+    ),
+  );
+  assert(
+    !JSON.stringify(exported.map((s) => s.attributes)).includes(
+      "fixture-tool-secret",
+    ),
+  );
 });
 test("Redirects, oversized responses and deadlines fail with sanitized persisted codes", async () => {
   for (const [path, code, timeoutMs] of [

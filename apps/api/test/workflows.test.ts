@@ -1,3 +1,4 @@
+import { capturedSpans } from "./tracing-fixture.js";
 import { ProviderError } from "@agentconnect/provider-sdk";
 import {
   workflowTemplates,
@@ -329,6 +330,22 @@ test("Durable LangGraph worker executes a pinned published workflow with persist
   const finished = await inspect(id);
   assert.equal(finished.status, "completed", JSON.stringify(finished));
   assert.equal(finished.output, "refund policy");
+  const spans = capturedSpans().filter(
+    (s) => s.attributes["workflow.run.id"] === id,
+  );
+  const root = spans.find((s) => s.name === "workflow.run")!;
+  assert(root);
+  assert.equal(
+    spans.filter((s) => s.name.startsWith("workflow.node.")).length,
+    2,
+  );
+  for (const child of spans.filter((s) =>
+    s.name.startsWith("workflow.node."),
+  )) {
+    assert.equal(child.spanContext().traceId, root.spanContext().traceId);
+    assert.equal(child.parentSpanContext?.spanId, root.spanContext().spanId);
+  }
+
   assert.equal(finished.nodes.length, 2);
   assert(
     finished.nodes.every((n: { status: string }) => n.status === "completed"),
@@ -461,6 +478,14 @@ test("Human approval pauses in PostgreSQL, survives saver restart and resumes wi
   assert.equal(r.status, "waiting", JSON.stringify(r));
   assert.equal(r.approvals.length, 1);
   assert.equal(researchCalls, before + 1);
+  const paused = capturedSpans().find(
+    (s) =>
+      s.name === "workflow.node.approval" &&
+      s.attributes["workflow.run.id"] === id,
+  )!;
+  assert.equal(paused.attributes["execution.status"], "waiting");
+  assert.notEqual(paused.status.code, 2);
+
   assert.equal(
     (
       await call(

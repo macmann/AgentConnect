@@ -154,3 +154,11 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 - Server-enforced correction coverage, full passing checks and current dependency fingerprints before knowledge publication.
 - Customer-visible report status excludes internal notes and proposed corrections.
 - Markdown-rendered AI replies in Playground/hosted chat, including tables/code, safe links and skipped raw HTML.
+
+## Langfuse observability
+
+- Optional official OpenTelemetry integration for API and worker with existing generic OTLP export preserved.
+- Linked agent, knowledge planning/retrieval/embedding/vector/text/reranking, tool and streamed model observations.
+- Workflow node hierarchy, parallel branches, retries and stable traces across approval resumes.
+- Reported token usage, first-token timing, metadata filtering and opt-in bounded content capture with credential masking.
+- Asynchronous export and graceful shutdown flushing; application histories remain the durable record. See [setup](langfuse.md).

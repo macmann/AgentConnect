@@ -1,4 +1,4 @@
-import { trace } from "@opentelemetry/api";
+import { observe } from "./ai-tracing.js";
 import { z } from "zod";
 import type { AgentConfig } from "@agentconnect/schemas/agents";
 import { renderPrompt } from "@agentconnect/schemas/agent-prompt";
@@ -136,21 +136,20 @@ export async function planKnowledgeUsage(
   ...args: Parameters<typeof decideKnowledgeUsage>
 ) {
   const started = performance.now();
-  const span = trace
-    .getTracer("agentconnect-runtime")
-    .startSpan("knowledge.planning");
-  try {
-    const result = await decideKnowledgeUsage(...args);
-    span.setAttributes(result.diagnostics);
-    span.setAttribute("latencyMs", Math.round(performance.now() - started));
-    return result;
-  } catch (error) {
-    span.setAttribute(
-      "errorCode",
-      error instanceof ProviderError ? error.code : "KNOWLEDGE_PLANNING_FAILED",
-    );
-    throw error;
-  } finally {
-    span.end();
-  }
+  return observe("knowledge.planning", "chain", {}, async (span) => {
+    try {
+      const result = await decideKnowledgeUsage(...args);
+      span.setAttributes(result.diagnostics);
+      span.setAttribute("latencyMs", Math.round(performance.now() - started));
+      return result;
+    } catch (error) {
+      span.setAttribute(
+        "errorCode",
+        error instanceof ProviderError
+          ? error.code
+          : "KNOWLEDGE_PLANNING_FAILED",
+      );
+      throw error;
+    }
+  });
 }

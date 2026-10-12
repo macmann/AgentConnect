@@ -1,3 +1,4 @@
+import { tracedProvider } from "./ai-tracing.js";
 import {
   ProviderError,
   type ChatProvider,
@@ -143,7 +144,10 @@ export function routedProvider(
                 throw new ProviderError("CONTEXT_LIMIT");
             }
             const meter = controlledProvider(
-              factory(await connection(model, workspaceId, organizationId)),
+              tracedProvider(
+                factory(await connection(model, workspaceId, organizationId)),
+                model,
+              ),
               c,
               model,
             );

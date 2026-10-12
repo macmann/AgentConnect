@@ -1,3 +1,10 @@
+import { context } from "@opentelemetry/api";
+import {
+  observe,
+  observationContent,
+  observationError,
+  workflowTraceContext,
+} from "./ai-tracing.js";
 import { workflowRetry } from "./workflow-retries.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -153,86 +160,104 @@ export async function compileWorkflow(
     string
   >(State);
   for (const node of graph.nodes)
-    builder.addNode("node_" + node.id, async (state: GraphState) => {
-      signal.throwIfAborted();
-      const input = nodeInput(node, graph, state),
-        started = performance.now();
-      if (Buffer.byteLength(JSON.stringify(input)) > 128000)
-        throw new WorkflowError("WORKFLOW_INPUT_LIMIT");
-      await sql`INSERT INTO workflow_node_runs(run_id,node_id,workspace_id,organization_id,label,kind,status,input) VALUES (${run.id},${node.id},${run.workspace_id},${run.organization_id},${node.data.label},${node.type},'running',${sql.json(redact(input) as never)}) ON CONFLICT(run_id,node_id) DO UPDATE SET status='running',error_code=NULL,finished_at=NULL`;
-      try {
-        let output: unknown = input,
-          inputTokens: number | null = null,
-          outputTokens: number | null = null,
-          citations: unknown[] = [];
-        const nodeCtx = { ...ctx, workflowNodeId: node.id };
-        if (node.type === "agent") {
-          const result = await workflowRetry(run.id, node, signal, () =>
-            executeWorkflowAgent(
-              node.data.agentVersionId!,
-              node.data.prefix + stringify(input) + node.data.suffix,
-              nodeCtx,
-              signal,
-              overrides.providerFactory,
-              overrides.embeddingFactory,
-            ),
-          );
-          output = result.output;
-          inputTokens = result.inputTokens;
-          outputTokens = result.outputTokens;
-          citations = result.citations;
-        }
-        if (node.type === "tool") {
-          const args = {
-            ...node.data.toolArguments,
-            ...(node.data.inputArgument
-              ? { [node.data.inputArgument]: stringify(input) }
-              : {}),
-          };
-          output = (
-            await workflowRetry(run.id, node, signal, () =>
-              executeTool(node.data.toolId!, args, nodeCtx, signal),
-            )
-          ).result;
-        }
-        if (node.type === "approval") {
-          await sql`INSERT INTO workflow_approvals(id,run_id,node_id,workspace_id,organization_id,prompt,input,decision) VALUES (${randomUUID()},${run.id},${node.id},${run.workspace_id},${run.organization_id},${node.data.approvalPrompt},${sql.json(redact(input) as never)},'pending') ON CONFLICT(run_id,node_id) DO NOTHING`;
-          await sql`UPDATE workflow_node_runs SET status='waiting' WHERE run_id=${run.id} AND node_id=${node.id}`;
-          const decision = interrupt<
-            { nodeId: string },
-            { decision: string; editedInput?: unknown }
-          >({ nodeId: node.id });
-          if (decision.decision !== "approved")
-            throw new WorkflowError("APPROVAL_REJECTED");
-          output =
-            decision.editedInput === undefined ? input : decision.editedInput;
-        }
-        let branch: boolean | undefined;
-        if (node.type === "router" || node.type === "condition") {
-          const text = stringify(input);
-          branch =
-            node.data.operator === "contains"
-              ? text.includes(node.data.value)
-              : node.data.operator === "equals"
-                ? text === node.data.value
-                : text.trim().length > 0;
-        }
-        output = redact(output);
-        if (Buffer.byteLength(JSON.stringify(output)) > 128000)
-          throw new WorkflowError("WORKFLOW_OUTPUT_LIMIT");
-        signal.throwIfAborted();
-        await sql`UPDATE workflow_node_runs SET status='completed',retry_at=NULL,output=${sql.json(output as never)},input_tokens=${inputTokens},output_tokens=${outputTokens},citations=${sql.json(citations as never)},duration_ms=${Math.round(performance.now() - started)},finished_at=now() WHERE run_id=${run.id} AND node_id=${node.id}`;
-        return {
-          outputs: { [node.id]: output },
-          ...(branch !== undefined ? { decisions: { [node.id]: branch } } : {}),
-        };
-      } catch (e) {
-        if (isGraphInterrupt(e)) throw e;
-        const code = signal.aborted ? "WORKFLOW_CANCELLED" : errorCode(e);
-        await sql`UPDATE workflow_node_runs SET status=${signal.aborted ? "cancelled" : "failed"},retry_at=NULL,error_code=${code},duration_ms=${Math.round(performance.now() - started)},finished_at=now() WHERE run_id=${run.id} AND node_id=${node.id}`;
-        throw e;
-      }
-    });
+    builder.addNode("node_" + node.id, async (state: GraphState) =>
+      observe(
+        "workflow.node." + node.type,
+        "chain",
+        {
+          "workflow.run.id": run.id,
+          "workflow.node.id": node.id,
+          "workflow.node.kind": node.type,
+        },
+        async (span) => {
+          signal.throwIfAborted();
+          const input = nodeInput(node, graph, state),
+            started = performance.now();
+          observationContent(span, "input", redact(input));
+          if (Buffer.byteLength(JSON.stringify(input)) > 128000)
+            throw new WorkflowError("WORKFLOW_INPUT_LIMIT");
+          await sql`INSERT INTO workflow_node_runs(run_id,node_id,workspace_id,organization_id,label,kind,status,input) VALUES (${run.id},${node.id},${run.workspace_id},${run.organization_id},${node.data.label},${node.type},'running',${sql.json(redact(input) as never)}) ON CONFLICT(run_id,node_id) DO UPDATE SET status='running',error_code=NULL,finished_at=NULL`;
+          try {
+            let output: unknown = input,
+              inputTokens: number | null = null,
+              outputTokens: number | null = null,
+              citations: unknown[] = [];
+            const nodeCtx = { ...ctx, workflowNodeId: node.id };
+            if (node.type === "agent") {
+              const result = await workflowRetry(run.id, node, signal, () =>
+                executeWorkflowAgent(
+                  node.data.agentVersionId!,
+                  node.data.prefix + stringify(input) + node.data.suffix,
+                  nodeCtx,
+                  signal,
+                  overrides.providerFactory,
+                  overrides.embeddingFactory,
+                ),
+              );
+              output = result.output;
+              inputTokens = result.inputTokens;
+              outputTokens = result.outputTokens;
+              citations = result.citations;
+            }
+            if (node.type === "tool") {
+              const args = {
+                ...node.data.toolArguments,
+                ...(node.data.inputArgument
+                  ? { [node.data.inputArgument]: stringify(input) }
+                  : {}),
+              };
+              output = (
+                await workflowRetry(run.id, node, signal, () =>
+                  executeTool(node.data.toolId!, args, nodeCtx, signal),
+                )
+              ).result;
+            }
+            if (node.type === "approval") {
+              await sql`INSERT INTO workflow_approvals(id,run_id,node_id,workspace_id,organization_id,prompt,input,decision) VALUES (${randomUUID()},${run.id},${node.id},${run.workspace_id},${run.organization_id},${node.data.approvalPrompt},${sql.json(redact(input) as never)},'pending') ON CONFLICT(run_id,node_id) DO NOTHING`;
+              await sql`UPDATE workflow_node_runs SET status='waiting' WHERE run_id=${run.id} AND node_id=${node.id}`;
+              const decision = interrupt<
+                { nodeId: string },
+                { decision: string; editedInput?: unknown }
+              >({ nodeId: node.id });
+              if (decision.decision !== "approved")
+                throw new WorkflowError("APPROVAL_REJECTED");
+              output =
+                decision.editedInput === undefined
+                  ? input
+                  : decision.editedInput;
+            }
+            let branch: boolean | undefined;
+            if (node.type === "router" || node.type === "condition") {
+              const text = stringify(input);
+              branch =
+                node.data.operator === "contains"
+                  ? text.includes(node.data.value)
+                  : node.data.operator === "equals"
+                    ? text === node.data.value
+                    : text.trim().length > 0;
+            }
+            output = redact(output);
+            if (Buffer.byteLength(JSON.stringify(output)) > 128000)
+              throw new WorkflowError("WORKFLOW_OUTPUT_LIMIT");
+            signal.throwIfAborted();
+            await sql`UPDATE workflow_node_runs SET status='completed',retry_at=NULL,output=${sql.json(output as never)},input_tokens=${inputTokens},output_tokens=${outputTokens},citations=${sql.json(citations as never)},duration_ms=${Math.round(performance.now() - started)},finished_at=now() WHERE run_id=${run.id} AND node_id=${node.id}`;
+            observationContent(span, "output", output);
+            return {
+              outputs: { [node.id]: output },
+              ...(branch !== undefined
+                ? { decisions: { [node.id]: branch } }
+                : {}),
+            };
+          } catch (e) {
+            if (isGraphInterrupt(e)) throw e;
+            const code = signal.aborted ? "WORKFLOW_CANCELLED" : errorCode(e);
+            await sql`UPDATE workflow_node_runs SET status=${signal.aborted ? "cancelled" : "failed"},retry_at=NULL,error_code=${code},duration_ms=${Math.round(performance.now() - started)},finished_at=now() WHERE run_id=${run.id} AND node_id=${node.id}`;
+            throw e;
+          }
+        },
+        isGraphInterrupt,
+      ),
+    );
   builder.addEdge(
     START,
     "node_" + graph.nodes.find((n) => n.type === "input")!.id,
@@ -293,68 +318,106 @@ export async function processWorkflowRun(
 ) {
   const run = await claimWorkflowRun();
   if (!run) return false;
-  const controller = new AbortController(),
-    deadline = setTimeout(() => controller.abort(), 300000);
-  deadline.unref();
-  const heartbeat = setInterval(() => {
-    void sql`UPDATE workflow_runs SET lease_expires_at=now()+interval '120 seconds' WHERE id=${run.id} AND lease_owner=${run.lease_owner} AND status='running' AND cancel_requested=false RETURNING id`
-      .then((rows) => {
-        if (!rows.length) controller.abort();
-      })
-      .catch(() => controller.abort());
-  }, 5000);
-  heartbeat.unref();
-  try {
-    if (run.attempts > 3) throw new WorkflowError("WORKFLOW_RECOVERY_LIMIT");
-    const graph = await compileWorkflow(run, controller.signal, overrides),
-      executionConfig = {
-        configurable: { thread_id: run.id },
-        signal: controller.signal,
-        recursionLimit: 60,
-        maxConcurrency: 4,
-      };
-    const before = await graph.getState(executionConfig);
-    const [approval] =
-      await sql`SELECT decision,edited_input,edited_input IS NOT NULL AS has_edit FROM workflow_approvals WHERE run_id=${run.id}`;
-    let initial: GraphUpdate | Command | null = before.createdAt
-      ? null
-      : { input: run.input, outputs: {}, decisions: {} };
-    if (
-      approval?.decision === "approved" &&
-      before.tasks.some((t) => t.interrupts?.length)
-    )
-      initial = new Command({
-        resume: {
-          decision: "approved",
-          ...(approval.has_edit ? { editedInput: approval.edited_input } : {}),
-        },
-      });
-    const result = await graph.invoke(initial, executionConfig);
-    const snapshot = await graph.getState(executionConfig);
-    const waiting = snapshot.tasks.some((t) => t.interrupts?.length);
-    const outputNode = run.graph_snapshot.nodes.find(
-      (n) => n.type === "output",
-    )!;
-    const output = waiting ? null : result.outputs[outputNode.id];
-    if (!waiting && output === undefined)
-      throw new WorkflowError("WORKFLOW_OUTPUT_MISSING");
-    const saved =
-      await sql`UPDATE workflow_runs SET status=${waiting ? "waiting" : "completed"},output=${output === null ? null : sql.json(output as never)},lease_owner=NULL,lease_expires_at=NULL,finished_at=${waiting ? null : new Date()} WHERE id=${run.id} AND lease_owner=${run.lease_owner} AND status='running' AND cancel_requested=false RETURNING id`;
-    if (!saved.length)
-      await sql`UPDATE workflow_runs SET status='cancelled',error_code='WORKFLOW_CANCELLED',finished_at=now(),lease_owner=NULL,lease_expires_at=NULL WHERE id=${run.id} AND lease_owner=${run.lease_owner} AND cancel_requested=true AND status='running'`;
-  } catch (e) {
-    const [row] =
-      await sql`SELECT cancel_requested,status FROM workflow_runs WHERE id=${run.id}`;
-    const cancelled = row?.cancel_requested;
-    const code = cancelled
-      ? "WORKFLOW_CANCELLED"
-      : controller.signal.aborted
-        ? "WORKFLOW_TIMEOUT"
-        : errorCode(e);
-    await sql`UPDATE workflow_runs SET status=${cancelled ? "cancelled" : "failed"},error_code=${code},lease_owner=NULL,lease_expires_at=NULL,finished_at=now() WHERE id=${run.id} AND lease_owner=${run.lease_owner} AND status='running'`;
-  } finally {
-    clearTimeout(deadline);
-    clearInterval(heartbeat);
-  }
-  return true;
+  return context.with(workflowTraceContext(run.id), () =>
+    observe(
+      "workflow.run",
+      "chain",
+      {
+        "langfuse.trace.name": "Workflow execution",
+        "session.id": run.id,
+        "workflow.run.id": run.id,
+        "workspace.id": run.workspace_id,
+        "organization.id": run.organization_id,
+        "user.id": run.user_id ?? "anonymous",
+        "workflow.attempt": run.attempts,
+      },
+      async (span) => {
+        observationContent(span, "input", redact(run.input), true);
+        const controller = new AbortController(),
+          deadline = setTimeout(() => controller.abort(), 300000);
+        deadline.unref();
+        const heartbeat = setInterval(() => {
+          void sql`UPDATE workflow_runs SET lease_expires_at=now()+interval '120 seconds' WHERE id=${run.id} AND lease_owner=${run.lease_owner} AND status='running' AND cancel_requested=false RETURNING id`
+            .then((rows) => {
+              if (!rows.length) controller.abort();
+            })
+            .catch(() => controller.abort());
+        }, 5000);
+        heartbeat.unref();
+        try {
+          if (run.attempts > 3)
+            throw new WorkflowError("WORKFLOW_RECOVERY_LIMIT");
+          const graph = await compileWorkflow(
+              run,
+              controller.signal,
+              overrides,
+            ),
+            executionConfig = {
+              configurable: { thread_id: run.id },
+              signal: controller.signal,
+              recursionLimit: 60,
+              maxConcurrency: 4,
+            };
+          const before = await graph.getState(executionConfig);
+          const [approval] =
+            await sql`SELECT decision,edited_input,edited_input IS NOT NULL AS has_edit FROM workflow_approvals WHERE run_id=${run.id}`;
+          let initial: GraphUpdate | Command | null = before.createdAt
+            ? null
+            : { input: run.input, outputs: {}, decisions: {} };
+          if (
+            approval?.decision === "approved" &&
+            before.tasks.some((t) => t.interrupts?.length)
+          )
+            initial = new Command({
+              resume: {
+                decision: "approved",
+                ...(approval.has_edit
+                  ? { editedInput: approval.edited_input }
+                  : {}),
+              },
+            });
+          const result = await graph.invoke(initial, executionConfig);
+          const snapshot = await graph.getState(executionConfig);
+          const waiting = snapshot.tasks.some((t) => t.interrupts?.length);
+          const outputNode = run.graph_snapshot.nodes.find(
+            (n) => n.type === "output",
+          )!;
+          const output = waiting ? null : result.outputs[outputNode.id];
+          if (!waiting && output === undefined)
+            throw new WorkflowError("WORKFLOW_OUTPUT_MISSING");
+          span.setAttribute(
+            "workflow.status",
+            waiting ? "waiting" : "completed",
+          );
+          observationContent(span, "output", output, true);
+          const saved =
+            await sql`UPDATE workflow_runs SET status=${waiting ? "waiting" : "completed"},output=${output === null ? null : sql.json(output as never)},lease_owner=NULL,lease_expires_at=NULL,finished_at=${waiting ? null : new Date()} WHERE id=${run.id} AND lease_owner=${run.lease_owner} AND status='running' AND cancel_requested=false RETURNING id`;
+          if (!saved.length) {
+            span.setAttribute("workflow.status", "cancelled");
+            observationError(span, { code: "WORKFLOW_CANCELLED" });
+            await sql`UPDATE workflow_runs SET status='cancelled',error_code='WORKFLOW_CANCELLED',finished_at=now(),lease_owner=NULL,lease_expires_at=NULL WHERE id=${run.id} AND lease_owner=${run.lease_owner} AND cancel_requested=true AND status='running'`;
+          }
+        } catch (e) {
+          const [row] =
+            await sql`SELECT cancel_requested,status FROM workflow_runs WHERE id=${run.id}`;
+          const cancelled = row?.cancel_requested;
+          const code = cancelled
+            ? "WORKFLOW_CANCELLED"
+            : controller.signal.aborted
+              ? "WORKFLOW_TIMEOUT"
+              : errorCode(e);
+          observationError(span, { code });
+          span.setAttribute(
+            "workflow.status",
+            cancelled ? "cancelled" : "failed",
+          );
+          await sql`UPDATE workflow_runs SET status=${cancelled ? "cancelled" : "failed"},error_code=${code},lease_owner=NULL,lease_expires_at=NULL,finished_at=now() WHERE id=${run.id} AND lease_owner=${run.lease_owner} AND status='running'`;
+        } finally {
+          clearTimeout(deadline);
+          clearInterval(heartbeat);
+        }
+        return true;
+      },
+    ),
+  );
 }

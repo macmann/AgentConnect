@@ -1,3 +1,4 @@
+import { observe, observationContent } from "./ai-tracing.js";
 import { routedProvider } from "./model-routing.js";
 import { enhancedRetrieval } from "./rag-enhancements.js";
 import { tokenCount } from "./context-control.js";
@@ -61,14 +62,20 @@ export async function executeWorkflowAgent(
   embeddingOverride?: EmbeddingFactory,
 ) {
   const { c, model } = await workflowAgentVersion(versionId, ctx);
-  return executeAgentSnapshot(
-    c,
-    model,
-    input,
-    ctx,
-    signal,
-    providerOverride,
-    embeddingOverride,
+  return observe(
+    "workflow.agent",
+    "agent",
+    { "agent.version": versionId },
+    () =>
+      executeAgentSnapshot(
+        c,
+        model,
+        input,
+        ctx,
+        signal,
+        providerOverride,
+        embeddingOverride,
+      ),
   );
 }
 export async function executeAgentSnapshot(
@@ -81,178 +88,194 @@ export async function executeAgentSnapshot(
   embeddingOverride?: EmbeddingFactory,
   candidateReleaseId?: string,
 ) {
-  validateModelSet(c, model);
-  await validateKnowledgeSelection(
-    c.rag,
-    ctx.workspaceId,
-    ctx.organizationId,
-    !!ctx.publicAccess,
-    !!ctx.publicAccess,
-    candidateReleaseId,
-  );
-  await validateToolIds(c.tools.toolIds, ctx);
-  const factory: ProviderFactory =
-    providerOverride ??
-    ((conn) =>
-      createProvider(
-        conn,
-        safeTransport(
-          hosts(config.MODEL_ALLOWED_HOSTS),
-          hosts(config.MODEL_PRIVATE_HOSTS),
-        ),
-      ));
-  const metered = routedProvider(
-    c,
-    model,
-    input,
-    0,
-    ctx.workspaceId,
-    ctx.organizationId,
-    factory,
-  );
-  const provider = metered.provider;
-  const completeUsage =
-    c.modelRouting.enabled ||
-    c.modelRouting.fallbackModelIds.length ||
-    c.rag.queryRewrite ||
-    c.rag.rerank;
-  const contextBudget = c.contextControls.enabled
-    ? Infinity
-    : model.contextWindow - c.maxOutputTokens;
-  const knowledgePlan = await planKnowledgeUsage(
-    c,
-    provider,
-    [{ role: "user", content: input }],
-    signal,
-    contextBudget,
-    c.rag.usageMode === "automatic" && c.rag.knowledgeBaseIds.length
-      ? await sql<
-          { name: string; description: string }[]
-        >`SELECT name,description FROM knowledge_bases WHERE id=ANY(${c.rag.knowledgeBaseIds}::uuid[]) AND workspace_id=${ctx.workspaceId} AND organization_id=${ctx.organizationId} AND archived_at IS NULL`
-      : [],
-  );
-  let sources = knowledgePlan.retrieve
-    ? (
-        await enhancedRetrieval(
-          new PostgresRagTool(embeddingOverride),
+  return observe(
+    "agent.snapshot",
+    "agent",
+    {
+      "workspace.id": ctx.workspaceId,
+      "workflow.node.id": ctx.workflowNodeId ?? "",
+      "agent.run.id": ctx.runId ?? "",
+      "model.id": model.modelId,
+    },
+    async (span) => {
+      observationContent(span, "input", input);
+      validateModelSet(c, model);
+      await validateKnowledgeSelection(
+        c.rag,
+        ctx.workspaceId,
+        ctx.organizationId,
+        !!ctx.publicAccess,
+        !!ctx.publicAccess,
+        candidateReleaseId,
+      );
+      await validateToolIds(c.tools.toolIds, ctx);
+      const factory: ProviderFactory =
+        providerOverride ??
+        ((conn) =>
+          createProvider(
+            conn,
+            safeTransport(
+              hosts(config.MODEL_ALLOWED_HOSTS),
+              hosts(config.MODEL_PRIVATE_HOSTS),
+            ),
+          ));
+      const metered = routedProvider(
+        c,
+        model,
+        input,
+        0,
+        ctx.workspaceId,
+        ctx.organizationId,
+        factory,
+      );
+      const provider = metered.provider;
+      const completeUsage =
+        c.modelRouting.enabled ||
+        c.modelRouting.fallbackModelIds.length ||
+        c.rag.queryRewrite ||
+        c.rag.rerank;
+      const contextBudget = c.contextControls.enabled
+        ? Infinity
+        : model.contextWindow - c.maxOutputTokens;
+      const knowledgePlan = await planKnowledgeUsage(
+        c,
+        provider,
+        [{ role: "user", content: input }],
+        signal,
+        contextBudget,
+        c.rag.usageMode === "automatic" && c.rag.knowledgeBaseIds.length
+          ? await sql<
+              { name: string; description: string }[]
+            >`SELECT name,description FROM knowledge_bases WHERE id=ANY(${c.rag.knowledgeBaseIds}::uuid[]) AND workspace_id=${ctx.workspaceId} AND organization_id=${ctx.organizationId} AND archived_at IS NULL`
+          : [],
+      );
+      let sources = knowledgePlan.retrieve
+        ? (
+            await enhancedRetrieval(
+              new PostgresRagTool(embeddingOverride),
+              provider,
+              [{ role: "user", content: input }],
+              input,
+              c.rag.knowledgeBaseIds,
+              c.rag,
+              {
+                workspaceId: ctx.workspaceId,
+                organizationId: ctx.organizationId,
+                publicAccess: !!ctx.publicAccess,
+                candidateReleaseId,
+              },
+              signal,
+              c.maxOutputTokens,
+            )
+          ).sources
+        : [];
+      if (c.contextControls.enabled) {
+        let used = 0;
+        sources = sources.filter((source) => {
+          const size = tokenCount(source.content, c.contextControls.tokenizer);
+          if (used + size > c.contextControls.knowledgeBudget) return false;
+          used += size;
+          return true;
+        });
+      }
+      if (c.answerPolicy.mode === "grounded") {
+        const result = await generateGroundedAnswer(
+          c,
           provider,
           [{ role: "user", content: input }],
-          input,
-          c.rag.knowledgeBaseIds,
-          c.rag,
-          {
-            workspaceId: ctx.workspaceId,
-            organizationId: ctx.organizationId,
-            publicAccess: !!ctx.publicAccess,
-            candidateReleaseId,
-          },
+          sources,
           signal,
-          c.maxOutputTokens,
+          contextBudget,
+        );
+        return {
+          output: result.message,
+          inputTokens: completeUsage
+            ? metered.usage().inputTokens
+            : result.inputTokens,
+          outputTokens: completeUsage
+            ? metered.usage().outputTokens
+            : result.outputTokens,
+          citations: citedSources(result.message, sources),
+          sources,
+          modelUsage: metered.usage().modelUsage,
+        };
+      }
+      if (knowledgePlan.retrieve && !sources.length)
+        throw new KnowledgeError("NO_RELEVANT_SOURCES");
+      const tools = await runAgentTools(
+        c,
+        provider,
+        input,
+        ctx,
+        signal,
+        () => {},
+        contextBudget,
+      );
+      tools.inputTokens =
+        tools.inputTokens === null || knowledgePlan.inputTokens === null
+          ? null
+          : tools.inputTokens + knowledgePlan.inputTokens;
+      tools.outputTokens =
+        tools.outputTokens === null || knowledgePlan.outputTokens === null
+          ? null
+          : tools.outputTokens + knowledgePlan.outputTokens;
+      const grounding =
+        (sources.length ? groundedPrompt(sources) : "") + tools.grounding;
+      if (
+        !c.contextControls.enabled &&
+        Buffer.byteLength(input) +
+          Buffer.byteLength(JSON.stringify(c.prompt)) +
+          Buffer.byteLength(grounding) >
+          model.contextWindow - c.maxOutputTokens
+      )
+        throw new ProviderError("CONTEXT_LIMIT");
+      let text = "",
+        inputTokens: number | null = null,
+        outputTokens: number | null = null;
+      for await (const event of new SingleAgentRuntime().run(
+        c,
+        [{ role: "user", content: input }],
+        provider,
+        signal,
+        grounding,
+      )) {
+        signal.throwIfAborted();
+        if (event.type === "token") {
+          text += event.text;
+          if (Buffer.byteLength(text) > 64000)
+            throw new ProviderError("OUTPUT_LIMIT");
+        } else {
+          inputTokens =
+            event.inputTokens === null || tools.inputTokens === null
+              ? null
+              : event.inputTokens + tools.inputTokens;
+          outputTokens =
+            event.outputTokens === null || tools.outputTokens === null
+              ? null
+              : event.outputTokens + tools.outputTokens;
+        }
+      }
+      const citations = citedSources(text, sources);
+      if (sources.length && c.rag.requireCitations && !citations.length)
+        throw new KnowledgeError("CITATION_REQUIRED");
+      if (
+        sources.length &&
+        [...text.matchAll(/\[(\d+)\]/g)].some(
+          (m) => !sources.some((s) => s.id === Number(m[1])),
         )
-      ).sources
-    : [];
-  if (c.contextControls.enabled) {
-    let used = 0;
-    sources = sources.filter((source) => {
-      const size = tokenCount(source.content, c.contextControls.tokenizer);
-      if (used + size > c.contextControls.knowledgeBudget) return false;
-      used += size;
-      return true;
-    });
-  }
-  if (c.answerPolicy.mode === "grounded") {
-    const result = await generateGroundedAnswer(
-      c,
-      provider,
-      [{ role: "user", content: input }],
-      sources,
-      signal,
-      contextBudget,
-    );
-    return {
-      output: result.message,
-      inputTokens: completeUsage
-        ? metered.usage().inputTokens
-        : result.inputTokens,
-      outputTokens: completeUsage
-        ? metered.usage().outputTokens
-        : result.outputTokens,
-      citations: citedSources(result.message, sources),
-      sources,
-      modelUsage: metered.usage().modelUsage,
-    };
-  }
-  if (knowledgePlan.retrieve && !sources.length)
-    throw new KnowledgeError("NO_RELEVANT_SOURCES");
-  const tools = await runAgentTools(
-    c,
-    provider,
-    input,
-    ctx,
-    signal,
-    () => {},
-    contextBudget,
+      )
+        throw new KnowledgeError("INVALID_CITATION");
+      observationContent(span, "output", text);
+      return {
+        output: text,
+        inputTokens: completeUsage ? metered.usage().inputTokens : inputTokens,
+        outputTokens: completeUsage
+          ? metered.usage().outputTokens
+          : outputTokens,
+        citations,
+        sources,
+        modelUsage: metered.usage().modelUsage,
+      };
+    },
   );
-  tools.inputTokens =
-    tools.inputTokens === null || knowledgePlan.inputTokens === null
-      ? null
-      : tools.inputTokens + knowledgePlan.inputTokens;
-  tools.outputTokens =
-    tools.outputTokens === null || knowledgePlan.outputTokens === null
-      ? null
-      : tools.outputTokens + knowledgePlan.outputTokens;
-  const grounding =
-    (sources.length ? groundedPrompt(sources) : "") + tools.grounding;
-  if (
-    !c.contextControls.enabled &&
-    Buffer.byteLength(input) +
-      Buffer.byteLength(JSON.stringify(c.prompt)) +
-      Buffer.byteLength(grounding) >
-      model.contextWindow - c.maxOutputTokens
-  )
-    throw new ProviderError("CONTEXT_LIMIT");
-  let text = "",
-    inputTokens: number | null = null,
-    outputTokens: number | null = null;
-  for await (const event of new SingleAgentRuntime().run(
-    c,
-    [{ role: "user", content: input }],
-    provider,
-    signal,
-    grounding,
-  )) {
-    signal.throwIfAborted();
-    if (event.type === "token") {
-      text += event.text;
-      if (Buffer.byteLength(text) > 64000)
-        throw new ProviderError("OUTPUT_LIMIT");
-    } else {
-      inputTokens =
-        event.inputTokens === null || tools.inputTokens === null
-          ? null
-          : event.inputTokens + tools.inputTokens;
-      outputTokens =
-        event.outputTokens === null || tools.outputTokens === null
-          ? null
-          : event.outputTokens + tools.outputTokens;
-    }
-  }
-  const citations = citedSources(text, sources);
-  if (sources.length && c.rag.requireCitations && !citations.length)
-    throw new KnowledgeError("CITATION_REQUIRED");
-  if (
-    sources.length &&
-    [...text.matchAll(/\[(\d+)\]/g)].some(
-      (m) => !sources.some((s) => s.id === Number(m[1])),
-    )
-  )
-    throw new KnowledgeError("INVALID_CITATION");
-  return {
-    output: text,
-    inputTokens: completeUsage ? metered.usage().inputTokens : inputTokens,
-    outputTokens: completeUsage ? metered.usage().outputTokens : outputTokens,
-    citations,
-    sources,
-    modelUsage: metered.usage().modelUsage,
-  };
 }
