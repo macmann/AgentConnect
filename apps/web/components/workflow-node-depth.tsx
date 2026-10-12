@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import type { WorkflowNode } from "@agentconnect/schemas/workflows";
 export function WorkflowNodeDepth({
   node,
@@ -12,11 +13,13 @@ export function WorkflowNodeDepth({
       {["agent", "tool"].includes(node.type) && (
         <details className="configure-group">
           <summary>Failure recovery</summary>
-          <p>
-            Retry temporary provider failures. Invalid settings, unavailable
-            credentials and rejected approvals stop immediately. Retries can
-            increase model cost.
-          </p>
+          <div className="setting-label-row">
+            <span>Retry temporary provider failures.</span>
+            <HelpTooltip>
+              Invalid settings, unavailable credentials and rejected approvals
+              stop immediately. Retries can increase model cost.
+            </HelpTooltip>
+          </div>
           <label>
             Total attempts
             <input

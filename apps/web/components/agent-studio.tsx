@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import { RerankerRegistry } from "./reranker-registry";
 import { WorkspaceSaveBar } from "./workspace-sections";
 import { useState, useRef, useEffect, type FormEvent } from "react";
@@ -1114,24 +1115,24 @@ export function AgentStudio({
                     navigateSection(next);
                   }}
                 />
-                <details className="field-help">
-                  <summary>About readiness checks</summary>
-                  <p className="muted">
+                <div className="setting-label-row">
+                  <span>About readiness checks</span>
+                  <HelpTooltip label="About readiness checks">
                     Readiness checks saved configuration and workspace
                     attachments. Provider connectivity and quality gates are
                     checked when publishing.
-                  </p>
-                </details>
+                  </HelpTooltip>
+                </div>
                 <div className="publish-heading">
                   <div>
                     <h3>Immutable versions</h3>
-                    <details className="field-help">
-                      <summary>About published versions</summary>
-                      <p className="muted">
+                    <div className="setting-label-row">
+                      <span>About published versions</span>
+                      <HelpTooltip label="About published versions">
                         A deployment keeps its published prompt and model
                         settings.
-                      </p>
-                    </details>
+                      </HelpTooltip>
+                    </div>
                   </div>
                   {canBuild && (
                     <Button

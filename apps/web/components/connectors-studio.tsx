@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
@@ -444,12 +445,14 @@ export function ConnectorsStudio({
                       placeholder="documents/"
                     />
                   </label>
-                  <p>
-                    Use a trailing slash to select a folder. An empty prefix
-                    selects the whole bucket. Source location and knowledge base
-                    are fixed after creation; create another connector to change
-                    them.
-                  </p>
+                  <div className="setting-label-row">
+                    <span>Use a trailing slash to select a folder.</span>
+                    <HelpTooltip>
+                      An empty prefix selects the whole bucket. Source location
+                      and knowledge base are fixed after creation; create
+                      another connector to change them.
+                    </HelpTooltip>
+                  </div>
                 </>
               ) : kind === "teams" || kind === "slack" ? (
                 <>
@@ -486,14 +489,18 @@ export function ConnectorsStudio({
                       ? "Use IDs from Microsoft Graph or decode the channel link. Grant ChannelMessage.Read.All and Channel.ReadBasic.All application permissions with administrator consent. Approve graph.microsoft.com and login.microsoftonline.com in CONNECTOR_ALLOWED_HOSTS on API and worker. This release supports standard channels."
                       : "Use the workspace ID from your Slack web URL and Channel ID from channel details. Approve slack.com in CONNECTOR_ALLOWED_HOSTS on API and worker. Direct messages and externally shared channels are excluded."}
                   </p>
-                  <p>
-                    Messages and replies become searchable text sources. Files
-                    are excluded. Set the scan limit high enough for the whole
-                    channel; an incomplete scan fails without removing sources.
-                    Imported content inherits knowledge base access, so select a
-                    base approved for this channel’s audience. Workspace and
-                    channel stay fixed after creation.
-                  </p>
+                  <div className="setting-label-row">
+                    <span>
+                      Messages and replies become searchable text sources.
+                    </span>
+                    <HelpTooltip>
+                      Files are excluded. Set the scan limit high enough for the
+                      whole channel; an incomplete scan fails without removing
+                      sources. Imported content inherits knowledge base access,
+                      so select a base approved for this channel’s audience.
+                      Workspace and channel stay fixed after creation.
+                    </HelpTooltip>
+                  </div>
                 </>
               ) : kind === "sharepoint" ? (
                 <>
@@ -670,15 +677,20 @@ export function ConnectorsStudio({
                     />{" "}
                     Include subfolders
                   </label>
-                  <p>
-                    Use a SharePoint site URL, not a file sharing URL. Grant the
-                    Entra application read access to that site; Sites.Selected
-                    requires a separate site read grant. Approve
-                    graph.microsoft.com, login.microsoftonline.com and your
-                    exact SharePoint download host in CONNECTOR_ALLOWED_HOSTS on
-                    API and worker. Imported content inherits knowledge base
-                    access. Site, library and folder stay fixed after creation.
-                  </p>
+                  <div className="setting-label-row">
+                    <span>
+                      Use a SharePoint site URL, not a file sharing URL.
+                    </span>
+                    <HelpTooltip>
+                      Grant the Entra application read access to that site;
+                      Sites.Selected requires a separate site read grant.
+                      Approve graph.microsoft.com, login.microsoftonline.com and
+                      your exact SharePoint download host in
+                      CONNECTOR_ALLOWED_HOSTS on API and worker. Imported
+                      content inherits knowledge base access. Site, library and
+                      folder stay fixed after creation.
+                    </HelpTooltip>
+                  </div>
                 </>
               ) : (
                 <>

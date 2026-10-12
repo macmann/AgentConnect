@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import { useQuery } from "@tanstack/react-query";
 import { requestJson } from "./agent-client";
 import type { RerankerOption } from "./reranker-registry";
@@ -604,23 +605,25 @@ export function KnowledgeSection(p: SectionProps) {
                 }
               />
             </label>
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={p.draft.config.answerPolicy.offerHumanOnNoAnswer}
-                onChange={(e) =>
-                  config(p, "answerPolicy", {
-                    ...p.draft.config.answerPolicy!,
-                    offerHumanOnNoAnswer: e.target.checked,
-                  })
-                }
-              />
-              Offer customer care when approved knowledge cannot answer
-            </label>
-            <p className="muted">
-              Offers respect the current human-support policy and require
-              customer confirmation.
-            </p>
+            <div className="setting-label-row">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={p.draft.config.answerPolicy.offerHumanOnNoAnswer}
+                  onChange={(e) =>
+                    config(p, "answerPolicy", {
+                      ...p.draft.config.answerPolicy!,
+                      offerHumanOnNoAnswer: e.target.checked,
+                    })
+                  }
+                />
+                Offer customer care when approved knowledge cannot answer
+              </label>
+              <HelpTooltip>
+                Offers respect the current human-support policy and require
+                customer confirmation.
+              </HelpTooltip>
+            </div>
           </>
         )}
       </Group>
@@ -681,36 +684,41 @@ export function KnowledgeSection(p: SectionProps) {
         }
       >
         <summary>Advanced retrieval settings</summary>
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={c.rag.queryRewrite ?? false}
-            onChange={(e) =>
-              config(p, "rag", { ...c.rag, queryRewrite: e.target.checked })
-            }
-          />
-          Rewrite follow-up questions for search
-        </label>
-        <p className="muted">
-          Uses recent conversation context to form a standalone search query.
-          The original query is also searched. Adds a model call; malformed
-          rewrites use the original query.
-        </p>
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={c.rag.rerank ?? false}
-            onChange={(e) =>
-              config(p, "rag", { ...c.rag, rerank: e.target.checked })
-            }
-          />
-          Rerank retrieved passages
-        </label>
-        <p className="muted">
-          The selected reranker ranks candidates against the original question.
-          Access, approved-release and minimum relevance checks still apply.
-          Adds a reranking request; invalid rankings retain retrieval order.
-        </p>
+        <div className="setting-label-row">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={c.rag.queryRewrite ?? false}
+              onChange={(e) =>
+                config(p, "rag", { ...c.rag, queryRewrite: e.target.checked })
+              }
+            />
+            Rewrite follow-up questions for search
+          </label>
+          <HelpTooltip>
+            Uses recent conversation context to form a standalone search query.
+            The original query is also searched. Adds a model call; malformed
+            rewrites use the original query.
+          </HelpTooltip>
+        </div>
+        <div className="setting-label-row">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={c.rag.rerank ?? false}
+              onChange={(e) =>
+                config(p, "rag", { ...c.rag, rerank: e.target.checked })
+              }
+            />
+            Rerank retrieved passages
+          </label>
+          <HelpTooltip>
+            The selected reranker ranks candidates against the original
+            question. Access, approved-release and minimum relevance checks
+            still apply. Adds a reranking request; invalid rankings retain
+            retrieval order.
+          </HelpTooltip>
+        </div>
         {c.rag.rerank && (
           <>
             <Field
@@ -1184,24 +1192,26 @@ export function ExperienceSection(p: SectionProps) {
         </Button>
       </Group>
       <Group title="Rich responses">
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={c.generative?.enabled ?? false}
-            onChange={(e) =>
-              config(p, "generative", {
-                enabled: e.target.checked,
-                allowedBlocks: c.generative?.allowedBlocks ?? [...blockNames],
-                allowPublicForms: c.generative?.allowPublicForms ?? false,
-              })
-            }
-          />
-          Enable rich response components
-        </label>
-        <p className="muted">
-          Allows supported charts, forms, tables and downloadable files.
-          Submissions require confirmation.
-        </p>
+        <div className="setting-label-row">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={c.generative?.enabled ?? false}
+              onChange={(e) =>
+                config(p, "generative", {
+                  enabled: e.target.checked,
+                  allowedBlocks: c.generative?.allowedBlocks ?? [...blockNames],
+                  allowPublicForms: c.generative?.allowPublicForms ?? false,
+                })
+              }
+            />
+            Enable rich response components
+          </label>
+          <HelpTooltip>
+            Allows supported charts, forms, tables and downloadable files.
+            Submissions require confirmation.
+          </HelpTooltip>
+        </div>
         {c.generative?.enabled && (
           <>
             <fieldset>
@@ -1232,23 +1242,25 @@ export function ExperienceSection(p: SectionProps) {
                 ))}
               </div>
             </fieldset>
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={c.generative.allowPublicForms}
-                onChange={(e) =>
-                  config(p, "generative", {
-                    ...c.generative!,
-                    allowPublicForms: e.target.checked,
-                  })
-                }
-              />
-              Allow confirmed form/action submissions in public chat
-            </label>
-            <p className="muted">
-              Public collection is off by default. Publish a new version after
-              changing this setting.
-            </p>
+            <div className="setting-label-row">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={c.generative.allowPublicForms}
+                  onChange={(e) =>
+                    config(p, "generative", {
+                      ...c.generative!,
+                      allowPublicForms: e.target.checked,
+                    })
+                  }
+                />
+                Allow confirmed form/action submissions in public chat
+              </label>
+              <HelpTooltip>
+                Public collection is off by default. Publish a new version after
+                changing this setting.
+              </HelpTooltip>
+            </div>
           </>
         )}
       </Group>

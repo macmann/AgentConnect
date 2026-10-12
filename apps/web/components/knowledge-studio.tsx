@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import { websiteInput } from "@agentconnect/schemas/knowledge";
 import {
   AdvancedKnowledgeSettings,
@@ -576,27 +577,31 @@ export function KnowledgeStudio({
                     />
                   </label>
                 </div>
-                <label className="checkbox-label">
-                  <input type="checkbox" name="ocrEnabled" />
-                  Recognize scanned PDF pages with OCR
-                </label>
-                <p className="muted">
-                  Requires OCR_ENABLED=true and Poppler/Tesseract on the worker.
-                  Supports English scans, up to 20 scanned pages per document.
-                  Review recognition accuracy before publishing.
-                </p>
+                <div className="setting-label-row">
+                  <label className="checkbox-label">
+                    <input type="checkbox" name="ocrEnabled" />
+                    Recognize scanned PDF pages with OCR
+                  </label>
+                  <HelpTooltip>
+                    Requires OCR_ENABLED=true and Poppler/Tesseract on the
+                    worker. Supports English scans, up to 20 scanned pages per
+                    document. Review recognition accuracy before publishing.
+                  </HelpTooltip>
+                </div>
                 <AdvancedKnowledgeSettings
                   models={processingModels.data ?? []}
                 />
 
-                <label className="checkbox-label">
-                  <input name="publicAccess" type="checkbox" /> Allow knowledge
-                  in public hosted chat
-                </label>
-                <p className="muted">
-                  Public chat can reveal retrieved passages. Leave this off for
-                  internal knowledge.
-                </p>
+                <div className="setting-label-row">
+                  <label className="checkbox-label">
+                    <input name="publicAccess" type="checkbox" /> Allow
+                    knowledge in public hosted chat
+                  </label>
+                  <HelpTooltip>
+                    Public chat can reveal retrieved passages. Leave this off
+                    for internal knowledge.
+                  </HelpTooltip>
+                </div>
               </>
             )}
             {form === "upload" && (
@@ -1453,32 +1458,36 @@ export function KnowledgeStudio({
                       maxLength={2000}
                     />
                   </label>
-                  <label className="checkbox-label">
-                    <input
-                      name="publicAccess"
-                      type="checkbox"
-                      defaultChecked={base.public_access}
-                    />{" "}
-                    Allow knowledge in public hosted chat
-                  </label>
-                  <p className="muted">
-                    Turning this off blocks retrieval from existing public
-                    deployments immediately.
-                  </p>
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      name="ocrEnabled"
-                      defaultChecked={base.ocr_enabled}
-                    />
-                    Recognize scanned PDF pages with OCR
-                  </label>
-                  <p className="muted">
-                    Requires OCR_ENABLED=true and Poppler/Tesseract on the
-                    worker. Applies to new ingestion or reindexing; existing
-                    chunks do not change automatically. English OCR is limited
-                    to 20 scanned pages per document.
-                  </p>
+                  <div className="setting-label-row">
+                    <label className="checkbox-label">
+                      <input
+                        name="publicAccess"
+                        type="checkbox"
+                        defaultChecked={base.public_access}
+                      />{" "}
+                      Allow knowledge in public hosted chat
+                    </label>
+                    <HelpTooltip>
+                      Turning this off blocks retrieval from existing public
+                      deployments immediately.
+                    </HelpTooltip>
+                  </div>
+                  <div className="setting-label-row">
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        name="ocrEnabled"
+                        defaultChecked={base.ocr_enabled}
+                      />
+                      Recognize scanned PDF pages with OCR
+                    </label>
+                    <HelpTooltip>
+                      Requires OCR_ENABLED=true and Poppler/Tesseract on the
+                      worker. Applies to new ingestion or reindexing; existing
+                      chunks do not change automatically. English OCR is limited
+                      to 20 scanned pages per document.
+                    </HelpTooltip>
+                  </div>
                   <AdvancedKnowledgeSettings
                     key={base.revision}
                     initial={base.advanced_processing}

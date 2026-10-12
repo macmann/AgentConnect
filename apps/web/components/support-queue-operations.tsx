@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import {
   type QueueOperations,
@@ -34,11 +35,13 @@ export function SupportQueueOperations({
   return (
     <section aria-label="Queue operations" className="support-queue-operations">
       <h3>SLA targets</h3>
-      <p className="field-help">
-        Blank targets disable tracking. Targets use elapsed wall-clock seconds;
-        the resolution timer can pause while waiting. Changes apply to new
-        cases.
-      </p>
+      <div className="setting-label-row">
+        <span>Blank targets disable tracking.</span>
+        <HelpTooltip>
+          Targets use elapsed wall-clock seconds; the resolution timer can pause
+          while waiting. Changes apply to new cases.
+        </HelpTooltip>
+      </div>
       <div className="form-grid">
         {(
           [
@@ -303,11 +306,13 @@ export function SupportQueueOperations({
           })}
         </div>
       )}
-      <p className="field-help">
-        Closed queues do not automatically assign cases. Offline/message/hours
-        modes keep a durable case and show the queue schedule. Holidays can be
-        added later.
-      </p>
+      <div className="setting-label-row">
+        <span>Closed queues do not automatically assign cases.</span>
+        <HelpTooltip>
+          Offline/message/hours modes keep a durable case and show the queue
+          schedule. Holidays can be added later.
+        </HelpTooltip>
+      </div>
     </section>
   );
 }

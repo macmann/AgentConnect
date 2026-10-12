@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
@@ -165,11 +166,19 @@ export function QualityStudio({
             </p>
           )}
           {notice && <p role="status">{notice}</p>}
-          {[datasets.error, agents.error, runs.error, gates.error]
-            .filter(Boolean)
-            .map((e, i) => (
-              <p className="error" key={i}>
-                {e!.message}
+          {(
+            [
+              ["Datasets", datasets.error],
+              ["Agents", agents.error],
+              ["Models", models.error],
+              ["Evaluation history", runs.error],
+              ["Publication gates", gates.error],
+            ] as const
+          )
+            .filter(([, error]) => error)
+            .map(([label, error]) => (
+              <p className="error" key={label} role="alert">
+                {label}: {error!.message}
               </p>
             ))}
           <WorkspaceSections
@@ -300,12 +309,16 @@ export function QualityStudio({
                     onChange={(e) => setExamples(e.target.value)}
                   />
                 </label>
-                <p>
-                  Fields: input, expectedBehavior, optional expectedAnswer,
-                  contains, forbidden, expectedSourceIds and tags. Example IDs
-                  are generated when omitted. Import by pasting a JSON array;
-                  copy the displayed dataset examples to export.
-                </p>
+                <div className="setting-label-row">
+                  <span>
+                    Fields: input, expectedBehavior, optional expectedAnswer,
+                    contains, forbidden, expectedSourceIds and tags.
+                  </span>
+                  <HelpTooltip>
+                    Example IDs are generated when omitted. Import by pasting a
+                    JSON array; copy the displayed dataset examples to export.
+                  </HelpTooltip>
+                </div>
                 <Button
                   disabled={busy || !name.trim()}
                   onClick={() =>

@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import type { ReactNode } from "react";
 import type { ConfigureIssue } from "./agent-configure-state";
 export function ConfigureField({
@@ -27,10 +28,9 @@ export function ConfigureField({
       <div className="configure-field-heading">
         <label htmlFor={id}>{label}</label>
         {help && (
-          <details className="field-help configure-help">
-            <summary aria-label={`Help for ${label}`}>ⓘ</summary>
-            <small id={`${id}-help`}>{help}</small>
-          </details>
+          <HelpTooltip label={`Help for ${label}`} id={`${id}-help`}>
+            {help}
+          </HelpTooltip>
         )}
       </div>
       {children({

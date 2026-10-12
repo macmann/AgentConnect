@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -1131,10 +1132,13 @@ export function WorkflowStudio({
                             maxLength={1000}
                           />
                         </label>
-                        <p className="muted">
-                          Connect both true and false handles. Expressions are
-                          deterministic; no code is evaluated.
-                        </p>
+                        <div className="setting-label-row">
+                          Branch connections
+                          <HelpTooltip>
+                            Connect both true and false handles. Expressions are
+                            deterministic; no code is evaluated.
+                          </HelpTooltip>
+                        </div>
                       </>
                     )}
                     {current.type === "approval" && (
@@ -1212,12 +1216,16 @@ export function WorkflowStudio({
               </ul>
             </div>
           )}
-          <p className="muted">
-            Drag nodes to arrange them; connect handles to change data flow.
-            Shift selects multiple nodes; Delete removes selection; Ctrl/Cmd+C/V
-            copies a selected node; Ctrl/Cmd+Z/Shift+Z undo/redo. Parallel
-            branches join at a Merge. One review gate is supported per workflow.
-          </p>
+          <div className="setting-label-row">
+            Canvas shortcuts
+            <HelpTooltip label="Workflow canvas help">
+              Drag nodes to arrange them; connect handles to change data flow.
+              Shift selects multiple nodes; Delete removes selection;
+              Ctrl/Cmd+C/V copies a selected node; Ctrl/Cmd+Z/Shift+Z undo/redo.
+              Parallel branches join at a Merge. One review gate is supported
+              per workflow.
+            </HelpTooltip>
+          </div>
           {!!versions.data?.length && (
             <details>
               <summary>Published versions</summary>
