@@ -226,3 +226,35 @@ test("Word table grid spans preserve grouped headers and separate tables", async
     /Group \/ 2026: 125000/,
   );
 });
+
+test("Vision extraction validates language, opt-in model and budget settings", () => {
+  assert.equal(advancedProcessing.parse({}).vision.enabled, false);
+  assert.equal(
+    advancedProcessing.safeParse({
+      vision: { enabled: true, modelId: randomUUID() },
+    }).success,
+    false,
+  );
+  assert.equal(
+    advancedProcessing.safeParse({ enabled: true, vision: { enabled: true } })
+      .success,
+    false,
+  );
+  assert.equal(
+    advancedProcessing.safeParse({
+      enabled: true,
+      vision: { enabled: true, modelId: randomUUID(), maxPages: 201 },
+    }).success,
+    false,
+  );
+  const parsed = advancedProcessing.parse({
+    enabled: true,
+    vision: {
+      enabled: true,
+      modelId: randomUUID(),
+      languages: "Burmese, English",
+      scope: "all",
+    },
+  });
+  assert.equal(parsed.vision.languages, "Burmese, English");
+});

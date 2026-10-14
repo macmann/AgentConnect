@@ -13,6 +13,10 @@ export interface ModelConnection {
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  images?: {
+    mimeType: "image/png" | "image/jpeg" | "image/webp";
+    data: string;
+  }[];
 }
 export interface ChatRequest {
   system: string;
@@ -289,7 +293,22 @@ export function createProvider(
         payload = {
           model: modelId,
           system: input.system,
-          messages: input.messages,
+          messages: input.messages.map((m) => ({
+            role: m.role,
+            content: m.images?.length
+              ? [
+                  { type: "text", text: m.content },
+                  ...m.images.map((image) => ({
+                    type: "image",
+                    source: {
+                      type: "base64",
+                      media_type: image.mimeType,
+                      data: image.data,
+                    },
+                  })),
+                ]
+              : m.content,
+          })),
           max_tokens: input.maxOutputTokens,
           stream: true,
           ...parameters,
@@ -303,7 +322,12 @@ export function createProvider(
           systemInstruction: { parts: [{ text: input.system }] },
           contents: input.messages.map((m) => ({
             role: m.role === "assistant" ? "model" : "user",
-            parts: [{ text: m.content }],
+            parts: [
+              { text: m.content },
+              ...(m.images ?? []).map((image) => ({
+                inlineData: { mimeType: image.mimeType, data: image.data },
+              })),
+            ],
           })),
           generationConfig: {
             ...(input.responseSchema
@@ -328,7 +352,20 @@ export function createProvider(
           model: modelId,
           messages: [
             { role: "system", content: input.system },
-            ...input.messages,
+            ...input.messages.map((m) => ({
+              role: m.role,
+              content: m.images?.length
+                ? [
+                    { type: "text", text: m.content },
+                    ...m.images.map((image) => ({
+                      type: "image_url",
+                      image_url: {
+                        url: `data:${image.mimeType};base64,${image.data}`,
+                      },
+                    })),
+                  ]
+                : m.content,
+            })),
           ],
           ...(provider === "openai"
             ? { max_completion_tokens: input.maxOutputTokens }

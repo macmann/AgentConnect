@@ -183,3 +183,8 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 - Bounded same-origin redirects with DNS, robots and path checks at each hop.
 - Landing-page provenance and correct relative-link discovery.
 - Safe terminal rejection diagnostics and actionable host/URL validation errors.
+
+## Multilingual AI document extraction
+
+- Optional multilingual vision extraction for scanned PDFs and PNG/JPEG/WebP uploads, using workspace OpenAI-compatible, OpenAI, Anthropic or Gemini models.
+- Scanned/table/all-page modes, original-script preservation, structured multi-header tables, uncertainty warnings, page/output budgets, source-scoped extraction caching and reviewable extraction previews.

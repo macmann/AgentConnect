@@ -38,14 +38,19 @@ async function validateProcessingModel(
   workspace: string,
   org: string,
 ) {
-  if (!value.enabled || !value.llmAssisted) return;
-  const [model] =
-    await sql`SELECT id FROM model_configurations WHERE id=${value.modelId} AND workspace_id=${workspace} AND organization_id=${org} AND archived_at IS NULL`;
-  if (!model)
-    throw new HttpError(
-      400,
-      "Select an available processing model from this workspace",
-    );
+  if (!value.enabled) return;
+  for (const modelId of [
+    value.llmAssisted ? value.modelId : null,
+    value.vision.enabled ? value.vision.modelId : null,
+  ].filter(Boolean)) {
+    const [model] =
+      await sql`SELECT id FROM model_configurations WHERE id=${modelId} AND workspace_id=${workspace} AND organization_id=${org} AND archived_at IS NULL`;
+    if (!model)
+      throw new HttpError(
+        400,
+        "Select an available processing model from this workspace",
+      );
+  }
 }
 export async function ownedKnowledge(
   r: FastifyRequest,
@@ -365,6 +370,17 @@ export async function registerKnowledgeRoutes(
       const ext = filename.split(".").at(-1)?.toLowerCase() ?? "";
       if (!supportedExtensions.includes(ext))
         throw new HttpError(400, "Unsupported file type");
+      if (
+        ["png", "jpg", "jpeg", "webp"].includes(ext) &&
+        !(
+          kb.advanced_processing.enabled &&
+          kb.advanced_processing.vision?.enabled
+        )
+      )
+        throw new HttpError(
+          400,
+          "Enable AI document extraction in knowledge settings before uploading images",
+        );
       const bytes = await file.toBuffer();
       if (file.file.truncated || !bytes.length)
         throw new HttpError(400, "Document is empty or exceeds 10 MB");
@@ -634,7 +650,7 @@ export async function registerKnowledgeRoutes(
       const { kb } = await ownedKnowledge(r);
       const source = await sourceFor(r, kb);
       const documents =
-        await sql`SELECT id,title,metadata->'processing' AS processing,metadata->'extraction' AS extraction FROM knowledge_documents WHERE source_id=${source.id} AND workspace_id=${kb.workspace_id} AND organization_id=${kb.organization_id} AND revision=${source.revision} ORDER BY created_at LIMIT 100`;
+        await sql`SELECT id,title,metadata->'processing' AS processing,metadata->'extraction' AS extraction,metadata->'aiExtraction' AS ai_extraction FROM knowledge_documents WHERE source_id=${source.id} AND workspace_id=${kb.workspace_id} AND organization_id=${kb.organization_id} AND revision=${source.revision} ORDER BY created_at LIMIT 100`;
       return { status: source.status, revision: source.revision, documents };
     },
   );

@@ -56,6 +56,11 @@ type Source = {
   revision: number;
   chunk_count: number;
   metadata: {
+    aiExtractionProgress?: {
+      page: number;
+      extractedPages: number;
+      maxPages: number;
+    };
     processing?: ProcessingSettings;
     processingWarnings?: string[];
     crawler?: string;
@@ -120,6 +125,22 @@ export function KnowledgeStudio({
     documents: {
       id: string;
       title: string;
+      ai_extraction?: {
+        modelId: string;
+        pages: {
+          page: number;
+          cached: boolean;
+          language: string;
+          warnings: string[];
+          blocks: {
+            kind: string;
+            heading: string;
+            text: string;
+            rows: string[][];
+            headerRows: number;
+          }[];
+        }[];
+      };
       extraction: {
         warnings: string[];
         tables: {
@@ -611,13 +632,14 @@ export function KnowledgeStudio({
                   <input
                     name="file"
                     type="file"
-                    accept=".pdf,.docx,.pptx,.xlsx,.csv,.txt,.md,.markdown,.html,.htm,.json"
+                    accept=".pdf,.docx,.pptx,.xlsx,.csv,.txt,.md,.markdown,.html,.htm,.json,.png,.jpg,.jpeg,.webp"
                     required
                   />
                 </label>
                 <p className="muted">
                   PDF, Office documents, CSV, text, Markdown, HTML and JSON.
-                  Maximum 10 MB. Scanned PDFs need an OCR pipeline.
+                  Maximum 10 MB. Enable OCR or AI extraction for scanned PDFs.
+                  Image uploads require AI extraction.
                 </p>
               </>
             )}
@@ -1053,6 +1075,9 @@ export function KnowledgeStudio({
                           <td>
                             <span className={"source-status " + s.status}>
                               {s.status}
+                              {s.status === "processing" &&
+                                s.metadata.aiExtractionProgress &&
+                                ` · AI page ${s.metadata.aiExtractionProgress.page} (${s.metadata.aiExtractionProgress.extractedPages}/${s.metadata.aiExtractionProgress.maxPages} allowance)`}
                             </span>
                             {!!s.metadata.ocrPages && (
                               <small>
@@ -1237,6 +1262,61 @@ export function KnowledgeStudio({
                   {extraction.documents.map((d) => (
                     <div key={d.id}>
                       <h4>{d.title}</h4>
+                      {d.ai_extraction && (
+                        <details>
+                          <summary>
+                            AI extraction · {d.ai_extraction.pages.length} pages
+                          </summary>
+                          <p>
+                            Original-language transcription. Verify uncertain
+                            content and financial values against the source
+                            before publishing.
+                          </p>
+                          {d.ai_extraction.pages.map((p) => (
+                            <section key={p.page}>
+                              <h4>
+                                Page {p.page} · {p.language}{" "}
+                                {p.cached ? "· Cached" : ""}
+                              </h4>
+                              {p.warnings.map((w, i) => (
+                                <p className="error" key={i}>
+                                  {w}
+                                </p>
+                              ))}
+                              {p.blocks.map((b, i) => (
+                                <div key={i}>
+                                  {b.heading && <h4>{b.heading}</h4>}
+                                  {b.kind === "table" ? (
+                                    <div className="table-wrap">
+                                      <table>
+                                        <tbody>
+                                          {b.rows.map((r, j) => (
+                                            <tr key={j}>
+                                              {r.map((cell, k) =>
+                                                j < b.headerRows ? (
+                                                  <th key={k} scope="col">
+                                                    {cell}
+                                                  </th>
+                                                ) : (
+                                                  <td key={k}>{cell}</td>
+                                                ),
+                                              )}
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  ) : (
+                                    <p style={{ whiteSpace: "pre-wrap" }}>
+                                      {b.text}
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                            </section>
+                          ))}
+                        </details>
+                      )}
                       {!d.extraction ? (
                         <p className="muted">
                           This source used standard processing. Enable advanced

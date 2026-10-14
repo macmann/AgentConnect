@@ -156,7 +156,12 @@ export async function structureDocument(
     if (!rows.length || (!original.text.trim() && !Array.isArray(raw)))
       continue;
     let blocks = deterministicBlocks(rows);
-    if (choose) {
+    if (original.metadata.layoutBlocks) {
+      blocks = validBlocks(
+        { blocks: original.metadata.layoutBlocks },
+        rows.length,
+      );
+    } else if (choose) {
       const selected = await choose(rows);
       if (selected) blocks = validBlocks({ blocks: selected }, rows.length);
       else

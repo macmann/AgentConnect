@@ -87,6 +87,8 @@ Compose versioned agent workflows and manage customer handoffs from the support 
 - Human support operations with an inbox, routing, operator presence, private AI copilot, approvals, supervision and reporting.
 - Quality and improvement processes with evaluation datasets, regression comparisons, publication gates, knowledge review and knowledge-gap drafts.
 
+Optional **multilingual AI document extraction** transcribes scanned PDF pages and image uploads with a registered vision model before RAG indexing. It preserves original scripts and structured tables, caches extraction results, and exposes page-level previews and uncertainty warnings. See the [configuration and review guide](docs/user-guide.md#multilingual-ai-document-extraction). PDF rendering requires Poppler; the worker image supports `ENABLE_AI_EXTRACTION=true` at build time.
+
 See the [feature list](docs/feature-list.md) for implementation boundaries and configuration dependencies.
 
 ## Local quick start

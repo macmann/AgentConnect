@@ -82,3 +82,45 @@ export async function ocrPdfPage(
     await rm(dir, { recursive: true, force: true });
   }
 }
+
+/** Bounded page rendering shared by vision extraction and local OCR. */
+export async function renderPdfPage(
+  data: Uint8Array,
+  page: number,
+  signal: AbortSignal,
+) {
+  const dir = await mkdtemp(join(tmpdir(), "agentconnex-vision-"));
+  try {
+    const pdf = join(dir, "source.pdf"),
+      image = join(dir, "page");
+    await writeFile(pdf, data, { mode: 0o600 });
+    await run(
+      "pdftoppm",
+      [
+        "-f",
+        String(page),
+        "-l",
+        String(page),
+        "-singlefile",
+        "-scale-to",
+        "2400",
+        "-png",
+        pdf,
+        image,
+      ],
+      signal,
+      dir,
+    );
+    if ((await stat(image + ".png")).size > 10000000)
+      throw new KnowledgeError("OCR_LIMIT");
+    return await readFile(image + ".png");
+  } catch (error) {
+    if (error instanceof KnowledgeError && error.code === "OCR_NOT_AVAILABLE")
+      throw new KnowledgeError("PDF_RENDERER_UNAVAILABLE");
+    if (error instanceof KnowledgeError && error.code === "OCR_FAILED")
+      throw new KnowledgeError("PDF_RENDER_FAILED");
+    throw error;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}

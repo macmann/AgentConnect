@@ -25,6 +25,7 @@ import {
 import { crawlFirecrawl } from "./knowledge-firecrawl.js";
 import { decrypt } from "./security.js";
 import { crawlWebsite, type CrawlConfig } from "./knowledge-websites.js";
+import { createVisionExtractor } from "./vision-extraction.js";
 import { ocrPdfPage } from "./pdf-ocr.js";
 import { config } from "./config.js";
 import {
@@ -143,11 +144,22 @@ export async function processKnowledgeJob(
         job.payload.objectKey,
         controller.signal,
       );
+      const vision = await createVisionExtractor(
+        settings,
+        job.workspace_id,
+        job.organization_id,
+        `${kb.id}/${job.source_id}`,
+        processingFactory,
+        async (page, extractedPages) => {
+          controller.signal.throwIfAborted();
+          await sql`UPDATE knowledge_sources SET metadata=metadata || ${sql.json({ aiExtractionProgress: { page, extractedPages, maxPages: settings.vision.maxPages } })}::jsonb WHERE id=${job.source_id} AND revision=${job.source_revision} AND status='processing'`;
+        },
+      );
       const document = await parseDocument(
         bytes,
         job.payload.filename,
         controller.signal,
-        kb.ocr_enabled
+        !vision && kb.ocr_enabled
           ? {
               ocr: config.OCR_ENABLED
                 ? ocrPdfPage
@@ -157,8 +169,16 @@ export async function processKnowledgeJob(
               maxOcrPages: 20,
               advanced: settings.enabled,
             }
-          : { advanced: settings.enabled },
+          : {
+              advanced: settings.enabled,
+              ...(vision ? { extractPage: vision.extractPage } : {}),
+            },
       );
+      if (vision)
+        document.metadata.aiExtraction = {
+          modelId: settings.vision.modelId,
+          pages: vision.reports,
+        };
       document.title = source.title;
       document.metadata = {
         ...document.metadata,

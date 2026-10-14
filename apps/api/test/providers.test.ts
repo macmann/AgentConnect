@@ -412,3 +412,57 @@ test("Knowledge schema uses native OpenAI/Gemini output while compatible and Ant
     }
   }
 });
+
+test("Vision images use native provider payloads while text messages retain their shape", async () => {
+  for (const provider of [
+    "openai",
+    "openai-compatible",
+    "anthropic",
+    "gemini",
+  ] as const) {
+    let captured = "";
+    const client = createProvider(
+      {
+        provider,
+        modelId: "vision",
+        baseUrl: "https://example.invalid",
+        apiKey: "fixture",
+        capabilities: { temperature: false, topP: false },
+      },
+      fixtureTransport(["data: [DONE]\n\n"], (_url, _headers, body) => {
+        captured = JSON.stringify(body);
+      }),
+    );
+    for await (const event of client.stream({
+      ...input,
+      messages: [
+        {
+          role: "user",
+          content: "Transcribe မြန်မာ",
+          images: [{ mimeType: "image/png", data: "aW1hZ2U=" }],
+        },
+      ],
+    }))
+      void event;
+    if (provider === "gemini")
+      assert.ok(
+        captured.includes(
+          JSON.stringify({
+            inlineData: { mimeType: "image/png", data: "aW1hZ2U=" },
+          }),
+        ),
+      );
+    else if (provider === "anthropic")
+      assert.ok(
+        captured.includes(
+          JSON.stringify({
+            type: "base64",
+            media_type: "image/png",
+            data: "aW1hZ2U=",
+          }),
+        ),
+      );
+    else assert.ok(captured.includes("data:image/png;base64,aW1hZ2U="));
+    assert.ok(!captured.includes('"images"'));
+  }
+});
