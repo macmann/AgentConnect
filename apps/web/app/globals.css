@@ -5668,3 +5668,54 @@ input[type="range"] {
     min-height: 0;
   }
 }
+
+/* Panels own their body gutter; inset content must not depend on its tag. */
+.panel {
+  --panel-gutter: 24px;
+  padding: var(--panel-gutter);
+  min-width: 0;
+}
+.panel > .panel-header {
+  margin: calc(-1 * var(--panel-gutter)) calc(-1 * var(--panel-gutter)) 20px;
+  padding: 20px var(--panel-gutter);
+}
+.panel
+  > :is(
+    .studio-form,
+    .workspace-section-body,
+    .tool-form,
+    .retention-settings
+  ) {
+  padding-inline: 0;
+}
+.panel > :is(.studio-tabs, .workspace-section-navigation, .agent-configure) {
+  margin-inline: calc(-1 * var(--panel-gutter));
+}
+.panel > .error-banner {
+  margin-inline: 0;
+}
+.panel > :is(p, ul, ol, details):last-child {
+  margin-bottom: 0;
+}
+.panel > :is(p, ul, ol, details):first-child {
+  margin-top: 0;
+}
+.workflow-picker {
+  gap: 12px;
+  margin-block: 16px;
+}
+.workflow-studio > div > .configure-group {
+  margin-block: 20px;
+}
+.workflow-studio > div > .configure-group > summary {
+  padding-block: 8px;
+}
+.workflow-stage-nav,
+.workflow-savebar {
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .panel {
+    --panel-gutter: 16px;
+  }
+}
