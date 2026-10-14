@@ -1,4 +1,5 @@
 "use client";
+import { WorkflowCanvasToolbar } from "./workflow-canvas-toolbar";
 import { workflowNodeTypes, type CanvasNode } from "./workflow-canvas-node";
 import { WorkflowCreateWizard } from "./workflow-create-wizard";
 
@@ -9,6 +10,7 @@ import {
   ReactFlow,
   Background,
   Controls,
+  Panel,
   MiniMap,
   applyNodeChanges,
   useNodesState,
@@ -190,6 +192,10 @@ export function WorkflowStudio({
       ),
     enabled: build,
   });
+  const [expanded, setExpanded] = useState(false),
+    [testOpen, setTestOpen] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const editor = useRef<HTMLDivElement>(null);
   const [wizard, setWizard] = useState(false);
   const [stage, setStage] = useState<"build" | "test" | "publish">("build");
   const [draft, setDraft] = useState<Draft | null>(null),
@@ -198,7 +204,6 @@ export function WorkflowStudio({
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false),
-    [kind, setKind] = useState<WorkflowNode["type"]>("agent"),
     [runInput, setRunInput] = useState(""),
     [versionId, setVersion] = useState(""),
     [selectedRun, setRun] = useState(""),
@@ -208,6 +213,7 @@ export function WorkflowStudio({
   const [undo, setUndo] = useState<WorkflowGraph[]>([]),
     [redo, setRedo] = useState<WorkflowGraph[]>([]);
   const clipboard = useRef<WorkflowNode[] | null>(null);
+  const skipFit = useRef(false);
   const canvas = useRef<ReactFlowInstance<CanvasNode, Edge> | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
   const [canvasNodes, setCanvasNodes, onCanvasNodesChange] =
@@ -240,6 +246,78 @@ export function WorkflowStudio({
         ? 1500
         : false,
   });
+  const activeRun =
+    starting ||
+    (!!selectedRun &&
+      (!run.data ||
+        ["queued", "running", "waiting"].includes(run.data.status)));
+  useEffect(() => {
+    if (!expanded) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    const scroll = { x: window.scrollX, y: window.scrollY };
+    document.body.style.overflow = "hidden";
+    const inert: HTMLElement[] = [];
+    let branch: HTMLElement | null = editor.current;
+    while (branch?.parentElement) {
+      for (const sibling of branch.parentElement.children) {
+        if (
+          sibling !== branch &&
+          sibling instanceof HTMLElement &&
+          !sibling.inert
+        ) {
+          sibling.inert = true;
+          inert.push(sibling);
+        }
+      }
+      branch = branch.parentElement;
+      if (branch === document.body) break;
+    }
+    editor.current
+      ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      ?.focus();
+    const keys = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setExpanded(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = [
+        ...(editor.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"], summary',
+        ) ?? []),
+      ].filter((el) => el.getClientRects().length);
+      const first = controls[0],
+        last = controls.at(-1);
+      if (!editor.current?.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first)?.focus();
+        return;
+      }
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    document.addEventListener("keydown", keys);
+    return () => {
+      document.removeEventListener("keydown", keys);
+      document.body.style.overflow = overflow;
+      for (const element of inert) element.inert = false;
+      editor.current
+        ?.querySelectorAll<HTMLDetailsElement>(".canvas-draft-settings[open]")
+        .forEach((details) => {
+          details.open = false;
+        });
+      previous?.focus({ preventScroll: true });
+      window.scrollTo(scroll.x, scroll.y);
+    };
+  }, [expanded]);
+  const canvasEditable =
+    build && stage === "build" && !selectedRun && !starting;
   const dirty = !!draft && JSON.stringify(draft) !== saved;
   useEffect(() => {
     if (!dirty) return;
@@ -254,17 +332,17 @@ export function WorkflowStudio({
   const validation = draft ? analyzeWorkflow(draft.graph).errors : [];
   const change = useCallback(
     (graph: WorkflowGraph, history = true) => {
-      if (!draft) return;
+      if (!draft || !canvasEditable) return;
       if (history) {
         setUndo((h) => [...h.slice(-39), draft.graph]);
         setRedo([]);
       }
       setDraft({ ...draft, graph });
     },
-    [draft],
+    [draft, canvasEditable],
   );
   function history(direction: "undo" | "redo") {
-    if (!draft) return;
+    if (!draft || !canvasEditable) return;
     const list = direction === "undo" ? undo : redo;
     if (!list.length) return;
     const graph = list.at(-1)!;
@@ -278,7 +356,11 @@ export function WorkflowStudio({
     setDraft({ ...draft, graph });
   }
   function duplicate() {
-    if (!draft || !clipboard.current) return;
+    if (!draft || !clipboard.current || !canvasEditable) return;
+    if (draft.graph.nodes.length + clipboard.current.length > 36) {
+      setError("Duplicating these nodes would exceed the 36-node limit.");
+      return;
+    }
     const copied = clipboard.current;
     const mapping = new Map(
       copied.map((n) => [n.id, "n_" + crypto.randomUUID().slice(0, 8)]),
@@ -322,6 +404,7 @@ export function WorkflowStudio({
       if (
         !build ||
         stage !== "build" ||
+        starting ||
         !!selectedRun ||
         !draft ||
         (e.target instanceof HTMLElement &&
@@ -354,10 +437,32 @@ export function WorkflowStudio({
     return () => window.removeEventListener("keydown", keys);
   });
   useEffect(() => {
+    if (skipFit.current) {
+      skipFit.current = false;
+      return;
+    }
+    if (stage === "publish" || wizard) return;
     requestAnimationFrame(() => {
-      void canvas.current?.fitView({ padding: 0.2, duration: 150 });
+      const width =
+        editor.current
+          ?.querySelector(".workflow-canvas")
+          ?.getBoundingClientRect().width ?? 0;
+      void canvas.current?.fitView({
+        padding:
+          testOpen && width > 700
+            ? { right: "400px", left: "24px", top: "110px", bottom: "24px" }
+            : 0.2,
+        duration: 0,
+      });
     });
-  }, [draft?.graph.nodes.length, draft?.id, selectedRun, stage, wizard]);
+  }, [
+    draft?.graph.nodes.length,
+    draft?.id,
+    selectedRun,
+    stage,
+    wizard,
+    expanded,
+  ]);
   async function action(task: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -470,7 +575,7 @@ export function WorkflowStudio({
     });
   }
   function updateNode(data: Partial<WorkflowNode["data"]>) {
-    if (!draft || !current) return;
+    if (!draft || !current || !canvasEditable) return;
     change({
       ...draft.graph,
       nodes: draft.graph.nodes.map((n) =>
@@ -478,8 +583,15 @@ export function WorkflowStudio({
       ),
     });
   }
-  function add() {
-    if (!draft) return;
+  function add(kind: WorkflowNode["type"]) {
+    if (!draft || !canvasEditable) return;
+    const count = ["parallel", "router", "condition"].includes(kind) ? 4 : 1;
+    if (draft.graph.nodes.length + count > 36) {
+      setError(
+        "A workflow supports up to 36 nodes. This addition would exceed the limit.",
+      );
+      return;
+    }
     const id = "n_" + crypto.randomUUID().slice(0, 8),
       anchor = current ?? draft.graph.nodes.find((n) => n.type === "input")!,
       out = draft.graph.edges.filter((e) => e.source === anchor.id);
@@ -656,19 +768,25 @@ export function WorkflowStudio({
       });
   }
   async function start() {
-    if (!draft?.id) return;
-    await action(async () => {
-      const result = await requestJson<{ id: string }>(
-        `/workflows/${draft.id}/runs`,
-        "POST",
-        {
-          input: runInput,
-          ...(versionId ? { versionId } : { revision: draft.revision }),
-        },
-      );
-      setRun(result.id);
-      setNotice("Workflow queued. The worker will checkpoint each step.");
-    });
+    if (!draft?.id || activeRun || busy) return;
+    setTestOpen(true);
+    setStarting(true);
+    try {
+      await action(async () => {
+        const result = await requestJson<{ id: string }>(
+          `/workflows/${draft.id}/runs`,
+          "POST",
+          {
+            input: runInput,
+            ...(versionId ? { versionId } : { revision: draft.revision }),
+          },
+        );
+        setRun(result.id);
+        setNotice("Workflow queued. The worker will checkpoint each step.");
+      });
+    } finally {
+      setStarting(false);
+    }
   }
   async function decide(decision: "approved" | "rejected") {
     await action(async () => {
@@ -690,7 +808,14 @@ export function WorkflowStudio({
   const displayGraph = run.data?.graph_snapshot ?? draft?.graph;
   const traceNodes = run.data?.nodes;
   useEffect(() => {
-    const statuses = new Map(traceNodes?.map((n) => [n.node_id, n.status]));
+    const statuses = new Map(
+      traceNodes?.map((n) => [
+        n.node_id,
+        n.status === "running" && run.data?.status !== "running"
+          ? (run.data?.status ?? n.status)
+          : n.status,
+      ]),
+    );
     setCanvasNodes((previous) => {
       const existing = new Map(previous.map((n) => [n.id, n]));
       return (displayGraph?.nodes ?? []).map((n) => ({
@@ -704,7 +829,7 @@ export function WorkflowStudio({
         data: { label: n.data.label, kind: n.type, status: statuses.get(n.id) },
       }));
     });
-  }, [displayGraph, traceNodes, selection, setCanvasNodes]);
+  }, [displayGraph, traceNodes, run.data?.status, selection, setCanvasNodes]);
   return (
     <section className="panel workflow-studio">
       <div className="panel-header">
@@ -816,7 +941,10 @@ export function WorkflowStudio({
                   type="button"
                   key={item}
                   aria-pressed={stage === item}
-                  onClick={() => setStage(item)}
+                  onClick={() => {
+                    setStage(item);
+                    if (item === "test") setTestOpen(true);
+                  }}
                 >
                   {item === "build"
                     ? "Build"
@@ -835,13 +963,19 @@ export function WorkflowStudio({
               <span>{dirty ? "Unsaved changes" : "Saved"}</span>
               {build && (
                 <Button
-                  disabled={busy || !draft.name.trim() || !dirty}
+                  disabled={busy || activeRun || !draft.name.trim() || !dirty}
                   onClick={save}
                 >
                   Save workflow
                 </Button>
               )}
-              <Button className="secondary" onClick={() => setStage("test")}>
+              <Button
+                className="secondary"
+                onClick={() => {
+                  setStage("test");
+                  setTestOpen(true);
+                }}
+              >
                 Test workflow
               </Button>
             </div>
@@ -922,165 +1056,81 @@ export function WorkflowStudio({
                   </Button>
                 </div>
               )}
-              <div className="workflow-toolbar">
-                <label>
-                  Node type
-                  <select
-                    aria-label="Node type"
-                    value={kind}
-                    onChange={(e) =>
-                      setKind(e.target.value as WorkflowNode["type"])
-                    }
-                  >
-                    {[
-                      { name: "AI and integrations", kinds: ["agent", "tool"] },
-                      {
-                        name: "Flow control",
-                        kinds: [
-                          "router",
-                          "condition",
-                          "parallel",
-                          "merge",
-                          "approval",
-                        ],
-                      },
-                      { name: "Input and output", kinds: ["input", "output"] },
-                    ].map((group) => (
-                      <optgroup key={group.name} label={group.name}>
-                        {workflowKinds
-                          .filter((k) => group.kinds.includes(k))
-                          .map((k) => (
-                            <option key={k} value={k}>
-                              {k}
-                            </option>
-                          ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </label>
-                {build && (
-                  <>
-                    <Button
-                      className="secondary"
-                      disabled={!!selectedRun || draft.graph.nodes.length >= 36}
-                      onClick={add}
-                    >
-                      Add node
-                    </Button>
-                    <Button
-                      className="secondary"
-                      disabled={!!selectedRun || !undo.length}
-                      onClick={() => history("undo")}
-                    >
-                      Undo
-                    </Button>
-                    <Button
-                      className="secondary"
-                      disabled={!!selectedRun || !redo.length}
-                      onClick={() => history("redo")}
-                    >
-                      Redo
-                    </Button>
-                    <Button
-                      className="secondary"
-                      disabled={!!selectedRun || !current}
-                      onClick={() => {
-                        clipboard.current = draft.graph.nodes.filter((n) =>
-                          selection.includes(n.id),
-                        );
-                        if (!clipboard.current.length && current)
-                          clipboard.current = [current];
-                        duplicate();
-                      }}
-                    >
-                      Duplicate node
-                    </Button>
-                    <Button
-                      className="secondary"
-                      disabled={!!selectedRun}
-                      onClick={() => change(layout(draft.graph))}
-                    >
-                      Auto layout
-                    </Button>
-                  </>
-                )}
-                {selectedRun && (
-                  <Button className="secondary" onClick={() => setRun("")}>
-                    Return to draft canvas
-                  </Button>
-                )}
-              </div>
-            </div>
-            <div hidden={stage !== "test"}>
-              {build && (
-                <form
-                  className="workflow-run-form"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void start();
-                  }}
-                >
-                  <h3>Execute workflow</h3>
-                  <label>
-                    Run version
-                    <select
-                      value={versionId}
-                      onChange={(e) => setVersion(e.target.value)}
-                    >
-                      <option value="">Saved draft</option>
-                      {versions.data?.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          Published v{v.version}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Workflow input
-                    <textarea
-                      required
-                      value={runInput}
-                      onChange={(e) => setRunInput(e.target.value)}
-                      maxLength={12000}
-                    />
-                  </label>
-                  <Button
-                    type="submit"
-                    disabled={
-                      busy ||
-                      !draft.id ||
-                      (!versionId && dirty) ||
-                      (!versionId && !!validation.length)
-                    }
-                  >
-                    Run workflow
-                  </Button>
-                </form>
-              )}
             </div>
             <div hidden={stage === "publish"}>
               <div
-                className={`workflow-editor ${stage === "test" ? "test-canvas" : ""}`}
+                ref={editor}
+                role={expanded ? "dialog" : undefined}
+                aria-modal={expanded || undefined}
+                aria-label={expanded ? "Expanded workflow canvas" : undefined}
+                className={`workflow-editor ${stage === "test" || testOpen ? "test-canvas" : ""} ${expanded ? "canvas-expanded" : ""}`}
               >
-                <div className="workflow-canvas" aria-label="Workflow canvas">
+                <div
+                  className="workflow-canvas"
+                  aria-label="Workflow canvas"
+                  onDragOver={(event) => {
+                    if (!canvasEditable) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "copy";
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    const kind = event.dataTransfer.getData(
+                      "application/x-agentconnex-node",
+                    );
+                    if (
+                      !draft ||
+                      !canvasEditable ||
+                      draft.graph.nodes.length >= 36 ||
+                      !workflowKinds.includes(kind as WorkflowNode["type"])
+                    )
+                      return;
+                    const position = canvas.current?.screenToFlowPosition({
+                      x: event.clientX,
+                      y: event.clientY,
+                    });
+                    if (!position) return;
+                    const id = "n_" + crypto.randomUUID().slice(0, 8);
+                    skipFit.current = true;
+                    change({
+                      ...draft.graph,
+                      nodes: [
+                        ...draft.graph.nodes,
+                        makeNode(
+                          id,
+                          kind as WorkflowNode["type"],
+                          position.x,
+                          position.y,
+                          kind === "agent" && agents.data?.[0]
+                            ? { agentVersionId: agents.data[0].id }
+                            : {},
+                        ),
+                      ],
+                    });
+                    setSelected(id);
+                  }}
+                >
                   <ReactFlow<CanvasNode, Edge>
                     nodes={canvasNodes}
                     edges={(displayGraph?.edges ?? []).map((e) => ({
                       ...e,
                       label: e.sourceHandle ?? undefined,
-                      animated: run.data?.status === "running",
+                      animated:
+                        (run.data?.status === "running" &&
+                          run.data.nodes.some(
+                            (trace) =>
+                              trace.status === "running" &&
+                              (trace.node_id === e.source ||
+                                trace.node_id === e.target),
+                          )) ??
+                        false,
                     }))}
                     nodeTypes={workflowNodeTypes}
                     onNodesChange={(changes) => {
                       onCanvasNodesChange(changes);
-                      if (build && stage === "build" && !selectedRun)
-                        nodeChanges(changes);
+                      if (canvasEditable) nodeChanges(changes);
                     }}
-                    onEdgesChange={
-                      build && stage === "build" && !selectedRun
-                        ? edgeChanges
-                        : undefined
-                    }
+                    onEdgesChange={canvasEditable ? edgeChanges : undefined}
                     onConnect={connections}
                     onInit={(instance) => {
                       canvas.current = instance;
@@ -1101,15 +1151,11 @@ export function WorkflowStudio({
                         JSON.stringify(data?.toolArguments ?? {}, null, 2),
                       );
                     }}
-                    nodesDraggable={build && stage === "build" && !selectedRun}
-                    nodesConnectable={
-                      build && stage === "build" && !selectedRun
-                    }
+                    nodesDraggable={canvasEditable}
+                    nodesConnectable={canvasEditable}
                     edgesReconnectable={false}
                     deleteKeyCode={
-                      build && stage === "build" && !selectedRun
-                        ? ["Backspace", "Delete"]
-                        : null
+                      canvasEditable ? ["Backspace", "Delete"] : null
                     }
                     fitView
                     snapToGrid
@@ -1118,18 +1164,428 @@ export function WorkflowStudio({
                     minZoom={0.15}
                     maxZoom={2}
                   >
+                    <Panel position="top-left" className="canvas-controls">
+                      {build && (
+                        <WorkflowCanvasToolbar
+                          disabled={!canvasEditable}
+                          canAdd={draft.graph.nodes.length < 36}
+                          onAdd={add}
+                          undo={() => history("undo")}
+                          redo={() => history("redo")}
+                          duplicate={() => {
+                            clipboard.current = draft.graph.nodes.filter((n) =>
+                              selection.includes(n.id),
+                            );
+                            if (!clipboard.current.length && current)
+                              clipboard.current = [current];
+                            duplicate();
+                          }}
+                          layout={() => change(layout(draft.graph))}
+                          canUndo={!!undo.length}
+                          canRedo={!!redo.length}
+                          canDuplicate={!!current}
+                        />
+                      )}
+
+                      <div className="canvas-top-actions nodrag nopan">
+                        <span
+                          className="canvas-save-status"
+                          role="status"
+                          aria-label="Draft save status"
+                        >
+                          {dirty ? "Unsaved changes" : "Saved"}
+                        </span>
+                        {build && (
+                          <>
+                            <details className="canvas-draft-settings">
+                              <summary>Workflow details</summary>
+                              <fieldset disabled={!canvasEditable}>
+                                <label>
+                                  Draft name
+                                  <input
+                                    aria-label="Draft name"
+                                    value={draft.name}
+                                    maxLength={100}
+                                    onChange={(event) =>
+                                      setDraft({
+                                        ...draft,
+                                        name: event.target.value,
+                                      })
+                                    }
+                                  />
+                                </label>
+                                <label>
+                                  Description
+                                  <textarea
+                                    aria-label="Draft description"
+                                    value={draft.description}
+                                    maxLength={2000}
+                                    rows={2}
+                                    onChange={(event) =>
+                                      setDraft({
+                                        ...draft,
+                                        description: event.target.value,
+                                      })
+                                    }
+                                  />
+                                </label>
+                              </fieldset>
+                            </details>
+                            <Button
+                              className="secondary"
+                              disabled={
+                                busy ||
+                                activeRun ||
+                                !dirty ||
+                                !draft.name.trim()
+                              }
+                              onClick={save}
+                            >
+                              Save draft
+                            </Button>
+                          </>
+                        )}
+                        <Button
+                          className="secondary"
+                          onClick={() => setTestOpen(!testOpen)}
+                        >
+                          Test Workflow
+                        </Button>
+                        <Button
+                          className="secondary"
+                          onClick={() => setExpanded(!expanded)}
+                        >
+                          {expanded ? "Exit expanded view" : "Expand canvas"}
+                        </Button>
+                        {selectedRun && (
+                          <Button
+                            className="secondary"
+                            disabled={activeRun || busy}
+                            onClick={() => {
+                              setRun("");
+                              setStage("build");
+                            }}
+                          >
+                            Return to draft canvas
+                          </Button>
+                        )}
+                      </div>
+                    </Panel>
+                    {activeRun && (
+                      <Panel position="bottom-center">
+                        <span className="canvas-run-lock" role="status">
+                          Canvas locked ·{" "}
+                          {starting
+                            ? "Starting run"
+                            : (run.data?.status ?? "Loading run")}
+                        </span>
+                      </Panel>
+                    )}
+                    {testOpen && (
+                      <Panel
+                        position="bottom-right"
+                        className="canvas-test-panel nodrag nopan"
+                        role="region"
+                        aria-label="Workflow test panel"
+                      >
+                        <div className="canvas-test-heading">
+                          <strong>Workflow testing</strong>
+                          <Button
+                            className="secondary"
+                            onClick={() => setTestOpen(false)}
+                          >
+                            Close test panel
+                          </Button>
+                        </div>
+                        {error && (
+                          <p role="alert" className="error">
+                            {error}
+                          </p>
+                        )}
+                        {dirty && !versionId && (
+                          <p>Save your draft before testing.</p>
+                        )}
+                        {build && (
+                          <form
+                            className="workflow-run-form"
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              void start();
+                            }}
+                          >
+                            <h3>Test workflow</h3>
+                            <label>
+                              Run version
+                              <select
+                                disabled={activeRun}
+                                value={versionId}
+                                onChange={(e) => setVersion(e.target.value)}
+                              >
+                                <option value="">Saved draft</option>
+                                {versions.data?.map((v) => (
+                                  <option key={v.id} value={v.id}>
+                                    Published v{v.version}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Workflow input
+                              <textarea
+                                required
+                                value={runInput}
+                                onChange={(e) => setRunInput(e.target.value)}
+                                maxLength={12000}
+                              />
+                            </label>
+                            <Button
+                              type="submit"
+                              disabled={
+                                busy ||
+                                activeRun ||
+                                !draft.id ||
+                                (!versionId && dirty) ||
+                                (!versionId && !!validation.length)
+                              }
+                            >
+                              Run workflow
+                            </Button>
+                          </form>
+                        )}
+
+                        <div className="workflow-run-list">
+                          {runs.data?.map((r) => (
+                            <Button
+                              key={r.id}
+                              className="secondary"
+                              disabled={activeRun && r.id !== selectedRun}
+                              onClick={() => setRun(r.id)}
+                            >
+                              Run {r.id.slice(0, 8)} · {r.status}
+                            </Button>
+                          ))}
+                        </div>
+                        {run.error && (
+                          <div>
+                            <p className="error">{run.error.message}</p>
+                            <Button
+                              className="secondary"
+                              onClick={() => void run.refetch()}
+                            >
+                              Retry run status
+                            </Button>
+                          </div>
+                        )}
+                        {run.data && (
+                          <section
+                            className="workflow-inspector"
+                            aria-label="Workflow run inspector"
+                          >
+                            <h3>
+                              Run inspector ·{" "}
+                              <span data-testid="workflow-run-status">
+                                {run.data.status}
+                              </span>
+                            </h3>
+                            {run.data.error_code && (
+                              <p className="error">{run.data.error_code}</p>
+                            )}
+                            {build &&
+                              ["queued", "running", "waiting"].includes(
+                                run.data.status,
+                              ) && (
+                                <Button
+                                  className="danger"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    action(async () => {
+                                      await requestJson(
+                                        `/workflow-runs/${selectedRun}/cancel`,
+                                        "POST",
+                                      );
+                                    })
+                                  }
+                                >
+                                  Cancel workflow run
+                                </Button>
+                              )}
+                            {run.data.approvals
+                              .filter(
+                                (a) =>
+                                  a.decision === "pending" &&
+                                  run.data!.status === "waiting",
+                              )
+                              .map((a) => (
+                                <div className="workflow-approval" key={a.id}>
+                                  <h4>Human review</h4>
+                                  <p>{a.prompt}</p>
+                                  <pre>{json(a.input)}</pre>
+                                  {approve ? (
+                                    <>
+                                      <label>
+                                        Approval comment
+                                        <textarea
+                                          value={comment}
+                                          onChange={(e) =>
+                                            setComment(e.target.value)
+                                          }
+                                          maxLength={2000}
+                                        />
+                                      </label>
+                                      <label>
+                                        Edited input (optional JSON)
+                                        <textarea
+                                          value={edited}
+                                          onChange={(e) =>
+                                            setEdited(e.target.value)
+                                          }
+                                          placeholder={'"Reviewed text"'}
+                                          maxLength={16000}
+                                        />
+                                      </label>
+                                      <Button
+                                        disabled={busy}
+                                        onClick={() => decide("approved")}
+                                      >
+                                        Approve and resume
+                                      </Button>
+                                      <Button
+                                        className="danger"
+                                        disabled={busy}
+                                        onClick={() => decide("rejected")}
+                                      >
+                                        Reject run
+                                      </Button>
+                                    </>
+                                  ) : (
+                                    <p>
+                                      An administrator or operator must approve
+                                      this checkpoint.
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                            {run.data.status === "completed" && (
+                              <div className="workflow-final-output">
+                                <WorkflowResult
+                                  output={run.data.output}
+                                  title={
+                                    run.data.graph_snapshot.nodes.find(
+                                      (n) => n.type === "output",
+                                    )?.data.resultTitle || "Final output"
+                                  }
+                                  summary={
+                                    run.data.graph_snapshot.nodes.find(
+                                      (n) => n.type === "output",
+                                    )?.data.resultSummary
+                                  }
+                                  format={
+                                    run.data.graph_snapshot.nodes.find(
+                                      (n) => n.type === "output",
+                                    )?.data.resultFormat
+                                  }
+                                />
+                              </div>
+                            )}
+                            <details>
+                              <summary>Execution details</summary>{" "}
+                              <div className="workflow-node-traces">
+                                {run.data.graph_snapshot.nodes.map((n) => {
+                                  const trace = run.data!.nodes.find(
+                                    (t) => t.node_id === n.id,
+                                  );
+                                  return (
+                                    <details key={n.id}>
+                                      <summary>
+                                        {n.data.label} ·{" "}
+                                        {trace?.status ?? "Not executed"}
+                                        {trace?.duration_ms != null
+                                          ? ` · ${trace.duration_ms} ms`
+                                          : ""}
+                                      </summary>
+                                      {trace?.error_code && (
+                                        <p className="error">
+                                          {trace.error_code}
+                                        </p>
+                                      )}
+                                      {trace && (
+                                        <>
+                                          <small>
+                                            {n.type === "agent"
+                                              ? `Reported tokens: ${trace.input_tokens ?? "unavailable"} input / ${trace.output_tokens ?? "unavailable"} output`
+                                              : n.type}
+                                          </small>
+                                          {!!trace.attempts && (
+                                            <p>
+                                              {trace.attempts} attempt(s)
+                                              {trace.retry_at
+                                                ? " · Waiting to retry"
+                                                : ""}
+                                              . Token usage below covers
+                                              successful completion;
+                                              failed-attempt usage may be
+                                              unavailable.
+                                            </p>
+                                          )}
+                                          {!!trace.retry_history?.length && (
+                                            <ul>
+                                              {trace.retry_history.map(
+                                                (a, i) => (
+                                                  <li key={i}>
+                                                    Attempt {a.attempt}:{" "}
+                                                    {a.code} · {a.durationMs} ms
+                                                    ·{" "}
+                                                    {a.willRetry
+                                                      ? "Retry scheduled"
+                                                      : "Stopped"}
+                                                  </li>
+                                                ),
+                                              )}
+                                            </ul>
+                                          )}
+                                          <h4>Input</h4>
+                                          <pre>{json(trace.input)}</pre>
+                                          <h4>Output</h4>
+                                          <pre>{json(trace.output)}</pre>
+                                          <Citations
+                                            sources={trace.citations ?? []}
+                                          />
+                                        </>
+                                      )}
+                                    </details>
+                                  );
+                                })}
+                              </div>
+                              <ToolTraces traces={run.data.tools} />
+                            </details>
+                          </section>
+                        )}
+                      </Panel>
+                    )}
+                    {error && expanded && !testOpen && (
+                      <Panel
+                        position="bottom-center"
+                        className="canvas-error-panel"
+                      >
+                        <p role="alert">{error}</p>
+                        <Button
+                          className="secondary"
+                          onClick={() => setError("")}
+                        >
+                          Dismiss error
+                        </Button>
+                      </Panel>
+                    )}
                     <Background />
-                    <MiniMap pannable zoomable />
+                    {!testOpen && <MiniMap pannable zoomable />}
                     <Controls />
                   </ReactFlow>
                 </div>
                 <aside
                   className="workflow-properties"
-                  hidden={stage !== "build"}
+                  hidden={stage !== "build" || testOpen}
                 >
-                  <fieldset
-                    disabled={!build || stage !== "build" || !!selectedRun}
-                  >
+                  <fieldset disabled={!canvasEditable}>
                     {current && !selectedRun ? (
                       <>
                         <h3>{current.type} configuration</h3>
@@ -1499,186 +1955,6 @@ export function WorkflowStudio({
                     </div>
                   ))}
                 </details>
-              )}
-            </div>
-            <div hidden={stage !== "test"}>
-              <div className="workflow-run-list">
-                {runs.data?.map((r) => (
-                  <Button
-                    key={r.id}
-                    className="secondary"
-                    onClick={() => setRun(r.id)}
-                  >
-                    Run {r.id.slice(0, 8)} · {r.status}
-                  </Button>
-                ))}
-              </div>
-              {run.error && <p className="error">{run.error.message}</p>}
-              {run.data && (
-                <section
-                  className="workflow-inspector"
-                  aria-label="Workflow run inspector"
-                >
-                  <h3>
-                    Run inspector ·{" "}
-                    <span data-testid="workflow-run-status">
-                      {run.data.status}
-                    </span>
-                  </h3>
-                  {run.data.error_code && (
-                    <p className="error">{run.data.error_code}</p>
-                  )}
-                  {build &&
-                    ["queued", "running", "waiting"].includes(
-                      run.data.status,
-                    ) && (
-                      <Button
-                        className="danger"
-                        disabled={busy}
-                        onClick={() =>
-                          action(async () => {
-                            await requestJson(
-                              `/workflow-runs/${selectedRun}/cancel`,
-                              "POST",
-                            );
-                          })
-                        }
-                      >
-                        Cancel workflow run
-                      </Button>
-                    )}
-                  {run.data.approvals
-                    .filter(
-                      (a) =>
-                        a.decision === "pending" &&
-                        run.data!.status === "waiting",
-                    )
-                    .map((a) => (
-                      <div className="workflow-approval" key={a.id}>
-                        <h4>Human review</h4>
-                        <p>{a.prompt}</p>
-                        <pre>{json(a.input)}</pre>
-                        {approve ? (
-                          <>
-                            <label>
-                              Approval comment
-                              <textarea
-                                value={comment}
-                                onChange={(e) => setComment(e.target.value)}
-                                maxLength={2000}
-                              />
-                            </label>
-                            <label>
-                              Edited input (optional JSON)
-                              <textarea
-                                value={edited}
-                                onChange={(e) => setEdited(e.target.value)}
-                                placeholder={'"Reviewed text"'}
-                                maxLength={16000}
-                              />
-                            </label>
-                            <Button
-                              disabled={busy}
-                              onClick={() => decide("approved")}
-                            >
-                              Approve and resume
-                            </Button>
-                            <Button
-                              className="danger"
-                              disabled={busy}
-                              onClick={() => decide("rejected")}
-                            >
-                              Reject run
-                            </Button>
-                          </>
-                        ) : (
-                          <p>
-                            An administrator or operator must approve this
-                            checkpoint.
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  <div className="workflow-node-traces">
-                    {run.data.graph_snapshot.nodes.map((n) => {
-                      const trace = run.data!.nodes.find(
-                        (t) => t.node_id === n.id,
-                      );
-                      return (
-                        <details key={n.id}>
-                          <summary>
-                            {n.data.label} · {trace?.status ?? "Not executed"}
-                            {trace?.duration_ms != null
-                              ? ` · ${trace.duration_ms} ms`
-                              : ""}
-                          </summary>
-                          {trace?.error_code && (
-                            <p className="error">{trace.error_code}</p>
-                          )}
-                          {trace && (
-                            <>
-                              <small>
-                                {n.type === "agent"
-                                  ? `Reported tokens: ${trace.input_tokens ?? "unavailable"} input / ${trace.output_tokens ?? "unavailable"} output`
-                                  : n.type}
-                              </small>
-                              {!!trace.attempts && (
-                                <p>
-                                  {trace.attempts} attempt(s)
-                                  {trace.retry_at ? " · Waiting to retry" : ""}.
-                                  Token usage below covers successful
-                                  completion; failed-attempt usage may be
-                                  unavailable.
-                                </p>
-                              )}
-                              {!!trace.retry_history?.length && (
-                                <ul>
-                                  {trace.retry_history.map((a, i) => (
-                                    <li key={i}>
-                                      Attempt {a.attempt}: {a.code} ·{" "}
-                                      {a.durationMs} ms ·{" "}
-                                      {a.willRetry
-                                        ? "Retry scheduled"
-                                        : "Stopped"}
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                              <h4>Input</h4>
-                              <pre>{json(trace.input)}</pre>
-                              <h4>Output</h4>
-                              <pre>{json(trace.output)}</pre>
-                              <Citations sources={trace.citations ?? []} />
-                            </>
-                          )}
-                        </details>
-                      );
-                    })}
-                  </div>
-                  <ToolTraces traces={run.data.tools} />
-                  {run.data.status === "completed" && (
-                    <div className="workflow-final-output">
-                      <WorkflowResult
-                        output={run.data.output}
-                        title={
-                          run.data.graph_snapshot.nodes.find(
-                            (n) => n.type === "output",
-                          )?.data.resultTitle || "Final output"
-                        }
-                        summary={
-                          run.data.graph_snapshot.nodes.find(
-                            (n) => n.type === "output",
-                          )?.data.resultSummary
-                        }
-                        format={
-                          run.data.graph_snapshot.nodes.find(
-                            (n) => n.type === "output",
-                          )?.data.resultFormat
-                        }
-                      />
-                    </div>
-                  )}
-                </section>
               )}
             </div>
           </>

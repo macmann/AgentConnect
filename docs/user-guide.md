@@ -150,7 +150,7 @@ Use the channel-specific credentials and webhook setup in [customer engagement](
 ## Build a workflow
 
 1. Open **Workflows** → **Create workflow**. Follow **Purpose → Setup → Review** to choose a starter and published agents, preview the graph and create a saved draft. Choose **Open canvas directly** to skip guided setup.
-2. Use **Build**, **Test** and **Publish** to focus on one activity. Changes stay in the draft when switching activities; Test keeps the canvas read-only. Save from the sticky action bar. Advanced instructions/mappings are collapsed and help icons reveal detailed explanations.
+2. Use **Build**, **Test** and **Publish** to focus on one activity. Changes stay in the draft when switching activities; Test keeps the canvas read-only. Save from the sticky action bar or **Save draft** inside the canvas. Use **＋ Add nodes** to select or drag node types, **Expand canvas** for a larger workspace, and **Test Workflow** for inline input/output. Running workflows lock editing and highlight active steps; return to the draft after completion to edit again. Advanced instructions/mappings are collapsed and help icons reveal detailed explanations.
 3. Select real published agent versions for agent nodes.
 4. Configure mappings between inputs and outputs.
 5. Add condition/router paths, supported parallel/merge paths, approved read-only tools or human approval as needed.

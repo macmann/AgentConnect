@@ -15,7 +15,7 @@ export type CanvasNode = Node<
   { label: string; kind: string; status?: string },
   "workflow"
 >;
-function CanvasItem({ data, selected }: NodeProps<CanvasNode>) {
+function CanvasItem({ data, selected, isConnectable }: NodeProps<CanvasNode>) {
   const icons: Record<string, typeof Bot> = {
     input: LogIn,
     output: LogOut,
@@ -33,18 +33,27 @@ function CanvasItem({ data, selected }: NodeProps<CanvasNode>) {
       className={`workflow-node kind-${data.kind} ${selected ? "selected" : ""} status-${data.status ?? "idle"}`}
     >
       {data.kind !== "input" && (
-        <Handle type="target" position={Position.Left} />
+        <Handle
+          isConnectable={isConnectable}
+          type="target"
+          position={Position.Left}
+        />
       )}
       <Icon className="workflow-node-icon" size={18} aria-hidden="true" />
       <small>{data.kind}</small>
       <strong>{data.label}</strong>
       {data.status && <span>{data.status}</span>}
       {!["output", "router", "condition"].includes(data.kind) && (
-        <Handle type="source" position={Position.Right} />
+        <Handle
+          isConnectable={isConnectable}
+          type="source"
+          position={Position.Right}
+        />
       )}
       {["router", "condition"].includes(data.kind) && (
         <>
           <Handle
+            isConnectable={isConnectable}
             id="true"
             type="source"
             position={Position.Right}
@@ -52,6 +61,7 @@ function CanvasItem({ data, selected }: NodeProps<CanvasNode>) {
           />
           <span className="branch-label branch-true">true</span>
           <Handle
+            isConnectable={isConnectable}
             id="false"
             type="source"
             position={Position.Right}
