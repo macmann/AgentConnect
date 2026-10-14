@@ -195,6 +195,7 @@ export function WorkflowStudio({
   const [expanded, setExpanded] = useState(false),
     [testOpen, setTestOpen] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [testAttempted, setTestAttempted] = useState(false);
   const editor = useRef<HTMLDivElement>(null);
   const [wizard, setWizard] = useState(false);
   const [stage, setStage] = useState<"build" | "test" | "publish">("build");
@@ -767,9 +768,35 @@ export function WorkflowStudio({
         })),
       });
   }
+  const testBlockers = draft
+    ? [
+        ...(!draft.id ? ["Save your workflow before testing."] : []),
+        ...(!versionId && dirty
+          ? ["Save your draft changes before testing."]
+          : []),
+        ...(!versionId ? validation : []),
+        ...(!runInput.trim() ? ["Enter workflow input before testing."] : []),
+      ]
+    : ["Create or select a workflow before testing."];
+  useEffect(() => {
+    const element = editor.current;
+    const controls = element?.querySelector(".canvas-controls");
+    if (!element || !controls) return;
+    const update = () =>
+      element.style.setProperty(
+        "--canvas-toolbar-height",
+        `${controls.getBoundingClientRect().height + 24}px`,
+      );
+    const observer = new ResizeObserver(update);
+    observer.observe(controls);
+    update();
+    return () => observer.disconnect();
+  }, [draft?.id, wizard, stage, expanded]);
   async function start() {
-    if (!draft?.id || activeRun || busy) return;
+    if (activeRun || busy) return;
     setTestOpen(true);
+    setTestAttempted(true);
+    if (!draft?.id || testBlockers.length) return;
     setStarting(true);
     try {
       await action(async () => {
@@ -1305,9 +1332,48 @@ export function WorkflowStudio({
                         {dirty && !versionId && (
                           <p>Save your draft before testing.</p>
                         )}
+                        {testAttempted && !!testBlockers.length && (
+                          <div className="workflow-test-blockers" role="alert">
+                            <strong>Unable to test workflow</strong>
+                            <ul>
+                              {testBlockers.map((message) => {
+                                const matches = draft.graph.nodes.filter(
+                                  (node) =>
+                                    message.startsWith(node.data.label + ":"),
+                                );
+                                return (
+                                  <li key={message}>
+                                    {matches.length === 1 ? (
+                                      <button
+                                        type="button"
+                                        className="text-button"
+                                        onClick={() => {
+                                          setStage("build");
+                                          setTestOpen(false);
+                                          setSelected(matches[0]!.id);
+                                          setSelection([matches[0]!.id]);
+                                          canvas.current?.fitView({
+                                            nodes: [{ id: matches[0]!.id }],
+                                            duration: 250,
+                                            maxZoom: 1,
+                                          });
+                                        }}
+                                      >
+                                        {message}
+                                      </button>
+                                    ) : (
+                                      message
+                                    )}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        )}
                         {build && (
                           <form
                             className="workflow-run-form"
+                            noValidate
                             onSubmit={(e) => {
                               e.preventDefault();
                               void start();
@@ -1338,16 +1404,7 @@ export function WorkflowStudio({
                                 maxLength={12000}
                               />
                             </label>
-                            <Button
-                              type="submit"
-                              disabled={
-                                busy ||
-                                activeRun ||
-                                !draft.id ||
-                                (!versionId && dirty) ||
-                                (!versionId && !!validation.length)
-                              }
-                            >
+                            <Button type="submit" disabled={busy || activeRun}>
                               Run workflow
                             </Button>
                           </form>
