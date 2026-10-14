@@ -52,6 +52,49 @@ const provider = createServer(async (req, res) => {
     );
     return;
   }
+  if (
+    req.url === "/v1/chat/completions" &&
+    Array.isArray(input.messages.at(-1)?.content)
+  ) {
+    const image = input.messages
+      .at(-1)
+      .content.find((part) => part.type === "image_url");
+    if (!image?.image_url.url.startsWith("data:image/png;base64,")) {
+      res.writeHead(400).end();
+      return;
+    }
+    const text = JSON.stringify({
+      language: "Burmese, Thai, English",
+      warnings: ["Verify uncertain cells"],
+      blocks: [
+        {
+          kind: "text",
+          heading: "Financial statement",
+          text: "မြန်မာ รายงาน",
+          rows: [],
+          headerRows: 0,
+        },
+        {
+          kind: "table",
+          heading: "Amounts in MMK",
+          text: "",
+          rows: [
+            ["Period", "2026", "2025"],
+            ["Revenue", "1,250.00", "(900.00)"],
+          ],
+          headerRows: 1,
+        },
+      ],
+    });
+    res.writeHead(200, { "content-type": "text/event-stream" }).end(
+      "data: " +
+        JSON.stringify({
+          choices: [{ delta: { content: text }, finish_reason: "stop" }],
+        }) +
+        "\n\ndata: [DONE]\n\n",
+    );
+    return;
+  }
   if (req.url === "/v1/chat/completions") {
     generated++;
     grounded =
@@ -594,4 +637,166 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
     await sql`SELECT citations FROM messages WHERE workspace_id=${workspace} AND role='assistant' LIMIT 1`;
   expect(message.citations).toHaveLength(1);
   expect(message.citations[0].title).toBe("refund-policy.md");
+});
+
+test("AI extraction settings ingest multilingual images and rendered PDF pages with complete table previews", async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(120000);
+  const budget = await fetch("http://localhost:4000/auth/me");
+  if (Number(budget.headers.get("x-ratelimit-remaining") ?? 300) < 150) {
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.min(
+          59000,
+          Number(
+            budget.headers.get("retry-after") ??
+              budget.headers.get("x-ratelimit-reset") ??
+              60,
+          ) *
+            1000 +
+            500,
+        ),
+      ),
+    );
+  }
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  const response = await page.request.post(
+    `http://localhost:4000/workspaces/${workspace}/models`,
+    {
+      headers: { origin: "http://localhost:3000" },
+      data: {
+        name: "Vision fixture",
+        provider: "openai-compatible",
+        modelId: "vision-fixture",
+        baseUrl: "http://127.0.0.1:4546/v1",
+        contextWindow: 32768,
+        maxOutputTokens: 8192,
+      },
+    },
+  );
+  expect(response.ok(), await response.text()).toBe(true);
+  const model = await response.json();
+  const embeddingResponse = await page.request.post(
+    `http://localhost:4000/workspaces/${workspace}/embedding-models`,
+    {
+      headers: { origin: "http://localhost:3000" },
+      data: {
+        name: "Multilingual embedding fixture",
+        provider: "openai-compatible",
+        modelId: "fixture-embeddings",
+        baseUrl: "http://127.0.0.1:4546/v1",
+        dimensions: 3,
+      },
+    },
+  );
+  expect(embeddingResponse.ok(), await embeddingResponse.text()).toBe(true);
+  const embeddingModel = await embeddingResponse.json();
+
+  await page.goto(
+    `/#view=Knowledge&organization=${org}&workspace=${workspace}`,
+  );
+  await page
+    .getByRole("button", { name: "Create knowledge base", exact: true })
+    .click();
+  await page.getByLabel("Knowledge base name").fill("Multilingual scans");
+  await page
+    .getByLabel("Embedding model", { exact: true })
+    .selectOption(embeddingModel.id);
+  await page
+    .getByRole("checkbox", {
+      name: "Enable advanced document processing",
+      exact: true,
+    })
+    .check();
+  await expect(
+    page.getByRole("checkbox", {
+      name: "Enable advanced document processing",
+      exact: true,
+    }),
+  ).toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: "AI document extraction", exact: true }),
+  ).toBeVisible({ timeout: 5000 });
+  await page
+    .getByRole("checkbox", { name: "AI document extraction", exact: true })
+    .check();
+  await page
+    .getByLabel("Vision extraction model", { exact: true })
+    .selectOption(model.id);
+  await page.getByLabel("Pages to extract").selectOption("all");
+  await page.getByLabel("Document languages").fill("Burmese, Thai, English");
+  await page.getByLabel("Maximum AI pages per document").fill("5");
+  await page
+    .getByRole("button", { name: "Save knowledge base", exact: true })
+    .click();
+  await expect(
+    page.getByText("Knowledge base created", { exact: true }),
+  ).toBeVisible();
+  for (const file of [
+    {
+      name: "multilingual.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nAAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    },
+    {
+      name: "multilingual.pdf",
+      mimeType: "application/pdf",
+      buffer: pdfFixture(
+        "Financial statement native text; all-page extraction requested.",
+      ),
+    },
+  ]) {
+    await page
+      .getByRole("button", { name: "Upload document", exact: true })
+      .click();
+    await page.getByLabel("Document file").setInputFiles(file);
+    await page
+      .getByRole("button", { name: "Upload and ingest", exact: true })
+      .click();
+    const row = page.getByRole("row").filter({ hasText: file.name });
+    await expect(row.getByText("ready", { exact: true })).toBeVisible({
+      timeout: 20000,
+    });
+    await row
+      .getByRole("button", { name: "Extraction preview", exact: true })
+      .click();
+    const preview = page.getByRole("region", { name: "Extraction preview" });
+    await preview.getByText("AI extraction · 1 pages", { exact: true }).click();
+    await expect(
+      preview.getByText("မြန်မာ รายงาน", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      preview.getByRole("cell", { name: "(900.00)", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Close extraction preview", exact: true })
+      .click();
+  }
+  await page.getByRole("button", { name: "settings", exact: true }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "AI document extraction", exact: true }),
+  ).toBeChecked();
+  await expect(page.getByLabel("Document languages")).toHaveValue(
+    "Burmese, Thai, English",
+  );
+  await page.setViewportSize({ width: 390, height: 900 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
 });

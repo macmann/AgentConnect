@@ -30,6 +30,16 @@ export type DocumentParser = (
 ) => Promise<ParsedDocument>;
 export interface ParseOptions {
   advanced?: boolean;
+  extractPage?: (
+    data: Uint8Array,
+    page: number,
+    signal: AbortSignal,
+    native: {
+      text: string;
+      rawRows?: string[][];
+      mimeType?: "image/png" | "image/jpeg" | "image/webp";
+    },
+  ) => Promise<Section[] | null>;
   ocr?: (
     data: Uint8Array,
     page: number,
@@ -66,6 +76,10 @@ export function tableSection(
   );
 }
 export const supportedExtensions = [
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
   "pdf",
   "docx",
   "pptx",
@@ -562,6 +576,37 @@ registerParser("xlsx", async (data, name, _signal, options) => {
     links: [],
   };
 });
+for (const [ext, mimeType] of [
+  ["png", "image/png"],
+  ["jpg", "image/jpeg"],
+  ["jpeg", "image/jpeg"],
+  ["webp", "image/webp"],
+] as const) {
+  registerParser(ext, async (data, name, signal, options) => {
+    if (!options?.extractPage)
+      throw new KnowledgeError("AI_EXTRACTION_REQUIRED");
+    const valid =
+      mimeType === "image/png"
+        ? Buffer.from(data.slice(0, 8)).equals(
+            Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+          )
+        : mimeType === "image/jpeg"
+          ? data[0] === 255 && data[1] === 216
+          : Buffer.from(data.slice(0, 4)).toString() === "RIFF" &&
+            Buffer.from(data.slice(8, 12)).toString() === "WEBP";
+    if (!valid) throw new KnowledgeError("INVALID_DOCUMENT");
+    const sections = await options.extractPage(data, 1, signal, {
+      text: "",
+      mimeType,
+    });
+    return {
+      title: name,
+      sections: sections ?? [],
+      metadata: { format: ext, pages: 1 },
+      links: [],
+    };
+  });
+}
 registerParser("pdf", async (data, name, signal, options) => {
   const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const task = getDocument({
@@ -630,6 +675,17 @@ registerParser("pdf", async (data, name, signal, options) => {
           return cells;
         });
         text = rawRows.map((row) => row.join(" | ")).join("\n");
+      }
+      if (options?.extractPage) {
+        const extracted = await options.extractPage(data, page, signal, {
+          text,
+          rawRows,
+        });
+        if (extracted) {
+          sections.push(...extracted);
+          p.cleanup();
+          continue;
+        }
       }
       let ocr = false;
       if (text.replace(/\s/g, "").length < 20 && options?.ocr) {

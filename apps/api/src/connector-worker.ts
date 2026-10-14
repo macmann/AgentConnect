@@ -74,6 +74,11 @@ export async function processConnectorSync(
   try {
     await authorize();
     const connector = await sql.begin((tx) => current(tx));
+    const [base] =
+      await sql`SELECT advanced_processing FROM knowledge_bases WHERE id=${connector.knowledge_base_id} AND workspace_id=${connector.workspace_id} AND organization_id=${connector.organization_id}`;
+    const imagesEnabled =
+      base?.advanced_processing?.enabled &&
+      base?.advanced_processing?.vision?.enabled;
     adapter = await factory(connector);
     const documents = await adapter.list(signal);
     counts.listed = documents.length;
@@ -87,7 +92,10 @@ export async function processConnectorSync(
     for (const document of documents) {
       signal.throwIfAborted();
       await authorize();
+      const extension = document.filename.split(".").pop()?.toLowerCase() ?? "";
       if (
+        (["png", "jpg", "jpeg", "webp"].includes(extension) &&
+          !imagesEnabled) ||
         !supportedExtensions.includes(
           document.filename.split(".").pop()?.toLowerCase() ?? "",
         ) ||

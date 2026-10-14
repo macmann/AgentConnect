@@ -1268,3 +1268,234 @@ test("Invalid LLM boundaries fall back with a visible warning without losing fin
   );
   await call("DELETE", `/knowledge-bases/${baseId}`);
 });
+
+test("Multilingual image extraction is scoped, cached, structured and available in extraction preview", async () => {
+  const { createVisionExtractor, validateExtraction } =
+    await import("../src/vision-extraction.js");
+  const { advancedProcessing } =
+    await import("@agentconnect/schemas/knowledge");
+  const { parseDocument } = await import("@agentconnect/rag/parsers");
+  const settings = advancedProcessing.parse({
+    enabled: true,
+    vision: {
+      enabled: true,
+      modelId: chatModel,
+      languages: "Burmese, Thai, English",
+      maxPages: 2,
+    },
+  });
+  const created = await call(
+    "POST",
+    `/workspaces/${workspace}/knowledge-bases`,
+    {
+      name: "Multilingual scanned statements",
+      embeddingModelId: modelId,
+      advancedProcessing: settings,
+      approvalRequired: true,
+    },
+  );
+  assert.equal(created.statusCode, 201);
+  const baseId = created.json().id;
+  const source = await call("POST", `/knowledge-bases/${baseId}/text`, {
+    title: "fixture",
+    text: "Placeholder",
+  });
+  await sql`UPDATE knowledge_jobs SET status='cancelled' WHERE source_id=${source.json().id}`;
+  const result = {
+    language: "Burmese, Thai, English",
+    warnings: ["Check footnote"],
+    blocks: [
+      {
+        kind: "text",
+        heading: "မြန်မာ",
+        text: "ဘဏ္ဍာရေး รายงาน",
+        rows: [],
+        headerRows: 0,
+      },
+      {
+        kind: "table",
+        heading: "MMK millions",
+        text: "",
+        rows: [
+          ["Group", "Group", "Company"],
+          ["Metric", "2026", "2025"],
+          ["Revenue", "1,250.00", "(900.00)"],
+          ["Note", "", "[uncertain]"],
+        ],
+        headerRows: 2,
+      },
+    ],
+  };
+  let calls = 0;
+  const provider: ProviderFactory = () => ({
+    async *stream(request) {
+      calls++;
+      assert.equal(request.messages[0]?.images?.[0]?.mimeType, "image/png");
+      assert.match(request.system, /Burmese/);
+      assert.match(request.system, /Do not translate/);
+      yield { type: "token", text: JSON.stringify(result) };
+    },
+  });
+  const bytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nAAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  const scope = `${baseId}/${source.json().id}`;
+  const vision = await createVisionExtractor(
+    settings,
+    workspace,
+    org,
+    scope,
+    provider,
+  );
+  const doc = await parseDocument(
+    bytes,
+    "statement.png",
+    new AbortController().signal,
+    { extractPage: vision!.extractPage, advanced: true },
+  );
+  assert.match(doc.sections[0]!.text, /รายงาน/);
+  assert.match(doc.sections[1]!.text, /\(900.00\)/);
+  assert.equal(vision!.reports[0]!.cached, false);
+  const again = await createVisionExtractor(
+    settings,
+    workspace,
+    org,
+    scope,
+    provider,
+  );
+  await parseDocument(bytes, "statement.png", new AbortController().signal, {
+    extractPage: again!.extractPage,
+  });
+  assert.equal(calls, 1);
+  assert.equal(again!.reports[0]!.cached, true);
+  assert.ok(again!.reports[0]!.warnings.some((w) => w.includes("Uncertain")));
+  await assert.rejects(
+    () => parseDocument(bytes, "statement.png", new AbortController().signal),
+    { code: "AI_EXTRACTION_REQUIRED" },
+  );
+  await assert.rejects(
+    () =>
+      createVisionExtractor(
+        settings,
+        workspace,
+        org,
+        `${baseId}/${randomUUID()}`,
+        () => ({
+          async *stream() {
+            yield { type: "token", text: "truncated {" };
+          },
+        }),
+      ).then((v) =>
+        v!.extractPage(bytes, 1, new AbortController().signal, {
+          text: "",
+          mimeType: "image/png",
+        }),
+      ),
+    { code: "AI_EXTRACTION_INVALID" },
+  );
+  await assert.rejects(
+    () => createVisionExtractor(settings, randomUUID(), org, scope, provider),
+    { code: "EXTRACTION_MODEL_UNAVAILABLE" },
+  );
+  assert.throws(
+    () =>
+      validateExtraction({
+        ...result,
+        blocks: [
+          {
+            kind: "table",
+            heading: "",
+            text: "",
+            rows: [["Only header"]],
+            headerRows: 1,
+          },
+        ],
+      }),
+    { code: "AI_EXTRACTION_INVALID" },
+  );
+  const cap = await createVisionExtractor(
+    advancedProcessing.parse({
+      ...settings,
+      vision: { ...settings.vision, maxPages: 1 },
+    }),
+    workspace,
+    org,
+    scope,
+    provider,
+  );
+  await cap!.extractPage(bytes, 1, new AbortController().signal, {
+    text: "",
+    mimeType: "image/png",
+  });
+  await assert.rejects(
+    () =>
+      cap!.extractPage(bytes, 2, new AbortController().signal, {
+        text: "",
+        mimeType: "image/png",
+      }),
+    { code: "AI_EXTRACTION_PAGE_LIMIT" },
+  );
+  const readable = await createVisionExtractor(
+    settings,
+    workspace,
+    org,
+    scope,
+    provider,
+  );
+  assert.equal(
+    await readable!.extractPage(bytes, 1, new AbortController().signal, {
+      text: "Native text is sufficiently readable.",
+    }),
+    null,
+  );
+  const aborted = new AbortController();
+  aborted.abort();
+  await assert.rejects(() =>
+    readable!.extractPage(bytes, 1, aborted.signal, {
+      text: "",
+      mimeType: "image/png",
+    }),
+  );
+  const uploadSource = await call("POST", `/knowledge-bases/${baseId}/text`, {
+    title: "Scanned financial statement",
+    text: "Temporary",
+  });
+  const uploadedId = uploadSource.json().id;
+  const objectKey = `${org}/${workspace}/${baseId}/${uploadedId}/image.png`;
+  const { storeKnowledge } = await import("../src/knowledge-storage.js");
+  await storeKnowledge(objectKey, bytes);
+  await sql`UPDATE knowledge_jobs SET payload=payload || ${sql.json({ filename: "statement.png", objectKey })}::jsonb WHERE source_id=${uploadedId}`;
+  await processKnowledgeJob(embedding, undefined, provider);
+  const [state] =
+    await sql`SELECT status FROM knowledge_sources WHERE id=${uploadedId}`;
+  assert.equal(state!.status, "ready");
+  const preview = await call(
+    "GET",
+    `/knowledge-bases/${baseId}/sources/${uploadedId}/extraction`,
+  );
+  assert.equal(
+    preview.json().documents[0].ai_extraction.pages[0].language,
+    "Burmese, Thai, English",
+  );
+  assert.equal(
+    preview.json().documents[0].ai_extraction.pages[0].blocks[1].rows[2][2],
+    "(900.00)",
+  );
+  assert.ok(
+    preview
+      .json()
+      .documents[0].extraction.tables[0].columns.includes("Group / 2026"),
+  );
+  assert.equal(
+    (
+      await call(
+        "GET",
+        `/knowledge-bases/${baseId}/sources/${uploadedId}/extraction`,
+        undefined,
+        sessions.outsider,
+      )
+    ).statusCode,
+    403,
+  );
+});

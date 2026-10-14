@@ -12,14 +12,30 @@ export const embeddingInput = z
     message: "Compatible embedding providers require a base URL",
     path: ["baseUrl"],
   });
+export const visionExtraction = z.object({
+  enabled: z.boolean().default(false),
+  modelId: z.uuid().nullable().default(null),
+  scope: z.enum(["scanned", "complex", "all"]).default("scanned"),
+  languages: z.string().trim().max(200).default("auto"),
+  maxPages: z.number().int().min(1).max(200).default(20),
+  maxOutputTokens: z.number().int().min(1024).max(1000000).default(8192),
+});
 export const advancedProcessing = z
   .object({
+    vision: visionExtraction.prefault({}),
     enabled: z.boolean().default(false),
     llmAssisted: z.boolean().default(false),
     modelId: z.uuid().nullable().default(null),
     chunkTokens: z.number().int().min(100).max(1500).default(500),
   })
   .superRefine((v, ctx) => {
+    if (v.vision.enabled && (!v.enabled || !v.vision.modelId))
+      ctx.addIssue({
+        code: "custom",
+        path: ["vision", "modelId"],
+        message:
+          "Enable advanced processing and select a vision-capable workspace model",
+      });
     if (v.enabled && v.llmAssisted && !v.modelId)
       ctx.addIssue({
         code: "custom",

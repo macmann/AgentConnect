@@ -30,9 +30,13 @@ CMD ["node", "apps/api/dist/server.js"]
 FROM service AS worker
 # Opt-in scanned-PDF support; default worker image keeps its existing footprint.
 ARG ENABLE_OCR=false
+ARG ENABLE_AI_EXTRACTION=false
 USER root
 RUN if [ "$ENABLE_OCR" = "true" ]; then \
       apt-get update && apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-eng \
+      && rm -rf /var/lib/apt/lists/*; \
+    elif [ "$ENABLE_AI_EXTRACTION" = "true" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends poppler-utils \
       && rm -rf /var/lib/apt/lists/*; \
     fi
 USER node
