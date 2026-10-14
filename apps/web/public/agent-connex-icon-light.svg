@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="40 5 170 170">
+<title>Agent Connex</title>
+<defs>
+
+    <!-- Neon Cyan to Violet Gradients -->
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00F2FE"/>
+      <stop offset="100%" stop-color="#4FACFE"/>
+    </linearGradient>
+
+    <linearGradient id="violetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#B171F8"/>
+      <stop offset="100%" stop-color="#7F00FF"/>
+    </linearGradient>
+
+    <!-- Glow Effect -->
+    <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+<rect x="40" y="5" width="170" height="170" rx="20" fill="#FFFFFF"/>
+<g transform="translate(20, -10)">
+    <!-- Connection Edges -->
+    <path d="M50 100 L95 65" stroke="url(#cyanGrad)" stroke-width="3" opacity="0.7"/>
+    <path d="M50 100 L95 135" stroke="url(#violetGrad)" stroke-width="3" opacity="0.7"/>
+    <path d="M95 65 L140 100" stroke="url(#cyanGrad)" stroke-width="3" opacity="0.7"/>
+    <path d="M95 135 L140 100" stroke="url(#violetGrad)" stroke-width="3" opacity="0.7"/>
+    <path d="M95 65 L95 135" stroke="#475569" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.3"/>
+
+    <!-- Agent Nodes -->
+    <circle cx="50" cy="100" r="9" class="logo-node-bg" fill="#FFFFFF" stroke="url(#cyanGrad)" stroke-width="2.5" filter="url(#neonGlow)"/>
+    <circle cx="50" cy="100" r="3" fill="#00F2FE"/>
+
+    <circle cx="95" cy="65" r="9" class="logo-node-bg" fill="#FFFFFF" stroke="url(#cyanGrad)" stroke-width="2.5" filter="url(#neonGlow)"/>
+    <circle cx="95" cy="65" r="3" fill="#00F2FE"/>
+
+    <circle cx="95" cy="135" r="9" class="logo-node-bg" fill="#FFFFFF" stroke="url(#violetGrad)" stroke-width="2.5" filter="url(#neonGlow)"/>
+    <circle cx="95" cy="135" r="3" fill="#B171F8"/>
+
+    <!-- Orchestrator Core Node -->
+    <circle cx="140" cy="100" r="15" class="logo-node-bg" fill="#FFFFFF" stroke="url(#cyanGrad)" stroke-width="3.5" filter="url(#neonGlow)"/>
+    <circle cx="140" cy="100" r="5.5" fill="url(#cyanGrad)"/>
+    <circle cx="140" cy="100" r="21" fill="none" stroke="#00F2FE" stroke-width="1" stroke-dasharray="2 5" opacity="0.5"/>
+  </g>
+</svg>

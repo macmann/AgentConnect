@@ -3,7 +3,13 @@ import "./globals.css";
 import { ThemeController, ThemeSwitcher } from "../components/theme-switcher";
 export const metadata: Metadata = {
   title: "Agent Connex · Workspace",
-  icons: { icon: "/agent-connex-logo.svg" },
+  icons: {
+    icon: {
+      url: "/agent-connex-icon-light.svg",
+      type: "image/svg+xml",
+      sizes: "any",
+    },
+  },
   description: "Build, orchestrate, and govern enterprise AI agents.",
 };
 export default function Layout({ children }: { children: React.ReactNode }) {

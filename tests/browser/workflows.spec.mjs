@@ -16,6 +16,8 @@ const fixture = createServer(async (req, res) => {
   for await (const chunk of req) raw += chunk;
   const data = JSON.parse(raw);
   calls.push(data);
+  if (data.model === "research")
+    await new Promise((resolve) => setTimeout(resolve, 4000));
   const text =
     data.model === "research"
       ? "Research findings: assess the proposed launch."
@@ -135,6 +137,13 @@ test("Visual workflow publishes, pauses for review and resumes two agent handoff
     },
   ]);
   await page.goto("/");
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
+    "href",
+    "/agent-connex-icon-light.svg",
+  );
+  const favicon = await page.request.get("/agent-connex-icon-light.svg");
+  expect(favicon.ok()).toBe(true);
+  expect(await favicon.text()).not.toContain("<text");
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
   await page.getByRole("button", { name: "Create workflow" }).click();
   await page.getByRole("button", { name: "Open canvas directly" }).click();
@@ -175,12 +184,30 @@ test("Visual workflow publishes, pauses for review and resumes two agent handoff
   ).toBeVisible();
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await page.getByRole("button", { name: "Publish workflow" }).click();
-  await page.getByRole("button", { name: "Test", exact: true }).click();
+  await page.getByRole("button", { name: "Build", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Test Workflow", exact: true })
+    .click();
   await page.getByLabel("Run version").selectOption({ label: "Published v1" });
   await page
     .getByLabel("Workflow input", { exact: true })
     .fill("Assess our launch plan");
   await page.getByRole("button", { name: "Run workflow", exact: true }).click();
+  await expect(
+    page.locator(".workflow-node.kind-agent.status-running"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "＋ Add nodes", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Return to draft canvas", exact: true }),
+  ).toBeDisabled();
+  await expect(page.locator(".react-flow__node.draggable")).toHaveCount(0);
+  await expect(page.locator(".react-flow__handle.connectable")).toHaveCount(0);
+  const animation = await page
+    .locator(".workflow-node.kind-agent.status-running")
+    .evaluate((el) => getComputedStyle(el).animationName);
+  expect(animation).toBe("workflow-active");
   const inspector = page.getByLabel("Workflow run inspector");
   await expect(inspector.getByText("waiting", { exact: true })).toBeVisible();
   await page
@@ -208,6 +235,25 @@ test("Visual workflow publishes, pauses for review and resumes two agent handoff
     path: "test-results/workflow-mobile.png",
     fullPage: true,
   });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page
+    .getByRole("button", { name: "Return to draft canvas", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Run workflow", exact: true }).click();
+  await expect(
+    page.locator(".workflow-node.kind-agent.status-running"),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Cancel workflow run", exact: true })
+    .click();
+  await expect(page.getByTestId("workflow-run-status")).toHaveText(
+    "cancelled",
+    { timeout: 15000 },
+  );
+  await expect(page.locator(".workflow-node.status-running")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Return to draft canvas", exact: true }),
+  ).toBeEnabled();
 });
 
 test("guided creation preserves choices, saves a real draft and keeps edits across activities", async ({
@@ -311,8 +357,12 @@ test("node types use distinct shapes and Test mode cannot edit the graph", async
     .getByRole("button", { name: "Open canvas directly", exact: true })
     .click();
   for (const kind of ["condition", "tool", "merge"]) {
-    await page.getByLabel("Node type", { exact: true }).selectOption(kind);
-    await page.getByRole("button", { name: "Add node", exact: true }).click();
+    await page
+      .getByRole("button", { name: "＋ Add nodes", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: `Add ${kind}`, exact: true })
+      .click();
     await expect(
       page.locator(`.workflow-node.kind-${kind}`).last(),
     ).toBeVisible();
@@ -362,4 +412,122 @@ test("node types use distinct shapes and Test mode cannot edit the graph", async
   const count = await page.locator(".react-flow__node").count();
   await page.keyboard.press("Control+v");
   await expect(page.locator(".react-flow__node")).toHaveCount(count);
+});
+
+test("canvas palette drops at transformed coordinates and expanded testing stays inside the canvas", async ({
+  page,
+  context,
+}) => {
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create workflow", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Open canvas directly", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Expand canvas", exact: true })
+    .click();
+  const expanded = page.getByRole("dialog", {
+    name: "Expanded workflow canvas",
+  });
+  await expect(expanded).toBeVisible();
+  expect(
+    await page
+      .getByRole("button", {
+        name: "Workflows",
+        exact: true,
+        includeHidden: true,
+      })
+      .evaluate((el) => !!el.closest("[inert]")),
+  ).toBe(true);
+  await expanded
+    .getByRole("button", { name: "＋ Add nodes", exact: true })
+    .click();
+  const transfer = await page.evaluateHandle(() => new DataTransfer());
+  await expanded
+    .getByRole("button", { name: "Add tool", exact: true })
+    .dispatchEvent("dragstart", { dataTransfer: transfer });
+  const area = await expanded.locator(".workflow-canvas").boundingBox();
+  const x = area.x + area.width * 0.6,
+    y = area.y + area.height * 0.55;
+  const expected = await expanded.locator(".react-flow").evaluate(
+    (el, point) => {
+      const root = el.getBoundingClientRect();
+      const matrix = new DOMMatrix(
+        getComputedStyle(el.querySelector(".react-flow__viewport")).transform,
+      );
+      return {
+        x: Math.round((point.x - root.x - matrix.e) / matrix.a / 20) * 20,
+        y: Math.round((point.y - root.y - matrix.f) / matrix.d / 20) * 20,
+      };
+    },
+    { x, y },
+  );
+  const before = await expanded.locator(".react-flow__node").count();
+  await expanded
+    .locator(".workflow-canvas")
+    .dispatchEvent("drop", { dataTransfer: transfer, clientX: x, clientY: y });
+  await expect(expanded.locator(".react-flow__node")).toHaveCount(before + 1);
+  await expect(expanded.locator(".workflow-node.kind-tool")).toBeVisible();
+  await expanded
+    .getByRole("button", { name: "＋ Add nodes", exact: true })
+    .click();
+  await expanded
+    .getByRole("button", { name: "Test Workflow", exact: true })
+    .click();
+  await expect(
+    expanded.getByRole("region", { name: "Workflow test panel" }),
+  ).toBeVisible();
+  await expect(
+    expanded.getByLabel("Workflow input", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    expanded.getByRole("button", { name: "Run workflow", exact: true }),
+  ).toBeDisabled(); // unsaved draft
+  await expanded.getByText("Workflow details", { exact: true }).click();
+  await expanded
+    .getByLabel("Draft name", { exact: true })
+    .fill("Canvas drop draft");
+  await expanded
+    .getByRole("button", { name: "Save draft", exact: true })
+    .click();
+  await expect(
+    expanded.getByRole("button", { name: "Save draft", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    expanded.getByRole("status", { name: "Draft save status" }),
+  ).toHaveText("Saved");
+  const [savedDrop] =
+    await sql`SELECT draft_graph FROM workflows WHERE workspace_id=${workspace} AND name='Canvas drop draft'`;
+  const dropped = savedDrop.draft_graph.nodes.find((n) => n.type === "tool");
+  expect(dropped.position.x).toBeCloseTo(expected.x, 0);
+  expect(dropped.position.y).toBeCloseTo(expected.y, 0);
+  await page.keyboard.press("Escape");
+  await expect(expanded).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Expand canvas", exact: true }),
+  ).toBeFocused();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .getByRole("button", { name: "Expand canvas", exact: true })
+    .click();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page
+    .getByRole("button", { name: "Exit expanded view", exact: true })
+    .click();
 });
