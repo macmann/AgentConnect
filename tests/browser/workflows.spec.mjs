@@ -336,6 +336,22 @@ test("node types use distinct shapes and Test mode cannot edit the graph", async
     "border-style",
     "dashed",
   );
+  // Duplicate labels cannot safely identify a single node from an analyzer message.
+  await expect(
+    page
+      .locator(".workflow-validation")
+      .getByRole("button", { name: /^Merge:/ }),
+  ).toHaveCount(0);
+  await page
+    .locator(".workflow-validation")
+    .getByRole("button", {
+      name: "Tool: select a registered tool",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "tool configuration", exact: true }),
+  ).toBeVisible();
   await page.screenshot({
     path: "test-results/workflow-node-types.png",
     fullPage: true,

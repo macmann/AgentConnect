@@ -1377,9 +1377,9 @@ export function WorkflowStudio({
                   <ul>
                     {validation.map((e) => (
                       <li key={e}>
-                        {draft.graph.nodes.some((n) =>
+                        {draft.graph.nodes.filter((n) =>
                           e.startsWith(n.data.label + ":"),
-                        ) ? (
+                        ).length === 1 ? (
                           <button
                             type="button"
                             className="text-button"
