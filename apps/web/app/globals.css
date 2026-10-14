@@ -5601,3 +5601,70 @@ input[type="range"] {
 .canvas-error-panel p {
   margin: 0 0 8px;
 }
+
+/* Keep wrapping canvas actions and the test drawer in separate vertical regions. */
+.canvas-test-panel.react-flow__panel {
+  max-height: calc(100% - var(--canvas-toolbar-height, 150px) - 24px);
+}
+.canvas-toolbar-actions,
+.canvas-top-actions {
+  gap: 8px;
+  padding: 10px;
+  align-items: center;
+}
+.workflow-test-blockers {
+  margin-block: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+}
+.workflow-test-blockers ul {
+  padding-left: 20px;
+  margin-bottom: 0;
+}
+.workflow-test-blockers li + li {
+  margin-top: 8px;
+}
+.workflow-test-blockers .text-button {
+  text-align: left;
+  white-space: normal;
+}
+.workflow-properties {
+  padding: 20px;
+}
+.workflow-properties label,
+.workflow-run-form label {
+  display: grid;
+  gap: 8px;
+}
+.workflow-properties fieldset > * + * {
+  margin-top: 16px;
+}
+.panel-header {
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.button-row {
+  row-gap: 12px;
+}
+.panel p,
+.panel label,
+.panel button {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .canvas-controls.react-flow__panel {
+    gap: 8px;
+  }
+  .canvas-toolbar-actions,
+  .canvas-top-actions {
+    padding: 8px;
+  }
+  .workflow-canvas {
+    min-height: 720px;
+  }
+  .canvas-expanded .workflow-canvas {
+    min-height: 0;
+  }
+}

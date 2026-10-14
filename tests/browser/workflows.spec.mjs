@@ -316,7 +316,11 @@ test("guided creation preserves choices, saves a real draft and keeps edits acro
   await page.getByRole("button", { name: "Test", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Run workflow", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Run workflow", exact: true }).click();
+  await expect(
+    page.getByText("Save your draft changes before testing.", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Build", exact: true }).click();
   await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
     "Unsaved renamed workflow",
@@ -492,9 +496,26 @@ test("canvas palette drops at transformed coordinates and expanded testing stays
   await expect(
     expanded.getByLabel("Workflow input", { exact: true }),
   ).toBeVisible();
+  const toolbarBounds = await expanded
+    .locator(".canvas-controls")
+    .boundingBox();
+  const testBounds = await expanded.locator(".canvas-test-panel").boundingBox();
+  expect(testBounds.y).toBeGreaterThanOrEqual(
+    toolbarBounds.y + toolbarBounds.height,
+  );
+
   await expect(
     expanded.getByRole("button", { name: "Run workflow", exact: true }),
-  ).toBeDisabled(); // unsaved draft
+  ).toBeEnabled();
+  await expanded
+    .getByRole("button", { name: "Run workflow", exact: true })
+    .click();
+  await expect(
+    expanded.getByText("Unable to test workflow", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    expanded.getByText("Save your workflow before testing.", { exact: true }),
+  ).toBeVisible();
   await expanded.getByText("Workflow details", { exact: true }).click();
   await expanded
     .getByLabel("Draft name", { exact: true })
