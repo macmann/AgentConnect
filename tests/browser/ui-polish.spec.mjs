@@ -195,6 +195,72 @@ test("compact help is accessible and connector actions are separated", async ({
   await expect(tooltip).toBeHidden();
 });
 
+test("panel bodies keep a shared gutter across studios and themes", async ({
+  page,
+}) => {
+  await open(page);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(
+        (theme) => document.documentElement.setAttribute("data-theme", theme),
+        theme,
+      );
+      for (const destination of [
+        "Workflows",
+        "Knowledge",
+        "Tools",
+        "Models",
+        "Quality",
+      ]) {
+        await page.goto(
+          `/#view=${encodeURIComponent(destination)}&organization=${org}&workspace=${first}`,
+        );
+        await expect(
+          page.getByRole("heading", { name: destination, exact: true }).first(),
+        ).toBeVisible();
+        await expect(page.locator(".panel").first()).toBeVisible();
+        await page.evaluate(
+          (theme) => document.documentElement.setAttribute("data-theme", theme),
+          theme,
+        );
+        const panels = await page.locator(".panel").evaluateAll((elements) =>
+          elements
+            .filter((el) => el.getBoundingClientRect().width > 0)
+            .map((el) => {
+              const style = getComputedStyle(el);
+              return {
+                left: parseFloat(style.paddingLeft),
+                right: parseFloat(style.paddingRight),
+              };
+            }),
+        );
+        for (const panel of panels) {
+          expect(panel.left).toBeGreaterThanOrEqual(width < 600 ? 16 : 24);
+          expect(panel.right).toBeGreaterThanOrEqual(width < 600 ? 16 : 24);
+        }
+        if (destination === "Workflows") {
+          const panel = await page.locator(".workflow-studio").boundingBox();
+          const template = await page
+            .getByText("Start from a template", { exact: true })
+            .boundingBox();
+          expect(template.x - panel.x).toBeGreaterThanOrEqual(
+            width < 600 ? 16 : 24,
+          );
+          await page.screenshot({
+            path: `/tmp/panel-gutters-${theme}-${width}.png`,
+            fullPage: true,
+          });
+        }
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        ).toBe(true);
+      }
+    }
+  }
+});
 test("sign out removes private workspace state", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
