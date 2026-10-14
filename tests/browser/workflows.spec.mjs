@@ -137,6 +137,7 @@ test("Visual workflow publishes, pauses for review and resumes two agent handoff
   await page.goto("/");
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
   await page.getByRole("button", { name: "Create workflow" }).click();
+  await page.getByRole("button", { name: "Open canvas directly" }).click();
   await page.getByLabel("Workflow name", { exact: true }).fill("Launch review");
   await page.getByRole("button", { name: "Two-agent review template" }).click();
   await expect(page.locator(".react-flow__node")).toHaveCount(5);
@@ -172,7 +173,9 @@ test("Visual workflow publishes, pauses for review and resumes two agent handoff
       exact: true,
     }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
   await page.getByRole("button", { name: "Publish workflow" }).click();
+  await page.getByRole("button", { name: "Test", exact: true }).click();
   await page.getByLabel("Run version").selectOption({ label: "Published v1" });
   await page
     .getByLabel("Workflow input", { exact: true })
@@ -205,4 +208,142 @@ test("Visual workflow publishes, pauses for review and resumes two agent handoff
     path: "test-results/workflow-mobile.png",
     fullPage: true,
   });
+});
+
+test("guided creation preserves choices, saves a real draft and keeps edits across activities", async ({
+  page,
+  context,
+}) => {
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create workflow", exact: true })
+    .click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("Guided customer answer");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Continue", exact: true }),
+  ).toBeDisabled();
+  const select = page.getByLabel("Prepare answer", { exact: true });
+  const version = await select.locator("option").nth(1).getAttribute("value");
+  await select.selectOption(version);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Review Guided customer answer" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(select).toHaveValue(version);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Create draft", exact: true }).click();
+  await expect(
+    page.getByText("Workflow draft saved. Test it before publishing.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const [stored] =
+    await sql`SELECT draft_graph FROM workflows WHERE workspace_id=${workspace} AND name='Guided customer answer'`;
+  expect(
+    stored.draft_graph.nodes.find((n) => n.type === "agent").data
+      .agentVersionId,
+  ).toBe(version);
+  await expect(page.locator(".workflow-node.kind-input")).toHaveCSS(
+    "border-radius",
+    "48px",
+  );
+  await expect(
+    page.locator(".workflow-node.kind-agent .workflow-node-icon"),
+  ).toBeVisible();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("Unsaved renamed workflow");
+  await page.getByRole("button", { name: "Test", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Run workflow", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Build", exact: true }).click();
+  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
+    "Unsaved renamed workflow",
+  );
+  await page
+    .getByRole("button", { name: "Save workflow", exact: true })
+    .click();
+  await expect(
+    page.getByText("Workflow draft saved.", { exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test("node types use distinct shapes and Test mode cannot edit the graph", async ({
+  page,
+  context,
+}) => {
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create workflow", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Open canvas directly", exact: true })
+    .click();
+  for (const kind of ["condition", "tool", "merge"]) {
+    await page.getByLabel("Node type", { exact: true }).selectOption(kind);
+    await page.getByRole("button", { name: "Add node", exact: true }).click();
+    await expect(
+      page.locator(`.workflow-node.kind-${kind}`).last(),
+    ).toBeVisible();
+  }
+  await expect(
+    page.locator(".workflow-node.kind-condition .react-flow__handle"),
+  ).toHaveCount(3);
+  await expect(page.locator(".workflow-node.kind-condition")).not.toHaveCSS(
+    "transform",
+    "rotate(45deg)",
+  );
+  const diamond = await page
+    .locator(".workflow-node.kind-condition")
+    .evaluate((el) => getComputedStyle(el, "::before").transform);
+  expect(diamond).not.toBe("none");
+  await expect(page.locator(".workflow-node.kind-tool")).toHaveCSS(
+    "border-top-right-radius",
+    "22px",
+  );
+  await expect(page.locator(".workflow-node.kind-merge").last()).toHaveCSS(
+    "border-style",
+    "dashed",
+  );
+  await page.screenshot({
+    path: "test-results/workflow-node-types.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Test", exact: true }).click();
+  await expect(page.locator(".workflow-properties")).toBeHidden();
+  await expect(page.locator(".react-flow__node.draggable")).toHaveCount(0);
+  const count = await page.locator(".react-flow__node").count();
+  await page.keyboard.press("Control+v");
+  await expect(page.locator(".react-flow__node")).toHaveCount(count);
 });

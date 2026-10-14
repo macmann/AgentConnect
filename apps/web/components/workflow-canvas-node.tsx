@@ -1,0 +1,66 @@
+"use client";
+import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import {
+  Bot,
+  Wrench,
+  GitBranch,
+  UserCheck,
+  LogIn,
+  LogOut,
+  Merge,
+  Split,
+  Shuffle,
+} from "lucide-react";
+export type CanvasNode = Node<
+  { label: string; kind: string; status?: string },
+  "workflow"
+>;
+function CanvasItem({ data, selected }: NodeProps<CanvasNode>) {
+  const icons: Record<string, typeof Bot> = {
+    input: LogIn,
+    output: LogOut,
+    agent: Bot,
+    tool: Wrench,
+    condition: GitBranch,
+    router: Shuffle,
+    approval: UserCheck,
+    merge: Merge,
+    parallel: Split,
+  };
+  const Icon = icons[data.kind] ?? Bot;
+  return (
+    <div
+      className={`workflow-node kind-${data.kind} ${selected ? "selected" : ""} status-${data.status ?? "idle"}`}
+    >
+      {data.kind !== "input" && (
+        <Handle type="target" position={Position.Left} />
+      )}
+      <Icon className="workflow-node-icon" size={18} aria-hidden="true" />
+      <small>{data.kind}</small>
+      <strong>{data.label}</strong>
+      {data.status && <span>{data.status}</span>}
+      {!["output", "router", "condition"].includes(data.kind) && (
+        <Handle type="source" position={Position.Right} />
+      )}
+      {["router", "condition"].includes(data.kind) && (
+        <>
+          <Handle
+            id="true"
+            type="source"
+            position={Position.Right}
+            style={{ top: "35%" }}
+          />
+          <span className="branch-label branch-true">true</span>
+          <Handle
+            id="false"
+            type="source"
+            position={Position.Right}
+            style={{ top: "75%" }}
+          />
+          <span className="branch-label branch-false">false</span>
+        </>
+      )}
+    </div>
+  );
+}
+export const workflowNodeTypes = { workflow: CanvasItem };

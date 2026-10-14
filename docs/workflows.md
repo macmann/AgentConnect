@@ -5,12 +5,15 @@ Phase 4 provides a workspace-scoped canvas and a durable LangGraph runner. Start
 ## Build and run
 
 1. Register models, create agents, and publish their configurations in Agents. Workflow Agent nodes reference a specific published version, including its model snapshot and prompt.
-2. Open Workflows, create a workflow, and name it. Use the two-agent review template or add nodes and connect their handles. Drag to position nodes; use pan/zoom, minimap, auto-layout, undo/redo, duplicate, and keyboard copy/paste. Shift-select copies a group and its internal edges.
-3. Select nodes to configure published agents, reviewed tools, branch predicates, approval prompts, or input mappings. Save the graph, validate its dependencies, and publish an immutable version. Invalid drafts can be saved; publication and execution require a valid graph.
-4. Enter an input and run either the saved draft or a published version. The inspector shows the immutable run graph, node inputs/outputs, durations, provider-reported token usage, citations, tool traces, and final output.
-5. At a Human Approval node, an administrator or operator can approve, reject, or replace the input with a JSON value and add a comment. Approval resumes the persisted checkpoint; completed upstream agents do not run again. A builder can cancel an active run.
+2. Open Workflows and choose **Create workflow**. The optional three-step wizard asks for a name and starter template, the published agents required by that template, then a canvas preview and review. **Create draft** saves the configured graph. Experienced users can choose **Open canvas directly** instead.
+3. In **Build**, select nodes to edit their settings, add grouped node types and connect handles. Common settings appear first; instruction overrides, input mapping and failure recovery are collapsed. Help icons support hover, focus and tap. Drag to position nodes; use pan/zoom, minimap, auto-layout, undo/redo, duplicate and keyboard copy/paste. Shift-select copies a group and its internal edges.
+4. Use the sticky **Save workflow** action and validate dependencies. **Publish** creates an immutable version; invalid or unsaved drafts cannot publish. Node-specific validation messages select the affected node. Activity changes preserve draft edits; switching workflows or leaving the browser page warns about unsaved changes.
+5. In **Test**, enter an input and run either the saved draft or a published version. The canvas is read-only in this activity. The inspector shows the immutable run graph, node inputs/outputs, durations, provider-reported token usage, citations, tool traces, and final output.
+6. At a Human Approval node, an administrator or operator can approve, reject, or replace the input with a JSON value and add a comment. Approval resumes the persisted checkpoint; completed upstream agents do not run again. A builder can cancel an active run.
 
 Published versions can be restored into a new draft revision. Restoration and later edits leave existing versions and run snapshots intact. Archived agents, revoked tools, disabled connectors, and missing credentials are checked at execution time. Attached knowledge uses current ready documents, as in the single-agent runtime.
+
+Input/output nodes use capsule shapes, decisions use diamonds, agents and tools use distinct cards, approvals have a specialist icon and junctions use compact dashed shapes. Labels and icons distinguish types alongside color; execution status remains visible.
 
 ## Nodes and data flow
 
