@@ -149,14 +149,15 @@ Use the channel-specific credentials and webhook setup in [customer engagement](
 
 ## Build a workflow
 
-1. Open **Workflows** and choose a starter template or create a graph.
-2. Select real published agent versions for agent nodes.
-3. Configure mappings between inputs and outputs.
-4. Add condition/router paths, supported parallel/merge paths, approved read-only tools or human approval as needed.
-5. Optionally enable bounded retries on agent/tool nodes. Only transient failures retry; authentication/validation failures need a configuration change.
-6. Give the output a title and select text, automatic structured output or JSON presentation.
-7. Save, validate, run and inspect the trace. Publish when ready.
-8. Attach an approved published workflow as a customer quick action where supported.
+1. Open **Workflows** → **Create workflow**. Follow **Purpose → Setup → Review** to choose a starter and published agents, preview the graph and create a saved draft. Choose **Open canvas directly** to skip guided setup.
+2. Use **Build**, **Test** and **Publish** to focus on one activity. Changes stay in the draft when switching activities; Test keeps the canvas read-only. Save from the sticky action bar. Advanced instructions/mappings are collapsed and help icons reveal detailed explanations.
+3. Select real published agent versions for agent nodes.
+4. Configure mappings between inputs and outputs.
+5. Add condition/router paths, supported parallel/merge paths, approved read-only tools or human approval as needed.
+6. Optionally enable bounded retries on agent/tool nodes. Only transient failures retry; authentication/validation failures need a configuration change.
+7. Give the output a title and select text, automatic structured output or JSON presentation.
+8. Save, validate, run and inspect the trace. Publish when ready.
+9. Attach an approved published workflow as a customer quick action where supported.
 
 **Create reusable copy** creates an independent draft; published snapshots stay unchanged. Cancelling during retry backoff prevents the next attempt. Retries can incur additional provider/tool costs. See [workflows](workflows.md) for supported graph shapes and future extensions.
 
