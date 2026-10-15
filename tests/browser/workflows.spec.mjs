@@ -552,3 +552,85 @@ test("canvas palette drops at transformed coordinates and expanded testing stays
     .getByRole("button", { name: "Exit expanded view", exact: true })
     .click();
 });
+
+test("Reusable components save selected nodes, insert versioned copies, and preserve drafts", async ({
+  page,
+  context,
+}) => {
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create workflow", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Open canvas directly", exact: true })
+    .click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("Component workflow");
+  await page
+    .getByRole("button", { name: "Two-agent review template", exact: true })
+    .click();
+  const research = page.locator('.react-flow__node[data-id="research"]');
+  await research.click();
+  const library = page.locator(".workflow-component-library");
+  await library.locator("summary").click();
+  await library
+    .getByLabel("Component name", { exact: true })
+    .fill("Reusable research");
+  await library
+    .getByRole("button", { name: "Save selection as component", exact: true })
+    .click();
+  await expect(library.getByRole("status")).toContainText("Component v1 saved");
+  await page.locator('.react-flow__node[data-id="input"]').click();
+  await library
+    .getByRole("button", { name: "Insert after selected node", exact: true })
+    .click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(6);
+  await expect(library.getByRole("status")).toContainText("Component inserted");
+  const copy = page.locator('.react-flow__node[data-id^="c"]');
+  await copy.click();
+  await library
+    .getByRole("button", { name: "Save selection as new version", exact: true })
+    .click();
+  await expect(library.getByRole("status")).toContainText("Component v2 saved");
+  await library
+    .getByRole("combobox", { name: "Component version", exact: true })
+    .selectOption("1");
+  await page.locator('.react-flow__node[data-id="input"]').click();
+  await library
+    .getByRole("button", { name: "Insert after selected node", exact: true })
+    .click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(7);
+  await page
+    .getByRole("button", { name: "Save workflow", exact: true })
+    .click();
+  await expect(
+    page.getByText("Workflow draft saved.", { exact: true }),
+  ).toBeVisible();
+  const [saved] =
+    await sql`SELECT draft_graph FROM workflows WHERE workspace_id=${workspace} AND name='Component workflow'`;
+  expect(saved.draft_graph.nodes).toHaveLength(7);
+  const [component] =
+    await sql`SELECT revision FROM workflow_components WHERE workspace_id=${workspace} AND name='Reusable research'`;
+  expect(component.revision).toBe(2);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "/tmp/workflow-components-mobile.png",
+    fullPage: true,
+  });
+});

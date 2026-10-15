@@ -677,18 +677,25 @@ test("Google Drive registration validates provider credentials and native export
                 token_type: "Bearer",
                 expires_in: 3600,
               }
-            : u.pathname.endsWith("/root")
-              ? {
-                  ...metadata,
-                  id: "root",
-                  mimeType: "application/vnd.google-apps.folder",
-                  parents: [],
-                }
-              : u.pathname.endsWith("/files")
-                ? { files: visible ? [metadata] : [] }
-                : u.pathname.endsWith("/export")
-                  ? "Drive refunds within 90 days."
-                  : metadata;
+            : u.pathname.endsWith("/changes/startPageToken")
+              ? { startPageToken: "fixture-start" }
+              : u.pathname.endsWith("/changes")
+                ? {
+                    changes: [{ fileId: "policy" }],
+                    newStartPageToken: "fixture-next",
+                  }
+                : u.pathname.endsWith("/root")
+                  ? {
+                      ...metadata,
+                      id: "root",
+                      mimeType: "application/vnd.google-apps.folder",
+                      parents: [],
+                    }
+                  : u.pathname.endsWith("/files")
+                    ? { files: visible ? [metadata] : [] }
+                    : u.pathname.endsWith("/export")
+                      ? "Drive refunds within 90 days."
+                      : metadata;
         return {
           status: 200,
           headers: {},
@@ -816,15 +823,21 @@ test("OneDrive credentials, endpoint grants, durable ingestion and removal use t
                 token_type: "Bearer",
                 expires_in: 3600,
               }
-            : u.pathname.endsWith("/drives/b!drive")
-              ? { id: "b!drive", driveType: "business" }
-              : u.pathname.endsWith("/items/folder")
-                ? { ...item, id: "folder", file: undefined, folder: {} }
-                : u.pathname.endsWith("/children")
-                  ? { value: visible ? [item] : [] }
-                  : u.pathname.endsWith("/content")
-                    ? bytes
-                    : item;
+            : u.pathname.endsWith("/root/delta")
+              ? {
+                  value: [{ id: "policy" }],
+                  "@odata.deltaLink":
+                    "https://graph.microsoft.com/v1.0/drives/b!drive/root/delta?token=fixture",
+                }
+              : u.pathname.endsWith("/drives/b!drive")
+                ? { id: "b!drive", driveType: "business" }
+                : u.pathname.endsWith("/items/folder")
+                  ? { ...item, id: "folder", file: undefined, folder: {} }
+                  : u.pathname.endsWith("/children")
+                    ? { value: visible ? [item] : [] }
+                    : u.pathname.endsWith("/content")
+                      ? bytes
+                      : item;
         return {
           status:
             denied && u.hostname !== "login.microsoftonline.com" ? 403 : 200,
@@ -1131,3 +1144,103 @@ for (const kind of ["teams", "slack"] as const) {
     );
   });
 }
+
+test("feed checkpoints commit only after successful inventories; unchanged runs never reconcile deletions", async () => {
+  await call("POST", base + "/secrets", {
+    name: "FEED_FIXTURE",
+    value: JSON.stringify({
+      accessKeyId: config.S3_ACCESS_KEY,
+      secretAccessKey: config.S3_SECRET_KEY,
+    }),
+  });
+  const feedSecret = (await call("GET", base + "/secrets"))
+    .json()
+    .find((s: { name: string }) => s.name === "FEED_FIXTURE").id;
+  const created = await call("POST", base + "/connectors", {
+    name: "Feed worker fixture",
+    kind: "s3",
+    knowledgeBaseId: kbId,
+    secretId: feedSecret,
+    selection,
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  const cid = created.json().id;
+  let scans = 0,
+    changed = true,
+    fail = false,
+    cancel = false,
+    checkpoints = 0;
+  const cursors: (string | undefined)[] = [];
+  const factory: AdapterFactory = async () => ({
+    async changes(_signal, cursor) {
+      cursors.push(cursor);
+      if (cancel)
+        await sql`UPDATE enterprise_connectors SET revision=revision+1 WHERE id=${cid}`;
+      return { cursor: `cursor-${++checkpoints}`, changed };
+    },
+    async list() {
+      scans++;
+      if (fail) throw new ConnectorError("CONNECTOR_INCOMPLETE_LISTING");
+      return [
+        {
+          key: "feed-policy",
+          filename: "feed-policy.txt",
+          url: "https://example.com/policy",
+          fingerprint: "one",
+        },
+      ];
+    },
+    async read() {
+      return Buffer.from("Policy from feed fixture");
+    },
+    close() {},
+  });
+  let job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).status, "completed");
+  const [first] =
+    await sql`SELECT feed_state FROM enterprise_connectors WHERE id=${cid}`;
+  assert.equal(first!.feed_state.cursor, "cursor-1");
+  changed = false;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).inventory_mode, "feed-unchanged");
+  assert.equal(scans, 1);
+  assert.equal((await run(job)).counts.removed, 0);
+  const [items] =
+    await sql`SELECT count(*)::int AS n FROM connector_items WHERE connector_id=${cid}`;
+  assert.equal(items!.n, 1);
+  changed = true;
+  fail = true;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).status, "failed");
+  const [failed] =
+    await sql`SELECT feed_state FROM enterprise_connectors WHERE id=${cid}`;
+  assert.equal(failed!.feed_state.cursor, "cursor-2");
+  fail = false;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).status, "completed");
+  assert.equal(cursors.at(-1), "cursor-2");
+  changed = false;
+  await sql`UPDATE knowledge_sources SET status='failed' WHERE id IN (SELECT source_id FROM connector_items WHERE connector_id=${cid})`;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).inventory_mode, "feed-reconciled");
+  assert.equal((await run(job)).counts.updated, 1);
+  const full = await call("POST", base + `/connectors/${cid}/sync`, {
+    mode: "full",
+  });
+  assert.equal(full.statusCode, 202);
+  await processConnectorSync(factory);
+  assert.equal(cursors.at(-1), undefined);
+  assert.equal((await run(full.json().id)).counts.updated, 1);
+  cancel = true;
+  job = await queue(cid);
+  await processConnectorSync(factory);
+  assert.equal((await run(job)).status, "failed");
+  const [last] =
+    await sql`SELECT feed_state FROM enterprise_connectors WHERE id=${cid}`;
+  assert.equal(last!.feed_state.cursor, "cursor-6");
+});

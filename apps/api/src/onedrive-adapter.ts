@@ -1,3 +1,4 @@
+import { microsoftChanges, recoverFeed } from "./connector-feeds.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
@@ -176,6 +177,17 @@ export function createOneDriveAdapter(
     }
   }
   return {
+    changes(signal, cursor) {
+      return safeGraphOperation(async () => {
+        const root = await metadata(selection.folderId, signal);
+        if (!root.folder)
+          throw new ConnectorError("CONNECTOR_FOLDER_UNAVAILABLE");
+        return recoverFeed(
+          (value) => microsoftChanges(json, signal, selection.driveId, value),
+          cursor,
+        );
+      }, signal);
+    },
     list(signal) {
       return safeGraphOperation(async () => {
         listed.clear();

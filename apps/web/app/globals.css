@@ -5862,3 +5862,120 @@ input[type="range"] {
 .extraction-usage code {
   font-size: 11px;
 }
+
+.multilingual-variant {
+  margin: 20px 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-width: 0;
+}
+.multilingual-variant > label {
+  display: block;
+  margin-block: 12px;
+}
+.gap-cluster-preview {
+  margin-top: 20px;
+  min-width: 0;
+}
+.gap-proposal {
+  border-top: 1px solid var(--line);
+  padding: 16px 0;
+  overflow-wrap: anywhere;
+}
+.gap-proposal > label {
+  align-items: flex-start;
+}
+.gap-proposal details {
+  margin: 12px 0 0 26px;
+}
+.gap-proposal summary {
+  cursor: pointer;
+  padding-block: 6px;
+}
+.gap-proposal ul {
+  padding-left: 22px;
+}
+.gap-cluster-preview .studio-actions {
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.multilingual-report .table-wrap {
+  overflow-x: auto;
+  margin-top: 12px;
+}
+.multilingual-report table {
+  min-width: 840px;
+}
+.multilingual-report caption {
+  text-align: left;
+  padding: 10px 0;
+}
+.multilingual-report :is(th, td) {
+  white-space: nowrap;
+  word-break: normal;
+  padding: 12px;
+}
+.multilingual-report :is(th, td):first-child {
+  min-width: 210px;
+  white-space: normal;
+  overflow-wrap: normal;
+}
+.gap-cluster-settings input[type="number"] {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.knowledge-gap-row > div {
+  margin-block: 16px;
+  padding-top: 12px;
+}
+.knowledge-gap-row .button {
+  margin: 8px 10px 8px 0;
+}
+
+.workflow-component-library {
+  margin: 1rem 1.5rem;
+  padding: 1.25rem;
+}
+.workflow-component-library > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+}
+.workflow-component-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-block: 1.25rem;
+}
+.workflow-component-fields label {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.workflow-component-fields input,
+.workflow-component-fields select {
+  width: 100%;
+  min-width: 0;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: var(--surface);
+  color: inherit;
+}
+@media (max-width: 640px) {
+  .workflow-component-fields {
+    grid-template-columns: 1fr;
+  }
+  .workflow-component-library {
+    margin: 1rem;
+  }
+}

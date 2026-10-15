@@ -199,7 +199,7 @@ export async function registerConnectorRoutes(
       const [c] =
         await sql`SELECT id FROM enterprise_connectors WHERE id=${id(params(r).connectorId)} AND workspace_id=${w.id} AND archived_at IS NULL`;
       if (!c) throw new HttpError(404, "Connector unavailable");
-      return sql`SELECT id,status,mode,attempts,counts,error_code,created_at,finished_at FROM connector_syncs WHERE connector_id=${c.id} ORDER BY created_at DESC,id DESC LIMIT 50`;
+      return sql`SELECT id,status,mode,inventory_mode,attempts,counts,error_code,created_at,finished_at FROM connector_syncs WHERE connector_id=${c.id} ORDER BY created_at DESC,id DESC LIMIT 50`;
     },
   );
   app.post(

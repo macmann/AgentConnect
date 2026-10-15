@@ -648,3 +648,212 @@ test("Benchmark scoring preserves financial separators, page citations and Unico
     /SNAPSHOT_MISSING/,
   );
 });
+
+test("Multilingual evaluation measures real retrieval and citations, persists language-pair reports and requires judge language scores", async () => {
+  const { processKnowledgeJob } = await import("../src/ingestion.js");
+  const [em] =
+    await sql`SELECT id FROM embedding_models WHERE workspace_id=${workspace} LIMIT 1`;
+  assert.ok(em);
+  const kb = (
+    await call("POST", base + "/knowledge-bases", {
+      name: "Cross-language procedures",
+      embeddingModelId: em.id,
+    })
+  ).json().id;
+  const source = await call("POST", `/knowledge-bases/${kb}/text`, {
+    title: "Reset procedure",
+    text: "Reset your password using the approved reset page.",
+  });
+  assert.equal(source.statusCode, 202, source.body);
+  const embedding = () => ({
+    embed: async (texts: string[]) => texts.map(() => [1, 0, 0]),
+  });
+  await processKnowledgeJob(embedding);
+  const agent = (
+    await call("POST", base + "/agents", {
+      name: "Multilingual evaluation",
+      config: {
+        modelId,
+        languageMode: "auto",
+        rag: { knowledgeBaseIds: [kb], usageMode: "always", minScore: 0 },
+      },
+    })
+  ).json();
+  const cases = [
+    {
+      input: "How to reset?",
+      expectedBehavior: "Answer in English",
+      contains: ["password"],
+      expectedSourceIds: [source.json().id],
+      multilingual: {
+        intent: "Reset",
+        queryLanguage: "en",
+        sourceLanguage: "en",
+        expectedAnswerLanguage: "en",
+        expectedScripts: ["Latin"],
+      },
+    },
+    {
+      input: "เปลี่ยนรหัสผ่านอย่างไร",
+      expectedBehavior: "Answer in Thai",
+      contains: ["รหัสผ่าน"],
+      expectedSourceIds: [source.json().id],
+      multilingual: {
+        intent: "Reset",
+        queryLanguage: "th",
+        sourceLanguage: "en",
+        expectedAnswerLanguage: "th",
+        expectedScripts: ["Thai"],
+      },
+    },
+  ];
+  const dataset = (
+    await call("POST", base + "/datasets", {
+      name: "Language variants",
+      examples: cases,
+    })
+  ).json();
+  const body = {
+    agentId: agent.id,
+    datasetId: dataset.id,
+    revision: 1,
+    evaluator: ev,
+  };
+  const queued = await call("POST", base + "/evaluations", body);
+  assert.equal(queued.statusCode, 202, queued.body);
+  const multilingual: ProviderFactory = () => ({
+    async *stream(request) {
+      yield {
+        type: "token",
+        text: request.messages.at(-1)!.content.includes("เปลี่ยน")
+          ? "รีเซ็ตรหัสผ่าน [1]"
+          : "Reset password [1]",
+      };
+      yield { type: "usage", inputTokens: 12, outputTokens: 8 };
+    },
+  });
+  await processEvaluationRun(multilingual, embedding);
+  const d = await detail(queued.json().id);
+  assert.equal(d.status, "completed");
+  assert.equal(d.summary.passRate, 1);
+  assert.equal(d.summary.multilingual.languagePairs.length, 2);
+  assert.equal(d.summary.multilingual.intents[0].retrievalRecall, 1);
+  assert.equal(d.summary.multilingual.intents[0].citationRecall, 1);
+  assert.equal(d.summary.multilingual.intents[0].languageCompliance, null);
+  const bad = await call("POST", base + "/evaluations", {
+    ...body,
+    baselineRunId: queued.json().id,
+  });
+  assert.equal(bad.statusCode, 202, bad.body);
+  await processEvaluationRun(
+    () => ({
+      async *stream() {
+        yield { type: "token", text: "Reset password [1]" };
+      },
+    }),
+    embedding,
+  );
+  const regression = await detail(bad.json().id);
+  assert.equal(regression.summary.passRate, 0.5);
+  assert.equal(regression.summary.regression.passRateDelta, -0.5);
+  assert.equal(
+    regression.results.find(
+      (row: {
+        metrics: {
+          multilingual?: { queryLanguage: string; scriptPassed: boolean };
+        };
+      }) => row.metrics.multilingual?.queryLanguage === "th",
+    ).metrics.multilingual.scriptPassed,
+    false,
+  );
+  const judge = (
+    await call("POST", base + "/models", {
+      name: "Language judge",
+      provider: "openai-compatible",
+      modelId: "language-judge",
+      baseUrl: "https://api.openai.com/v1",
+    })
+  ).json();
+  const judgeCases = (
+    await call("POST", base + "/datasets", {
+      name: "Judge language",
+      examples: [
+        {
+          ...cases[0],
+          multilingual: {
+            intent: "Reset",
+            queryLanguage: "th",
+            sourceLanguage: "en",
+            expectedAnswerLanguage: "th",
+            expectedScripts: [],
+          },
+        },
+      ],
+    })
+  ).json();
+  const judgeBody = {
+    ...body,
+    datasetId: judgeCases.id,
+    evaluator: { mode: "judge", judgeModelId: judge.id, minScore: 0.8 },
+  };
+  const judging = await call("POST", base + "/evaluations", judgeBody);
+  assert.equal(judging.statusCode, 202, judging.body);
+  const judgeFactory =
+    (omit = false): ProviderFactory =>
+    (conn) =>
+      conn.modelId === "language-judge"
+        ? {
+            async *stream(request) {
+              assert.match(request.system, /languageCompliance/);
+              assert.match(
+                request.messages[0]!.content,
+                /expectedAnswerLanguage/,
+              );
+              yield {
+                type: "token",
+                text: JSON.stringify({
+                  correctness: 1,
+                  relevance: 1,
+                  groundedness: 1,
+                  policyCompliance: 1,
+                  reason: "Wrong language",
+                  ...(omit ? {} : { languageCompliance: 0 }),
+                }),
+              };
+            },
+          }
+        : {
+            async *stream() {
+              yield { type: "token", text: "Reset password [1]" };
+            },
+          };
+  await processEvaluationRun(judgeFactory(), embedding);
+  const judged = await detail(judging.json().id);
+  assert.equal(judged.summary.passRate, 0);
+  assert.equal(
+    judged.summary.multilingual.languagePairs[0].languageCompliance,
+    0,
+  );
+  const missing = await call("POST", base + "/evaluations", judgeBody);
+  assert.equal(missing.statusCode, 202, missing.body);
+  await processEvaluationRun(judgeFactory(true), embedding);
+  assert.equal(
+    (await detail(missing.json().id)).results[0].error_code,
+    "JUDGE_INVALID_RESPONSE",
+  );
+  const foreign = (
+    await call("POST", base + "/datasets", {
+      name: "Foreign expected source",
+      examples: [{ ...cases[0], expectedSourceIds: [randomUUID()] }],
+    })
+  ).json();
+  assert.equal(
+    (
+      await call("POST", base + "/evaluations", {
+        ...body,
+        datasetId: foreign.id,
+      })
+    ).statusCode,
+    400,
+  );
+});

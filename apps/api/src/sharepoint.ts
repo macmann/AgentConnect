@@ -291,6 +291,10 @@ export function createSharePointAdapter(
     graph,
   );
   return {
+    async changes(signal, cursor) {
+      await client.verifyLibrary(selection.siteId, selection.driveId, signal);
+      return adapter.changes!(signal, cursor);
+    },
     async list(signal) {
       await client.verifyLibrary(selection.siteId, selection.driveId, signal);
       const result = await adapter.list(signal);

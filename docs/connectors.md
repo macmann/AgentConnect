@@ -169,7 +169,7 @@ Default manual and scheduled runs use `incremental` mode. Full metadata/message 
 
 For repair, open **Recovery: full refresh → Reimport all sources**. Confirmation is required in the UI because this downloads and reindexes unchanged content too. The endpoint accepts `{ "mode": "full" }`; the no-body/default request remains incremental. Sync history records the mode and import/update/unchanged/removal counts. Full refresh uses the same permission, revision, lease, cancellation and deletion-safety checks as normal sync.
 
-This is content-level incremental synchronization. Native Google Changes, Microsoft delta and messaging event feeds are future optimizations; no cursor-based API-request reduction is claimed.
+Google Drive Changes and Microsoft OneDrive/SharePoint delta feeds now provide cursor-based idle-scan reduction. Checkpoints are established before complete inventory and committed only when the sync succeeds. A quiet feed skips inventory; a changed feed uses the existing bounded complete reconciliation, rather than applying partial tombstones directly. This handles folder moves and nested access changes conservatively. Failed/deleted managed sources force repair even on a quiet feed. HTTP 410 resets a saved cursor and establishes a fresh baseline; other provider failures fail safely. Full refresh and connector revision changes reset cursors. History exposes only `inventory_mode` (`scan`, `feed-unchanged`, `feed-reconciled`), never tokens. Cursor URLs are validated against the same Graph drive/path before authenticated requests. S3 and messaging sources retain content-level incremental scans; webhook subscriptions and messaging event feeds remain future work.
 
 ## Validation boundaries
 

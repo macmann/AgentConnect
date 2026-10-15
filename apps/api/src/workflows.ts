@@ -1,3 +1,4 @@
+import { registerWorkflowComponentRoutes } from "./workflow-components.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -38,6 +39,7 @@ async function ownedRun(
   return { u, run };
 }
 export async function registerWorkflowRoutes(app: FastifyInstance) {
+  await registerWorkflowComponentRoutes(app);
   const schema = (body: z.ZodType) => ({
     schema: { body: z.toJSONSchema(body, { io: "input", target: "draft-7" }) },
     bodyLimit: 200000,

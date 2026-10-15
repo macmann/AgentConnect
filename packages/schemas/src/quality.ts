@@ -1,3 +1,4 @@
+import { multilingualCheck } from "@agentconnect/schemas/multilingual";
 import { z } from "zod";
 export const documentCheck = z
   .object({
@@ -32,6 +33,7 @@ export const example = z
     expectedAnswer: z.string().trim().min(1).max(16000).optional(),
     contains: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
     forbidden: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
+    multilingual: multilingualCheck.optional(),
     documentChecks: z.array(documentCheck).max(20).default([]),
     expectedCitations: z
       .array(
@@ -51,7 +53,11 @@ export const example = z
       .refine((v) => Object.keys(v).length <= 20, "At most 20 metadata entries")
       .default({}),
   })
-  .strict();
+  .strict()
+  .refine(
+    (e) => !e.multilingual || e.expectedSourceIds.length > 0,
+    "Multilingual retrieval cases need at least one expected source",
+  );
 export const datasetInput = z
   .object({
     name: z.string().trim().min(1).max(100),
@@ -105,6 +111,7 @@ export const judgeResult = z
     groundedness: z.number().min(0).max(1),
     policyCompliance: z.number().min(0).max(1),
     reason: z.string().max(1000),
+    languageCompliance: z.number().min(0).max(1).optional(),
   })
   .strict();
 export type Example = z.infer<typeof example>;
@@ -115,7 +122,11 @@ export function deterministicScore(
   sourceIds: string[],
 ) {
   const normalize = (s: string) =>
-    s.trim().toLocaleLowerCase("en-US").replace(/\s+/g, " ");
+    s
+      .normalize("NFC")
+      .trim()
+      .toLocaleLowerCase(e.multilingual?.expectedAnswerLanguage ?? "en-US")
+      .replace(/\s+/g, " ");
   const text = normalize(output),
     checks: boolean[] = [];
   if (e.expectedAnswer !== undefined)

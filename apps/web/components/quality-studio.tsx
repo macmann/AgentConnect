@@ -1,4 +1,9 @@
 "use client";
+import { MultilingualBenchmarkBuilder } from "./multilingual-benchmark-builder";
+import {
+  MultilingualReport,
+  type MultilingualResults,
+} from "./multilingual-results";
 import { DocumentBenchmarkBuilder } from "./document-benchmark-builder";
 import { HelpTooltip } from "./help-tooltip";
 import { useState } from "react";
@@ -30,6 +35,7 @@ type Run = {
     extractionTextSimilarity?: number | null;
     tableCellAccuracy?: number | null;
     citationRecall?: number | null;
+    multilingual?: MultilingualResults;
     segments?: {
       tag: string;
       cases: number;
@@ -39,7 +45,16 @@ type Run = {
       tableCellAccuracy: number | null;
       citationRecall: number | null;
     }[];
-    regression?: { passRateDelta: number };
+    regression?: {
+      passRateDelta: number;
+      languagePairs?: {
+        label: string;
+        passRateDelta: number;
+        retrievalRecallDelta: number | null;
+        citationRecallDelta: number | null;
+        languageComplianceDelta: number | null;
+      }[];
+    };
   } | null;
   error_code: string | null;
 };
@@ -314,6 +329,22 @@ export function QualityStudio({
                     maxLength={100}
                   />
                 </label>
+                <MultilingualBenchmarkBuilder
+                  workspaceId={workspaceId}
+                  onAdd={(cases) => {
+                    const current: unknown = JSON.parse(examples);
+                    if (!Array.isArray(current))
+                      throw new Error("Examples must be a JSON array");
+                    const rows =
+                      JSON.stringify(current) ===
+                      JSON.stringify(JSON.parse(starter))
+                        ? []
+                        : current;
+                    if (rows.length + cases.length > 100)
+                      throw new Error("A dataset supports at most 100 cases");
+                    setExamples(JSON.stringify([...rows, ...cases], null, 2));
+                  }}
+                />
                 <DocumentBenchmarkBuilder
                   workspaceId={workspaceId}
                   onAdd={(example) => {
@@ -713,30 +744,39 @@ export function QualityStudio({
                     Cancel evaluation
                   </Button>
                 )}
-              {detail.data.summary && (
-                <div className="benchmark-summary">
-                  <h4>Document benchmark</h4>
-                  <p>
-                    Extraction text similarity:{" "}
-                    {detail.data.summary.extractionTextSimilarity == null
-                      ? "not measured"
-                      : `${(detail.data.summary.extractionTextSimilarity * 100).toFixed(1)}%`}
-                    . Exact cell accuracy:{" "}
-                    {detail.data.summary.tableCellAccuracy == null
-                      ? "not measured"
-                      : `${(detail.data.summary.tableCellAccuracy * 100).toFixed(1)}%`}
-                    . Expected citation coverage:{" "}
-                    {detail.data.summary.citationRecall == null
-                      ? "not measured"
-                      : `${(detail.data.summary.citationRecall * 100).toFixed(1)}%`}
-                    .
-                  </p>
-                  <p>
-                    Only authored reference checks are measured; a passing run
-                    does not certify every extracted value.
-                  </p>
-                </div>
-              )}
+              {detail.data.summary &&
+                [
+                  detail.data.summary.extractionTextSimilarity,
+                  detail.data.summary.tableCellAccuracy,
+                  detail.data.summary.citationRecall,
+                ].some((value) => value != null) && (
+                  <div className="benchmark-summary">
+                    <h4>Document benchmark</h4>
+                    <p>
+                      Extraction text similarity:{" "}
+                      {detail.data.summary.extractionTextSimilarity == null
+                        ? "not measured"
+                        : `${(detail.data.summary.extractionTextSimilarity * 100).toFixed(1)}%`}
+                      . Exact cell accuracy:{" "}
+                      {detail.data.summary.tableCellAccuracy == null
+                        ? "not measured"
+                        : `${(detail.data.summary.tableCellAccuracy * 100).toFixed(1)}%`}
+                      . Expected citation coverage:{" "}
+                      {detail.data.summary.citationRecall == null
+                        ? "not measured"
+                        : `${(detail.data.summary.citationRecall * 100).toFixed(1)}%`}
+                      .
+                    </p>
+                    <p>
+                      Only authored reference checks are measured; a passing run
+                      does not certify every extracted value.
+                    </p>
+                  </div>
+                )}
+              <MultilingualReport
+                report={detail.data.summary?.multilingual}
+                baseline={detail.data.summary?.regression?.languagePairs}
+              />
               {!!detail.data.summary?.segments?.length && (
                 <div className="table-wrap">
                   <table>

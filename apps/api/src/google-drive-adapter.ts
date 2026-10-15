@@ -1,3 +1,4 @@
+import { googleChanges, recoverFeed } from "./connector-feeds.js";
 import { createSign, createHash } from "node:crypto";
 import { z } from "zod";
 import { safeHttpTransport, ProviderError } from "@agentconnect/provider-sdk";
@@ -85,11 +86,13 @@ export function createGoogleDriveAdapter(
         throw new ConnectorError(
           response.status === 401 || response.status === 403
             ? "CONNECTOR_ACCESS_DENIED"
-            : response.status === 404
-              ? "CONNECTOR_NOT_FOUND"
-              : response.status === 429
-                ? "CONNECTOR_RATE_LIMITED"
-                : "CONNECTOR_PROVIDER_ERROR",
+            : response.status === 410
+              ? "CONNECTOR_CURSOR_EXPIRED"
+              : response.status === 404
+                ? "CONNECTOR_NOT_FOUND"
+                : response.status === 429
+                  ? "CONNECTOR_RATE_LIMITED"
+                  : "CONNECTOR_PROVIDER_ERROR",
         );
       }
       let length = 0;
@@ -192,6 +195,21 @@ export function createGoogleDriveAdapter(
     }
   }
   return {
+    changes(signal, cursor) {
+      return safe(async () => {
+        const root = await metadata(selection.folderId, signal);
+        if (
+          root.trashed ||
+          root.id !== selection.folderId ||
+          root.mimeType !== folderMime
+        )
+          throw new ConnectorError("CONNECTOR_FOLDER_UNAVAILABLE");
+        return recoverFeed(
+          (value) => googleChanges(json, signal, value),
+          cursor,
+        );
+      });
+    },
     list(signal) {
       return safe(async () => {
         listed.clear();

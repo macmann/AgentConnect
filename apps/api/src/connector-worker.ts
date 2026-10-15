@@ -80,6 +80,31 @@ export async function processConnectorSync(
       base?.advanced_processing?.enabled &&
       base?.advanced_processing?.vision?.enabled;
     adapter = await factory(connector);
+    const feed = adapter.changes
+      ? await adapter.changes(
+          signal,
+          job.mode !== "full" &&
+            connector.feed_state?.revision === connector.revision
+            ? connector.feed_state.cursor
+            : undefined,
+        )
+      : undefined;
+    const [repair] =
+      await sql`SELECT count(*)::int AS n FROM connector_items i JOIN knowledge_sources s ON s.id=i.source_id WHERE i.connector_id=${connector.id} AND s.status IN ('failed','deleted')`;
+    const skipInventory =
+      job.mode !== "full" && feed && !feed.changed && !repair?.n;
+    if (skipInventory) {
+      await authorize();
+      await sql.begin(async (tx) => {
+        await current(tx);
+        const [items] =
+          await tx`SELECT count(*)::int AS n FROM connector_items WHERE connector_id=${connector.id}`;
+        counts.unchanged = items?.n ?? 0;
+        await tx`UPDATE enterprise_connectors SET feed_state=${tx.json({ revision: connector.revision, cursor: feed.cursor })} WHERE id=${connector.id}`;
+        await tx`UPDATE connector_syncs SET status='completed',inventory_mode='feed-unchanged',counts=${tx.json(counts)},finished_at=now(),lease_token=NULL,lease_until=NULL WHERE id=${job.id} AND lease_token=${lease}`;
+      });
+      return true;
+    }
     const documents = await adapter.list(signal);
     counts.listed = documents.length;
     const keys = new Set<string>();
@@ -168,7 +193,9 @@ export async function processConnectorSync(
         await tx`DELETE FROM connector_items WHERE connector_id=${connector.id} AND source_id=${item.source_id}`;
         counts.removed++;
       }
-      await tx`UPDATE connector_syncs SET status='completed',counts=${tx.json(counts)},finished_at=now(),lease_token=NULL,lease_until=NULL WHERE id=${job.id} AND lease_token=${lease}`;
+      if (feed)
+        await tx`UPDATE enterprise_connectors SET feed_state=${tx.json({ revision: connector.revision, cursor: feed.cursor })} WHERE id=${connector.id}`;
+      await tx`UPDATE connector_syncs SET status='completed',inventory_mode=${feed ? "feed-reconciled" : "scan"},counts=${tx.json(counts)},finished_at=now(),lease_token=NULL,lease_until=NULL WHERE id=${job.id} AND lease_token=${lease}`;
     });
   } catch (error) {
     await sql`UPDATE connector_syncs SET status='failed',error_code=${error instanceof ConnectorError ? error.code : signal.aborted ? "CONNECTOR_TIMEOUT" : "CONNECTOR_SYNC_FAILED"},counts=${sql.json(counts)},finished_at=now(),lease_token=NULL,lease_until=NULL WHERE id=${job.id} AND status='running' AND lease_token=${lease}`;

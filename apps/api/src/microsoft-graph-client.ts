@@ -13,13 +13,15 @@ export function graphStatusError(status: number): never {
   throw new ConnectorError(
     status === 401 || status === 403
       ? "CONNECTOR_ACCESS_DENIED"
-      : status === 404
-        ? "CONNECTOR_NOT_FOUND"
-        : status === 412
-          ? "CONNECTOR_OBJECT_CHANGED"
-          : status === 429
-            ? "CONNECTOR_RATE_LIMITED"
-            : "CONNECTOR_PROVIDER_ERROR",
+      : status === 410
+        ? "CONNECTOR_CURSOR_EXPIRED"
+        : status === 404
+          ? "CONNECTOR_NOT_FOUND"
+          : status === 412
+            ? "CONNECTOR_OBJECT_CHANGED"
+            : status === 429
+              ? "CONNECTOR_RATE_LIMITED"
+              : "CONNECTOR_PROVIDER_ERROR",
   );
 }
 export async function consumeGraphResponse(
