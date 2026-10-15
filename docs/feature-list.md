@@ -202,3 +202,15 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 - Source-level usage viewer, available for failed ingestion, and metadata-only nested Langfuse ingestion/extraction traces.
 - Built-in financial calculator tool: exact decimal sums, differences, ratios, percentages and growth; explicit scales, units, precision and rounding; multilingual digits and accounting negatives.
 - Evidence-required operands validated against authorized current-query passages, with formula and source/page/chunk provenance; supported in regular and grounded RAG agents and workflow agent nodes. Optional ungrounded mode supports explicit supplied workflow/test inputs without claiming source verification.
+
+### Multilingual validation and reviewed semantic topics
+
+- Guided language-variant benchmark authoring with shared intents, BCP 47 language annotations, expected retrieved/cited sources, reviewed phrases and optional writing-system checks.
+- Language-aware Unicode phrase checks, explicit LLM-judge language compliance, reports by language pair/intent, baseline deltas and existing JSON exports. Unknown language assessments stay unmeasured.
+- Semantic gap previews with per-topic members and pairwise similarity, selective application, expiry, optimistic snapshot checks, tenant/creator access controls, idempotent concurrent application and audited reviewer decisions.
+- Reviewer merges/splits remain protected, full questions reach only the selected configured embedding provider, and preview application makes no further embedding call. No automatic knowledge publication.
+
+### Connector feeds and reusable workflow components
+
+- Google Drive Changes and Microsoft OneDrive/SharePoint delta checkpoints skip unchanged inventories. Cursors advance only after successful sync, recover from expiry, reset on connector revision/full refresh, and are never exposed in API history. Changed scopes still use bounded complete reconciliation for deletion and folder-move safety. S3/Teams/Slack retain scans.
+- Workspace workflow component library: save selected processing nodes with a single entry/exit, immutable versions, select an older version, insert independent editable copies, and archive unused entries. Node IDs and internal inputs are remapped. Normal workflow validation, permissions, traces and published snapshots remain authoritative.

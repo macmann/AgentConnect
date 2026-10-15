@@ -1,4 +1,6 @@
 "use client";
+import { GapClusterPreview } from "./gap-cluster-preview";
+import { HelpTooltip } from "./help-tooltip";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { requestJson } from "./agent-client";
@@ -11,6 +13,12 @@ type Gap = {
   reasons: string[];
   suggestion: string;
   priority: number;
+  groupingMethods: string[];
+  clustering: {
+    modelName?: string;
+    threshold?: number;
+    minimumSimilarity?: number | null;
+  } | null;
   trend: { recent: number; earlier: number };
   correctedDrafts: {
     id: string;
@@ -47,8 +55,6 @@ export function KnowledgeGaps({
 }) {
   const cache = useQueryClient(),
     base = `/workspaces/${workspaceId}/operations`,
-    [embeddingId, setEmbeddingId] = useState(""),
-    [threshold, setThreshold] = useState(0.85),
     [target, setTarget] = useState<Record<string, string>>({}),
     [days, setDays] = useState(30),
     [error, setError] = useState(""),
@@ -78,13 +84,6 @@ export function KnowledgeGaps({
           `/workspaces/${workspaceId}/knowledge-bases`,
         ),
     });
-  const embeddings = useQuery({
-    queryKey: ["gap-embeddings", workspaceId],
-    queryFn: () =>
-      requestJson<{ id: string; name: string }[]>(
-        `/workspaces/${workspaceId}/embedding-models`,
-      ),
-  });
   const canDraft = permitted(role, "knowledge:manage"),
     canApprove = permitted(role, "knowledge:approve");
   async function act(path: string, data: unknown) {
@@ -117,51 +116,16 @@ export function KnowledgeGaps({
           <option value={90}>Last 90 days</option>
         </select>
       </label>
-      <details className="configure-group">
-        <summary>Group related questions by meaning</summary>
-        <p>
-          Uses your embedding provider for the latest 300 affected questions in
-          this range. Questions are sent to that provider. Reviewer merges and
-          splits are preserved.
-        </p>
-        <label>
-          Embedding model
-          <select
-            value={embeddingId}
-            onChange={(e) => setEmbeddingId(e.target.value)}
-          >
-            <option value="">Choose an embedding model</option>
-            {embeddings.data?.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Minimum similarity
-          <input
-            type="number"
-            min={0.7}
-            max={0.99}
-            step={0.01}
-            value={threshold}
-            onChange={(e) => setThreshold(Number(e.target.value))}
-          />
-        </label>
-        <Button
-          disabled={busy || !embeddingId || !gaps.data}
-          onClick={() =>
-            act("/knowledge-gaps/cluster", {
-              modelId: embeddingId,
-              threshold,
-              ...gaps.data!.range,
-            })
-          }
-        >
-          Group by meaning
-        </Button>
-      </details>
+      <GapClusterPreview
+        key={workspaceId + ":" + days}
+        workspaceId={workspaceId}
+        range={gaps.data?.range}
+        onApplied={async () => {
+          await cache.invalidateQueries({
+            queryKey: ["knowledge-gaps", workspaceId],
+          });
+        }}
+      />
       {(error || gaps.error) && (
         <p role="alert">{error || gaps.error?.message}</p>
       )}
@@ -178,9 +142,21 @@ export function KnowledgeGaps({
       {gaps.data?.groups.map((g) => (
         <details className="knowledge-gap-row" key={g.key}>
           <summary>
-            {g.question} · {g.count} occurrences
+            {g.question.slice(0, 180)} · {g.count} occurrences
           </summary>
           <p>{g.reasons.join(" · ")}</p>
+          <p>
+            Grouping: {g.groupingMethods.join(" / ")}
+            {g.clustering?.modelName && ` · ${g.clustering.modelName}`}
+            {g.clustering?.minimumSimilarity != null &&
+              ` · proposal minimum similarity ${g.clustering.minimumSimilarity.toFixed(3)}`}{" "}
+            <HelpTooltip>
+              Exact groups normalize matching question text. Embedding groups
+              are similarity suggestions. Reviewer groups preserve explicit
+              merges and splits and are not reclustered. Similarity does not
+              certify that the same answer applies to every question.
+            </HelpTooltip>
+          </p>
           <p>{g.suggestion}</p>
           <p>
             Priority score: {g.priority}. Earlier half: {g.trend.earlier};

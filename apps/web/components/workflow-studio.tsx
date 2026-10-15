@@ -1,4 +1,5 @@
 "use client";
+import { WorkflowComponentLibrary } from "./workflow-component-library";
 import { WorkflowCanvasToolbar } from "./workflow-canvas-toolbar";
 import { workflowNodeTypes, type CanvasNode } from "./workflow-canvas-node";
 import { WorkflowCreateWizard } from "./workflow-create-wizard";
@@ -958,6 +959,17 @@ export function WorkflowStudio({
           </p>
         ) : (
           <>
+            {build && stage === "build" && (
+              <WorkflowComponentLibrary
+                key={workspaceId}
+                workspaceId={workspaceId}
+                graph={draft.graph}
+                selection={selection}
+                anchor={selected}
+                disabled={!canvasEditable || busy}
+                onInsert={change}
+              />
+            )}
             <div
               className="workflow-stage-nav"
               role="group"

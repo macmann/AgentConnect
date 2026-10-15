@@ -491,8 +491,20 @@ test("Semantic clustering retains examples and reviewer split/merge choices", as
   const clustered = await call("POST", gapBase + "/cluster", {
     ...range,
     modelId: embedding,
+    preview: true,
   });
   assert.equal(clustered.statusCode, 200, clustered.body);
+  const [untouched] =
+    await sql`SELECT count(*)::int AS n FROM knowledge_gap_assignments WHERE run_id=ANY(${ids}::uuid[])`;
+  assert.equal(untouched!.n, 0);
+  assert.equal(
+    (
+      await call("POST", gapBase + "/cluster-apply", {
+        previewId: clustered.json().previewId,
+      })
+    ).statusCode,
+    200,
+  );
   const grouped = await call("GET", gapBase + "?" + new URLSearchParams(range));
   const relevant = grouped
     .json()
@@ -968,4 +980,201 @@ test("All four outbound adapters deliver text and widget bundle contains executa
   assert.match(widgetBundle, /View chart data/);
   assert.match(widgetBundle, /Start workflow/);
   assert.match(widgetBundle, /Save feedback/);
+});
+
+test("Gap previews are selective, scoped, expiring, idempotent and cannot overwrite intervening reviewer decisions", async () => {
+  const { previewGapClusters, applyGapPreview } =
+    await import("../src/gap-clustering.js");
+  const from = new Date().toISOString(),
+    ids: string[] = [];
+  for (const question of [
+    "Reset password English",
+    "กู้คืนรหัสผ่าน",
+    "Find branch",
+    "Protected topic",
+  ]) {
+    const run = randomUUID();
+    ids.push(run);
+    await sql`INSERT INTO agent_runs(id,conversation_id,workspace_id,organization_id,status,trace_id,answer_kind,finished_at) VALUES(${run},${conversation},${workspace},${org},'completed',${run},'no_answer',now())`;
+    await sql`INSERT INTO messages(id,conversation_id,workspace_id,organization_id,run_id,role,content) VALUES(${randomUUID()},${conversation},${workspace},${org},${run},'user',${question})`;
+  }
+  const to = new Date(Date.now() + 10000).toISOString(),
+    base = `/workspaces/${workspace}/operations/knowledge-gaps`;
+  assert.equal(
+    (
+      await call("POST", base + "/assign", {
+        runIds: [ids[3]],
+        targetRunId: null,
+      })
+    ).statusCode,
+    200,
+  );
+  const factory = () => ({
+    embed: async (texts: string[]) =>
+      texts.map((text) => (text.includes("branch") ? [0, 1, 0] : [1, 0, 0])),
+  });
+  const first = await previewGapClusters(
+    workspace,
+    org,
+    owner,
+    embedding,
+    0.85,
+    from,
+    to,
+    factory,
+  );
+  assert.equal(first.protected, 1);
+  assert.equal(first.grouped, 3);
+  assert.equal(first.clusters, 2);
+  assert.equal(
+    first.proposals.find((p) => p.members.length === 2)!.similarity.minimum,
+    1,
+  );
+  const [before] =
+    await sql`SELECT count(*)::int AS n FROM knowledge_gap_assignments WHERE run_id=ANY(${ids}::uuid[])`;
+  assert.equal(before!.n, 1);
+  await assert.rejects(
+    applyGapPreview(randomUUID(), org, owner, first.previewId),
+    /unavailable/,
+  );
+  await assert.rejects(
+    applyGapPreview(workspace, org, outsider, first.previewId),
+    /unavailable/,
+  );
+  await assert.rejects(
+    applyGapPreview(workspace, org, owner, first.previewId, ["unknown"]),
+    /Unknown/,
+  );
+  const concurrent = await previewGapClusters(
+    workspace,
+    org,
+    owner,
+    embedding,
+    0.85,
+    from,
+    to,
+    factory,
+  );
+  const chosen = first.proposals
+    .filter((p) => p.members.length > 1)
+    .map((p) => p.key);
+  const applied = await Promise.all([
+    applyGapPreview(workspace, org, owner, first.previewId, chosen),
+    applyGapPreview(workspace, org, owner, first.previewId, chosen),
+  ]);
+  assert.equal(applied.filter((a) => a.alreadyApplied).length, 1);
+  const [branch] =
+    await sql`SELECT count(*)::int AS n FROM knowledge_gap_assignments WHERE run_id=${ids[2]!}`;
+  assert.equal(branch!.n, 0);
+  const [metadata] =
+    await sql`SELECT clustering_metadata FROM knowledge_gap_assignments WHERE run_id=${ids[0]!}`;
+  assert.equal(metadata!.clustering_metadata.modelId, embedding);
+  await assert.rejects(
+    applyGapPreview(workspace, org, owner, first.previewId),
+    /different selection/,
+  );
+  await assert.rejects(
+    applyGapPreview(workspace, org, owner, concurrent.previewId),
+    /changed/,
+  );
+  const stale = await previewGapClusters(
+    workspace,
+    org,
+    owner,
+    embedding,
+    0.85,
+    from,
+    to,
+    factory,
+  );
+  await call("POST", base + "/assign", { runIds: [ids[0]], targetRunId: null });
+  await assert.rejects(
+    applyGapPreview(workspace, org, owner, stale.previewId),
+    /changed/,
+  );
+  const preserved = await previewGapClusters(
+    workspace,
+    org,
+    owner,
+    embedding,
+    0.85,
+    from,
+    to,
+    factory,
+  );
+  assert.equal(preserved.protected, 2);
+  assert.ok(
+    !preserved.proposals.some((p) => p.members.some((m) => m.runId === ids[0])),
+  );
+  await sql`UPDATE knowledge_gap_previews SET expires_at=now()-interval '1 second' WHERE id=${preserved.previewId}`;
+  await assert.rejects(
+    applyGapPreview(workspace, org, owner, preserved.previewId),
+    /expired/,
+  );
+  const [countBefore] =
+    await sql`SELECT count(*)::int AS n FROM knowledge_gap_previews WHERE workspace_id=${workspace}`;
+  await assert.rejects(
+    previewGapClusters(
+      workspace,
+      org,
+      owner,
+      embedding,
+      0.85,
+      from,
+      to,
+      () => ({
+        embed: async () => {
+          throw new Error("Provider unavailable");
+        },
+      }),
+    ),
+    /Provider unavailable/,
+  );
+  const [countAfter] =
+    await sql`SELECT count(*)::int AS n FROM knowledge_gap_previews WHERE workspace_id=${workspace}`;
+  assert.equal(countAfter!.n, countBefore!.n);
+});
+
+test("Latest operator review controls preview eligibility and stale resolved previews cannot apply", async () => {
+  const { gapCandidates } = await import("../src/gap-queries.js");
+  const { previewGapClusters, applyGapPreview } =
+    await import("../src/gap-clustering.js");
+  const cid = randomUUID(),
+    run = randomUUID(),
+    message = randomUUID();
+  await sql`INSERT INTO conversations(id,workspace_id,organization_id,agent_id,user_id,config_snapshot,model_snapshot) VALUES(${cid},${workspace},${org},${agent},${owner},'{}','{}')`;
+  await sql`INSERT INTO agent_runs(id,conversation_id,workspace_id,organization_id,status,trace_id,answer_kind) VALUES(${run},${cid},${workspace},${org},'completed',${run},'answer')`;
+  await sql`INSERT INTO messages(id,conversation_id,workspace_id,organization_id,run_id,role,content) VALUES(${randomUUID()},${cid},${workspace},${org},${run},'user','A reviewed question'),(${message},${cid},${workspace},${org},${run},'assistant','An answer')`;
+  await sql`INSERT INTO conversation_reviews(id,workspace_id,organization_id,message_id,reviewer_id,rating,created_at) VALUES(${randomUUID()},${workspace},${org},${message},${owner},'dislike',now()-interval '1 minute')`;
+  const from = new Date(Date.now() - 3600000).toISOString(),
+    to = new Date(Date.now() + 60000).toISOString();
+  assert.equal(
+    (await gapCandidates(workspace, org, from, to, 10, [run])).length,
+    1,
+  );
+  const preview = await previewGapClusters(
+    workspace,
+    org,
+    owner,
+    embedding,
+    0.85,
+    from,
+    to,
+    () => ({ embed: async (texts) => texts.map(() => [1, 0, 0]) }),
+  );
+  const [stored] =
+    await sql`SELECT proposals FROM knowledge_gap_previews WHERE id=${preview.previewId}`;
+  assert.equal(
+    JSON.stringify(stored!.proposals).includes("A reviewed question"),
+    false,
+  );
+  await sql`INSERT INTO conversation_reviews(id,workspace_id,organization_id,message_id,reviewer_id,rating) VALUES(${randomUUID()},${workspace},${org},${message},${owner},'like')`;
+  assert.equal(
+    (await gapCandidates(workspace, org, from, to, 10, [run])).length,
+    0,
+  );
+  await assert.rejects(
+    applyGapPreview(workspace, org, owner, preview.previewId),
+    /changed/,
+  );
 });

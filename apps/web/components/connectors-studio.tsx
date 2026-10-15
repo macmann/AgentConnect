@@ -41,6 +41,7 @@ type Sync = {
   id: string;
   status: string;
   mode: "incremental" | "full";
+  inventory_mode: "scan" | "feed-unchanged" | "feed-reconciled";
   counts: Record<string, number>;
   error_code: string | null;
   created_at: string;
@@ -1032,8 +1033,13 @@ export function ConnectorsStudio({
               <article className="connector-run" key={s.id}>
                 <strong>
                   {s.status} ·{" "}
-                  {s.mode === "full" ? "Full refresh" : "Incremental sync"} ·{" "}
-                  {new Date(s.created_at).toLocaleString()}
+                  {s.mode === "full" ? "Full refresh" : "Incremental sync"}{" "}
+                  {s.inventory_mode === "feed-unchanged"
+                    ? " · Change feed: no changes"
+                    : s.inventory_mode === "feed-reconciled"
+                      ? " · Change feed: reconciled"
+                      : ""}{" "}
+                  · {new Date(s.created_at).toLocaleString()}
                 </strong>
                 <p>
                   {Object.entries(s.counts)

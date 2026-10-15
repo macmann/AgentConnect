@@ -57,6 +57,10 @@ export interface RemoteDocument {
 }
 export interface SourceAdapter {
   list(signal: AbortSignal): Promise<RemoteDocument[]>;
+  changes?(
+    signal: AbortSignal,
+    cursor?: string,
+  ): Promise<import("./connector-feeds.js").FeedResult>;
   read(document: RemoteDocument, signal: AbortSignal): Promise<Uint8Array>;
   close(): void;
 }
@@ -70,6 +74,7 @@ export type ConnectorRow = {
   selection: unknown;
   revision: number;
   enabled: boolean;
+  feed_state?: { revision: number; cursor: string } | null;
   archived_at: Date | null;
 };
 export type AdapterFactory = (

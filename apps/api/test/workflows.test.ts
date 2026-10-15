@@ -1000,3 +1000,109 @@ test("Workflow agents continue after optional attachment revocation while explic
     await sql`UPDATE tools SET enabled=true WHERE id=${tool.id}`;
   }
 });
+
+test("workspace components version independently, enforce ownership and expand into executable snapshots", async () => {
+  const { extractComponent, insertComponent } =
+    await import("@agentconnect/schemas/workflow-components");
+  const original = graph(
+    [
+      node("input", "input"),
+      node("research", "agent", { agentVersionId: research }),
+      node("output", "output"),
+    ],
+    [
+      ["input", "research"],
+      ["research", "output"],
+    ],
+  );
+  const component = extractComponent(original, ["research"]);
+  assert.throws(
+    () => extractComponent(original, ["input", "research"]),
+    /exclude Input/,
+  );
+  const first = await call(
+    "POST",
+    `/workspaces/${workspace}/workflow-components`,
+    { name: "Reusable research", graph: component },
+  );
+  assert.equal(first.statusCode, 201, first.body);
+  const cid = first.json().id;
+  assert.equal(
+    (
+      await call(
+        "GET",
+        `/workflow-components/${cid}/versions`,
+        undefined,
+        sessions.outsider,
+      )
+    ).statusCode,
+    403,
+  );
+  assert.equal(
+    (
+      await call(
+        "POST",
+        `/workflow-components/${cid}/versions`,
+        { name: "Blocked", graph: component, revision: 1 },
+        sessions.viewer,
+      )
+    ).statusCode,
+    403,
+  );
+  const inserted = insertComponent(simple(), component, "input", "copy");
+  assert.deepEqual(analyzeWorkflow(inserted).errors, []);
+  assert.equal(
+    inserted.nodes.find((n) => n.id === "copy_0")!.data.agentVersionId,
+    research,
+  );
+  assert.throws(
+    () => insertComponent(simple(), component, "output", "bad"),
+    /single output/,
+  );
+  const next = structuredClone(component);
+  next.nodes[0]!.data.prefix = "New library behavior ";
+  const body = { name: "Reusable research v2", graph: next, revision: 1 };
+  const saves = await Promise.all([
+    call("POST", `/workflow-components/${cid}/versions`, body),
+    call("POST", `/workflow-components/${cid}/versions`, body),
+  ]);
+  assert.deepEqual(saves.map((r) => r.statusCode).sort(), [201, 409]);
+  const history = (
+    await call("GET", `/workflow-components/${cid}/versions`)
+  ).json();
+  assert.deepEqual(
+    history.map((v: { version: number }) => v.version),
+    [2, 1],
+  );
+  assert.equal(inserted.nodes.find((n) => n.id === "copy_0")!.data.prefix, "");
+  const wid = await create("Component copy", inserted),
+    runId = await run(wid);
+  await processWorkflowRun({ providerFactory: provider });
+  assert.equal((await inspect(runId)).status, "completed");
+  const foreign = structuredClone(component);
+  foreign.nodes[0]!.data.agentVersionId = randomUUID();
+  assert.equal(
+    (
+      await call("POST", `/workspaces/${workspace}/workflow-components`, {
+        name: "Foreign",
+        graph: foreign,
+      })
+    ).statusCode,
+    400,
+  );
+  assert.equal(
+    (await call("DELETE", `/workflow-components/${cid}`)).statusCode,
+    200,
+  );
+  assert.equal(
+    (await call("GET", `/workflow-components/${cid}/versions`)).statusCode,
+    404,
+  );
+  assert.equal(
+    (await call("GET", `/workspaces/${workspace}/workflow-components`))
+      .json()
+      .some((c: { id: string }) => c.id === cid),
+    false,
+  );
+  assert.deepEqual(analyzeWorkflow(inserted).errors, []);
+});

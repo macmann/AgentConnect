@@ -1,17 +1,14 @@
+import { gapCandidates, gapAssignmentLock } from "./gap-queries.js";
+import { previewGapClusters, applyGapPreview } from "./gap-clustering.js";
 import {
   addCorrectionRegression,
   prepareCorrectionRegression,
   type CorrectionDraft,
 } from "./knowledge-regressions.js";
-import {
-  defaultEmbeddingFactory,
-  embeddingConnection,
-} from "./knowledge-core.js";
-import { semanticClusters } from "./semantic-gaps.js";
-import { validateVectors } from "@agentconnect/provider-sdk/embeddings";
+import { defaultEmbeddingFactory } from "./knowledge-core.js";
 import type { EmbeddingFactory } from "@agentconnect/provider-sdk/embeddings";
 import type { FastifyInstance } from "fastify";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { actor, workspaceAccess, id, params, audit } from "./app.js";
 import { sql } from "./db.js";
@@ -31,10 +28,12 @@ export async function registerKnowledgeGaps(
         "conversation:review",
       ),
       { from, to } = dateRange(r.query);
-    const rows =
-      await sql`SELECT ar.id AS run_id,ar.conversation_id,ar.answer_kind,ar.error_code,EXISTS(SELECT 1 FROM answer_issues ai JOIN messages am ON am.id=ai.message_id WHERE am.run_id=ar.id) AS answer_reported,q.content AS question,cr.id AS review_id,cr.rating,cr.corrected_response,cr.label,ar.started_at,cf.rating AS customer_rating,cf.resolved AS customer_resolved,EXISTS(SELECT 1 FROM support_cases sc WHERE sc.conversation_id=ar.conversation_id) AS handed_off FROM agent_runs ar JOIN LATERAL(SELECT content FROM messages WHERE run_id=ar.id AND role='user' ORDER BY created_at,id LIMIT 1) q ON true LEFT JOIN LATERAL(SELECT cr.* FROM conversation_reviews cr JOIN messages m ON m.id=cr.message_id WHERE m.run_id=ar.id ORDER BY cr.created_at DESC,cr.id DESC LIMIT 1) cr ON true LEFT JOIN customer_feedback cf ON cf.conversation_id=ar.conversation_id WHERE ar.workspace_id=${w.id} AND ar.organization_id=${w.organization_id} AND ar.started_at>=${from} AND ar.started_at<${to} AND (ar.answer_kind='no_answer' OR ar.error_code IN ('NO_RELEVANT_SOURCES','CITATION_REQUIRED','INVALID_CITATION','GROUNDED_RESPONSE_INVALID') OR cr.rating='dislike' OR cf.rating<=2 OR cf.resolved=false OR EXISTS(SELECT 1 FROM answer_issues ai JOIN messages am ON am.id=ai.message_id WHERE am.run_id=ar.id)) ORDER BY ar.started_at DESC,ar.id DESC LIMIT 1001`;
+    const rows = await gapCandidates(w.id, w.organization_id, from, to, 1001);
     const assignments =
-      await sql`SELECT run_id,group_key,method FROM knowledge_gap_assignments WHERE workspace_id=${w.id} AND organization_id=${w.organization_id}`;
+      await sql`SELECT run_id,group_key,method,clustering_metadata FROM knowledge_gap_assignments WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND run_id=ANY(${rows.slice(0, 1000).map((row) => row.run_id)}::uuid[])`;
+    const assignmentsByRun = new Map(
+      assignments.map((assignment) => [assignment.run_id, assignment]),
+    );
     const groups = new Map<
       string,
       {
@@ -53,9 +52,7 @@ export async function registerKnowledgeGaps(
         .replace(/[^\p{L}\p{N}\s]/gu, " ")
         .replace(/\s+/g, " ")
         .trim();
-      const key =
-        assignments.find((a) => a.run_id === row.run_id)?.group_key ??
-        normalized;
+      const key = assignmentsByRun.get(row.run_id)?.group_key ?? normalized;
       const group: {
         key: string;
         question: string;
@@ -73,7 +70,7 @@ export async function registerKnowledgeGaps(
       };
       group.count++;
       const reason =
-        row.customer_rating <= 2 && row.customer_rating !== null
+        row.customer_rating !== null && row.customer_rating <= 2
           ? "Customer dissatisfaction"
           : row.customer_resolved === false
             ? "Customer marked unresolved"
@@ -93,6 +90,17 @@ export async function registerKnowledgeGaps(
       groups: [...groups.values()]
         .map((g) => ({
           ...g,
+          groupingMethods: [
+            ...new Set(
+              g.examples.map(
+                (e) => assignmentsByRun.get(e.run_id)?.method ?? "exact",
+              ),
+            ),
+          ],
+          clustering:
+            assignments.find(
+              (a) => a.group_key === g.key && a.method === "embedding",
+            )?.clustering_metadata ?? null,
           priority:
             g.count +
             2 *
@@ -126,12 +134,12 @@ export async function registerKnowledgeGaps(
           trend: {
             recent: g.examples.filter(
               (e) =>
-                Date.parse(e.started_at) >=
+                new Date(e.started_at).getTime() >=
                 (Date.parse(from) + Date.parse(to)) / 2,
             ).length,
             earlier: g.examples.filter(
               (e) =>
-                Date.parse(e.started_at) <
+                new Date(e.started_at).getTime() <
                 (Date.parse(from) + Date.parse(to)) / 2,
             ).length,
           },
@@ -155,6 +163,7 @@ export async function registerKnowledgeGaps(
         );
       const d = z
         .strictObject({
+          preview: z.boolean().default(false),
           modelId: z.uuid(),
           threshold: z.number().min(0.7).max(0.99).default(0.85),
           from: z.iso.datetime(),
@@ -162,42 +171,88 @@ export async function registerKnowledgeGaps(
         })
         .parse(r.body);
       const range = dateRange({ from: d.from, to: d.to });
-      const rows =
-        await sql`SELECT ar.id,q.content AS question FROM agent_runs ar JOIN LATERAL(SELECT content FROM messages WHERE run_id=ar.id AND role='user' ORDER BY created_at,id LIMIT 1) q ON true LEFT JOIN customer_feedback cf ON cf.conversation_id=ar.conversation_id WHERE ar.workspace_id=${w.id} AND ar.organization_id=${w.organization_id} AND ar.started_at>=${range.from} AND ar.started_at<${range.to} AND (ar.answer_kind='no_answer' OR ar.error_code IN ('NO_RELEVANT_SOURCES','CITATION_REQUIRED','INVALID_CITATION','GROUNDED_RESPONSE_INVALID') OR cf.rating<=2 OR cf.resolved=false OR EXISTS(SELECT 1 FROM conversation_reviews cr JOIN messages m ON m.id=cr.message_id WHERE m.run_id=ar.id AND cr.rating='dislike') OR EXISTS(SELECT 1 FROM answer_issues ai JOIN messages am ON am.id=ai.message_id WHERE am.run_id=ar.id)) ORDER BY ar.started_at DESC,ar.id DESC LIMIT 301`;
-      const items = rows.slice(0, 300),
-        conn = await embeddingConnection(d.modelId, w.id, w.organization_id),
-        provider = factory(conn),
-        vectors: number[][] = [],
-        signal = AbortSignal.timeout(60000);
-      for (let i = 0; i < items.length; i += 32) {
-        const texts = items
-            .slice(i, i + 32)
-            .map((row) => row.question.slice(0, 2000)),
-          batch = await provider.embed(texts, signal, "document");
-        validateVectors(batch, texts.length, conn.dimensions);
-        vectors.push(...batch);
-      }
-      const groups = semanticClusters(vectors, d.threshold);
-      await sql.begin(async (tx) => {
-        for (const group of groups) {
-          const key =
-            "semantic:" +
-            createHash("sha256")
-              .update(
-                items[group[0]!]!.question.normalize("NFKC")
-                  .trim()
-                  .toLowerCase(),
-              )
-              .digest("hex");
-          for (const index of group)
-            await tx`INSERT INTO knowledge_gap_assignments(run_id,workspace_id,organization_id,group_key,updated_by,method) VALUES(${items[index]!.id},${w.id},${w.organization_id},${key},${u.id},'embedding') ON CONFLICT(run_id) DO UPDATE SET group_key=EXCLUDED.group_key,updated_by=EXCLUDED.updated_by,method='embedding',updated_at=now() WHERE knowledge_gap_assignments.method<>'reviewer'`;
-        }
-      });
-      return {
-        grouped: items.length,
-        clusters: groups.length,
-        truncated: rows.length > 300,
-      };
+      const preview = await previewGapClusters(
+        w.id,
+        w.organization_id,
+        u.id,
+        d.modelId,
+        d.threshold,
+        range.from,
+        range.to,
+        factory,
+      );
+      if (!d.preview)
+        await applyGapPreview(
+          w.id,
+          w.organization_id,
+          u.id,
+          preview.previewId,
+          undefined,
+          async (tx) => {
+            await audit(
+              tx,
+              r,
+              u.id,
+              "knowledge.gaps_clustered",
+              preview.previewId,
+              w.organization_id,
+              w.id,
+            );
+          },
+        );
+      if (d.preview)
+        await sql.begin(async (tx) => {
+          await audit(
+            tx,
+            r,
+            u.id,
+            "knowledge.gaps_previewed",
+            preview.previewId,
+            w.organization_id,
+            w.id,
+          );
+        });
+      return preview;
+    },
+  );
+  app.post(
+    "/workspaces/:workspaceId/operations/knowledge-gaps/cluster-apply",
+    async (r) => {
+      const u = await actor(r),
+        w = await workspaceAccess(
+          u.id,
+          id(params(r).workspaceId),
+          "conversation:review",
+        );
+      const { previewId, groupKeys } = z
+        .strictObject({
+          previewId: z.uuid(),
+          groupKeys: z
+            .array(z.string().min(1).max(200))
+            .min(1)
+            .max(300)
+            .optional(),
+        })
+        .parse(r.body);
+      const result = await applyGapPreview(
+        w.id,
+        w.organization_id,
+        u.id,
+        previewId,
+        groupKeys,
+        async (tx) => {
+          await audit(
+            tx,
+            r,
+            u.id,
+            "knowledge.gaps_clustered",
+            previewId,
+            w.organization_id,
+            w.id,
+          );
+        },
+      );
+      return result;
     },
   );
   app.post(
@@ -217,6 +272,7 @@ export async function registerKnowledgeGaps(
         })
         .parse(r.body);
       const result = await sql.begin(async (tx) => {
+        await gapAssignmentLock(tx, w.id);
         const rows =
           await tx`SELECT id FROM agent_runs WHERE id=ANY(${[...d.runIds, ...d.targetRunIds, ...(d.targetRunId ? [d.targetRunId] : [])]}::uuid[]) AND workspace_id=${w.id} AND organization_id=${w.organization_id}`;
         if (
@@ -240,7 +296,16 @@ export async function registerKnowledgeGaps(
           ]),
         ];
         for (const runId of ids)
-          await tx`INSERT INTO knowledge_gap_assignments(run_id,workspace_id,organization_id,group_key,updated_by) VALUES(${runId},${w.id},${w.organization_id},${key},${u.id}) ON CONFLICT(run_id) DO UPDATE SET group_key=EXCLUDED.group_key,updated_by=EXCLUDED.updated_by,method='reviewer',updated_at=now()`;
+          await tx`INSERT INTO knowledge_gap_assignments(run_id,workspace_id,organization_id,group_key,updated_by) VALUES(${runId},${w.id},${w.organization_id},${key},${u.id}) ON CONFLICT(run_id) DO UPDATE SET group_key=EXCLUDED.group_key,updated_by=EXCLUDED.updated_by,method='reviewer',clustering_metadata='{}',updated_at=clock_timestamp()`;
+        await audit(
+          tx,
+          r,
+          u.id,
+          "knowledge.gaps_assigned",
+          d.runIds[0]!,
+          w.organization_id,
+          w.id,
+        );
         return { key };
       });
       return result;

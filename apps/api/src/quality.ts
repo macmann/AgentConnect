@@ -302,6 +302,8 @@ export async function registerQualityRoutes(app: FastifyInstance) {
       const prices =
         await tx`SELECT model_id,input_usd_per_million::float8,output_usd_per_million::float8 FROM model_prices WHERE workspace_id=${w.id}`;
       const fingerprint = await qualityFingerprint(c, model, w.id, tx);
+      if (examples.some((e) => e.multilingual))
+        await workspaceAccess(u.id, w.id, "knowledge:read");
       if (examples.some((e) => e.documentChecks.length)) {
         await workspaceAccess(u.id, w.id, "knowledge:read");
         if (body.candidateReleaseId)
@@ -318,7 +320,10 @@ export async function registerQualityRoutes(app: FastifyInstance) {
       );
       const expectedSourceIds = [
         ...new Set(
-          examples.flatMap((e) => e.expectedCitations.map((c) => c.sourceId)),
+          examples.flatMap((e) => [
+            ...e.expectedCitations.map((c) => c.sourceId),
+            ...(e.multilingual ? e.expectedSourceIds : []),
+          ]),
         ),
       ];
       if (expectedSourceIds.length) {

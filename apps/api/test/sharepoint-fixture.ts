@@ -94,52 +94,57 @@ export function createSharePointFixture() {
             token_type: "Bearer",
             expires_in: 3600,
           }
-        : path.endsWith("/sites/fixture.sharepoint.com:/sites/Support") ||
-            path.endsWith("/sites/" + site.id)
+        : path.endsWith("/root/delta")
           ? {
-              ...site,
-              id: state.wrongSite
-                ? `foreign.sharepoint.com,${randomUUID()},${randomUUID()}`
-                : site.id,
+              value: [{ id: "policy" }],
+              "@odata.deltaLink": `https://graph.microsoft.com/v1.0/drives/${library.id}/root/delta?token=fixture`,
             }
-          : path.endsWith("/sites/" + site.id + "/drives")
+          : path.endsWith("/sites/fixture.sharepoint.com:/sites/Support") ||
+              path.endsWith("/sites/" + site.id)
             ? {
-                value: state.linked
-                  ? Array.from({ length: state.libraryCount }, (_, i) =>
-                      i ? { ...library, id: `library-${i}` } : library,
-                    )
-                  : [],
-                ...(state.libraryNext
-                  ? { "@odata.nextLink": state.libraryNext }
-                  : {}),
+                ...site,
+                id: state.wrongSite
+                  ? `foreign.sharepoint.com,${randomUUID()},${randomUUID()}`
+                  : site.id,
               }
-            : path.endsWith("/drives/" + library.id)
-              ? { id: library.id, driveType: "documentLibrary" }
-              : path.endsWith("/root") || path.endsWith("/items/" + root.id)
-                ? root
-                : path.endsWith("/items/" + policies.id)
-                  ? policies
-                  : path.endsWith("/items/" + root.id + "/children")
-                    ? {
-                        value: [
-                          policies,
-                          {
-                            ...file(),
-                            id: "shortcut",
-                            remoteItem: { id: "remote" },
-                          },
-                        ],
-                        ...(state.folderNext
-                          ? { "@odata.nextLink": state.folderNext }
-                          : {}),
-                      }
-                    : path.endsWith("/items/" + policies.id + "/children")
-                      ? { value: state.visible ? [file()] : [] }
-                      : path.endsWith("/items/policy/content")
-                        ? Buffer.from(state.content)
-                        : path.endsWith("/items/policy")
-                          ? file()
-                          : undefined;
+            : path.endsWith("/sites/" + site.id + "/drives")
+              ? {
+                  value: state.linked
+                    ? Array.from({ length: state.libraryCount }, (_, i) =>
+                        i ? { ...library, id: `library-${i}` } : library,
+                      )
+                    : [],
+                  ...(state.libraryNext
+                    ? { "@odata.nextLink": state.libraryNext }
+                    : {}),
+                }
+              : path.endsWith("/drives/" + library.id)
+                ? { id: library.id, driveType: "documentLibrary" }
+                : path.endsWith("/root") || path.endsWith("/items/" + root.id)
+                  ? root
+                  : path.endsWith("/items/" + policies.id)
+                    ? policies
+                    : path.endsWith("/items/" + root.id + "/children")
+                      ? {
+                          value: [
+                            policies,
+                            {
+                              ...file(),
+                              id: "shortcut",
+                              remoteItem: { id: "remote" },
+                            },
+                          ],
+                          ...(state.folderNext
+                            ? { "@odata.nextLink": state.folderNext }
+                            : {}),
+                        }
+                      : path.endsWith("/items/" + policies.id + "/children")
+                        ? { value: state.visible ? [file()] : [] }
+                        : path.endsWith("/items/policy/content")
+                          ? Buffer.from(state.content)
+                          : path.endsWith("/items/policy")
+                            ? file()
+                            : undefined;
     if (value === undefined)
       throw new Error("Unexpected SharePoint fixture path");
     return {
