@@ -1466,6 +1466,7 @@ test("Multilingual image extraction is scoped, cached, structured and available 
   const { storeKnowledge } = await import("../src/knowledge-storage.js");
   await storeKnowledge(objectKey, bytes);
   await sql`UPDATE knowledge_jobs SET payload=payload || ${sql.json({ filename: "statement.png", objectKey })}::jsonb WHERE source_id=${uploadedId}`;
+  await sql`UPDATE knowledge_sources SET object_key=${objectKey},filename='statement.png',kind='upload' WHERE id=${uploadedId}`;
   await processKnowledgeJob(embedding, undefined, provider);
   const [state] =
     await sql`SELECT status FROM knowledge_sources WHERE id=${uploadedId}`;
@@ -1498,4 +1499,131 @@ test("Multilingual image extraction is scoped, cached, structured and available 
     ).statusCode,
     403,
   );
+  const reviewPath = `/knowledge-bases/${baseId}/sources/${uploadedId}/extraction`;
+  const original = await call(
+    "GET",
+    reviewPath + `/page-image?page=1&revision=1`,
+  );
+  assert.equal(original.statusCode, 200);
+  assert.equal(original.headers["content-type"], "image/png");
+  assert.equal(
+    (
+      await call(
+        "GET",
+        reviewPath + `/page-image?page=1&revision=1`,
+        undefined,
+        sessions.outsider,
+      )
+    ).statusCode,
+    403,
+  );
+  const release = await call("POST", `/knowledge-bases/${baseId}/releases`, {
+    name: "Approved original scan",
+    sourceIds: [uploadedId],
+  });
+  assert.equal(release.statusCode, 201, release.body);
+  const releaseId = release.json().id;
+  await sql`UPDATE knowledge_releases SET status='published' WHERE id=${releaseId}`;
+  await sql`UPDATE knowledge_bases SET published_release_id=${releaseId} WHERE id=${baseId}`;
+  const edits = structuredClone(
+    preview.json().documents[0].ai_extraction.pages[0],
+  );
+  delete edits.page;
+  delete edits.cached;
+  delete edits.imageKey;
+  delete edits.mimeType;
+  edits.blocks[1].rows[2][2] = "(950.00)";
+  const correction = {
+    revision: 1,
+    documentId: preview.json().documents[0].id,
+    pages: [{ page: 1, extraction: edits }],
+  };
+  assert.equal(
+    (
+      await call(
+        "PUT",
+        reviewPath + "/corrections",
+        correction,
+        sessions.viewer,
+      )
+    ).statusCode,
+    403,
+  );
+  const malformed = structuredClone(correction);
+  malformed.pages[0]!.extraction.blocks[1].headerRows = 99;
+  assert.equal(
+    (await call("PUT", reviewPath + "/corrections", malformed)).statusCode,
+    400,
+  );
+  const saved = await call("PUT", reviewPath + "/corrections", correction);
+  assert.equal(saved.statusCode, 202, saved.body);
+  assert.equal(saved.json().revision, 2);
+  assert.equal(
+    (await call("PUT", reviewPath + "/corrections", correction)).statusCode,
+    409,
+  );
+  const beforeCalls = calls;
+  await processKnowledgeJob(embedding, undefined, provider);
+  assert.equal(
+    calls,
+    beforeCalls,
+    "Reindexing a human correction must not call the vision model",
+  );
+  const corrected = await call("GET", reviewPath);
+  assert.equal(corrected.json().revision, 2);
+  assert.equal(
+    corrected.json().documents[0].ai_extraction.pages[0].blocks[1].rows[2][2],
+    "(950.00)",
+  );
+  const chunks = await call(
+    "GET",
+    `/knowledge-bases/${baseId}/sources/${uploadedId}/chunks`,
+  );
+  assert.ok(
+    chunks
+      .json()
+      .some((c: { content: string }) => c.content.includes("(950.00)")),
+  );
+  const history = await call("GET", reviewPath + "/edits");
+  assert.equal(history.json().length, 1);
+  assert.equal(
+    (await call("GET", reviewPath + `/page-image?page=1&revision=1`))
+      .statusCode,
+    409,
+  );
+  const [baseState] =
+    await sql`SELECT approval_required,published_release_id FROM knowledge_bases WHERE id=${baseId}`;
+  assert.equal(baseState!.approval_required, true);
+  assert.equal(baseState!.published_release_id, releaseId);
+  const published =
+    await sql`SELECT content FROM knowledge_release_chunks WHERE release_id=${releaseId}`;
+  assert.ok(published.some((row) => row.content.includes("(900.00)")));
+  assert.ok(!published.some((row) => row.content.includes("(950.00)")));
+  await call(
+    "POST",
+    `/knowledge-bases/${baseId}/sources/${uploadedId}/reingest`,
+  );
+  await processKnowledgeJob(embedding, undefined, provider);
+  assert.equal(
+    calls,
+    beforeCalls,
+    "Normal reingest retains the human correction without vision calls",
+  );
+  const reset = await call("DELETE", reviewPath + "/corrections", {
+    revision: 3,
+  });
+  assert.equal(reset.statusCode, 202, reset.body);
+  await processKnowledgeJob(embedding, undefined, provider);
+  const automatic = (await call("GET", reviewPath)).json();
+  assert.equal(
+    automatic.documents[0].ai_extraction.pages[0].blocks[1].rows[2][2],
+    "(900.00)",
+  );
+  assert.equal(
+    calls,
+    beforeCalls,
+    "Reset reuses the original cached extraction when settings match",
+  );
+  await sql`UPDATE knowledge_bases SET published_release_id=NULL WHERE id=${baseId}`;
+  await sql`DELETE FROM knowledge_releases WHERE id=${releaseId}`;
 });

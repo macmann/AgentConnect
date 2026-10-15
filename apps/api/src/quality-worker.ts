@@ -1,3 +1,8 @@
+import {
+  pageSnapshot,
+  scoreDocumentBenchmarks,
+  verifyBenchmarkSources,
+} from "./document-benchmarks.js";
 import { modelUsageCost } from "./model-routing.js";
 import { KnowledgeError } from "@agentconnect/rag/parsers";
 import { ToolError } from "./tool-errors.js";
@@ -101,6 +106,20 @@ export async function processEvaluationRun(
           run.workspace_id,
           "quality:execute",
         );
+        const documentSnapshots = (run.document_snapshots ?? []).map(
+          (s: unknown) => pageSnapshot.parse(s),
+        );
+        if (documentSnapshots.length)
+          await workspaceAccess(
+            run.requested_by,
+            run.workspace_id,
+            "knowledge:read",
+          );
+        await verifyBenchmarkSources(
+          documentSnapshots,
+          run.workspace_id,
+          run.organization_id,
+        );
         const answer = await executeAgentSnapshot(
           c,
           model,
@@ -115,6 +134,11 @@ export async function processEvaluationRun(
           embeddingFactory,
           run.candidate_release_id ?? undefined,
         );
+        await verifyBenchmarkSources(
+          documentSnapshots,
+          run.workspace_id,
+          run.organization_id,
+        );
         output = answer.output;
         if (!output.trim()) throw new ProviderError("EMPTY_PROVIDER_RESPONSE");
         const deterministic = deterministicScore(
@@ -124,9 +148,30 @@ export async function processEvaluationRun(
             : output,
           answer.sources.map((s) => s.sourceId),
         );
+        const documentBenchmark = scoreDocumentBenchmarks(
+          e,
+          (run.document_snapshots ?? []).map((s: unknown) =>
+            pageSnapshot.parse(s),
+          ),
+          answer.citations,
+        );
+        const pageMean = (key: "textSimilarity" | "cellAccuracy") => {
+          const values = documentBenchmark.pages
+            .map((p) => p[key])
+            .filter((v): v is number => v !== null);
+          return values.length
+            ? values.reduce((n, v) => n + v, 0) / values.length
+            : null;
+        };
         score = deterministic.score;
+        if (documentBenchmark.measured)
+          score = documentBenchmark.passed ? (score ?? 1) : 0;
         metrics = {
           ...metrics,
+          documentBenchmark,
+          extractionTextSimilarity: pageMean("textSimilarity"),
+          tableCellAccuracy: pageMean("cellAccuracy"),
+          citationRecall: documentBenchmark.citationRecall,
           inputTokens: answer.inputTokens,
           outputTokens: answer.outputTokens,
           retrievalRecall: deterministic.retrievalRecall,
@@ -209,6 +254,8 @@ export async function processEvaluationRun(
             4;
           if (deterministic.score !== null)
             score = Math.min(score, deterministic.score);
+          if (documentBenchmark.measured && !documentBenchmark.passed)
+            score = 0;
         }
         passed =
           score !== null &&
@@ -231,7 +278,7 @@ export async function processEvaluationRun(
     )
       throw new ProviderError("EVALUATION_DEPENDENCIES_CHANGED");
     const results =
-      await sql`SELECT passed,status,score,metrics FROM evaluation_results WHERE run_id=${run.id}`;
+      await sql`SELECT example_id,passed,status,score,metrics FROM evaluation_results WHERE run_id=${run.id}`;
     if (results.length !== examples.length)
       throw new ProviderError("EVALUATION_INCOMPLETE");
     const average = (key: string) => {
@@ -249,18 +296,59 @@ export async function processEvaluationRun(
         passRate,
         meanLatencyMs: average("latencyMs"),
         retrievalRecall: average("retrievalRecall"),
+        extractionTextSimilarity: average("extractionTextSimilarity"),
+        tableCellAccuracy: average("tableCellAccuracy"),
+        citationRecall: average("citationRecall"),
         cost: results.every(
           (r) => r.status === "completed" && typeof r.metrics.cost === "number",
         )
           ? results.reduce((sum, r) => sum + r.metrics.cost, 0)
           : null,
       };
+    summary.segments = [...new Set(examples.flatMap((e) => e.tags))].map(
+      (tag) => {
+        const ids = examples
+          .filter((e) => e.tags.includes(tag))
+          .map((e) => e.id);
+        const rows = results.filter((r) => ids.includes(r.example_id));
+        const mean = (key: string) => {
+          const values = rows
+            .map((r) => r.metrics[key])
+            .filter((v): v is number => typeof v === "number");
+          return values.length
+            ? values.reduce((n, v) => n + v, 0) / values.length
+            : null;
+        };
+        return {
+          tag,
+          cases: rows.length,
+          passRate: rows.filter((r) => r.passed).length / rows.length,
+          meanLatencyMs: mean("latencyMs"),
+          extractionTextSimilarity: mean("extractionTextSimilarity"),
+          tableCellAccuracy: mean("tableCellAccuracy"),
+          citationRecall: mean("citationRecall"),
+        };
+      },
+    );
     if (run.baseline_run_id) {
       const [base] =
         await sql`SELECT summary FROM evaluation_runs WHERE id=${run.baseline_run_id}`;
       if (base)
         summary.regression = {
           passRateDelta: passRate - base.summary.passRate,
+          ...Object.fromEntries(
+            [
+              "extractionTextSimilarity",
+              "tableCellAccuracy",
+              "citationRecall",
+            ].map((key) => [
+              `${key}Delta`,
+              typeof summary[key] === "number" &&
+              typeof base.summary[key] === "number"
+                ? Number(summary[key]) - Number(base.summary[key])
+                : null,
+            ]),
+          ),
           latencyDeltaMs:
             Number(summary.meanLatencyMs) - Number(base.summary.meanLatencyMs),
           costDelta:

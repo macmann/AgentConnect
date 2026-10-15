@@ -1,4 +1,5 @@
 "use client";
+import { ExtractionReview, type ExtractionPage } from "./extraction-review";
 import { HelpTooltip } from "./help-tooltip";
 import { websiteInput } from "@agentconnect/schemas/knowledge";
 import {
@@ -120,6 +121,7 @@ export function KnowledgeStudio({
     | null
   >(null);
   const [extraction, setExtraction] = useState<{
+    sourceId: string;
     status: string;
     revision: number;
     documents: {
@@ -127,19 +129,7 @@ export function KnowledgeStudio({
       title: string;
       ai_extraction?: {
         modelId: string;
-        pages: {
-          page: number;
-          cached: boolean;
-          language: string;
-          warnings: string[];
-          blocks: {
-            kind: string;
-            heading: string;
-            text: string;
-            rows: string[][];
-            headerRows: number;
-          }[];
-        }[];
+        pages: ExtractionPage[];
       };
       extraction: {
         warnings: string[];
@@ -397,6 +387,14 @@ export function KnowledgeStudio({
             <button
               className="text-button"
               onClick={() => {
+                if (
+                  !window.dispatchEvent(
+                    new Event("knowledge-review:before-close", {
+                      cancelable: true,
+                    }),
+                  )
+                )
+                  return;
                 setSelected("");
                 setForm(null);
                 setResult(null);
@@ -971,6 +969,14 @@ export function KnowledgeStudio({
                 <button
                   key={t}
                   onClick={() => {
+                    if (
+                      !window.dispatchEvent(
+                        new Event("knowledge-review:before-close", {
+                          cancelable: true,
+                        }),
+                      )
+                    )
+                      return;
                     setTab(t);
                     setForm(null);
                     setPreview(null);
@@ -1146,15 +1152,24 @@ export function KnowledgeStudio({
                               <button
                                 className="text-button"
                                 disabled={busy || s.status !== "ready"}
-                                onClick={() =>
-                                  action(async () =>
+                                onClick={() => {
+                                  if (
+                                    !window.dispatchEvent(
+                                      new Event(
+                                        "knowledge-review:before-close",
+                                        { cancelable: true },
+                                      ),
+                                    )
+                                  )
+                                    return;
+                                  return action(async () =>
                                     setExtraction(
                                       await requestJson(
                                         path + `/sources/${s.id}/extraction`,
                                       ),
                                     ),
-                                  )
-                                }
+                                  );
+                                }}
                               >
                                 Extraction preview
                               </button>
@@ -1254,7 +1269,16 @@ export function KnowledgeStudio({
                     <h3>Extraction preview · revision {extraction.revision}</h3>
                     <button
                       className="text-button"
-                      onClick={() => setExtraction(null)}
+                      onClick={() => {
+                        if (
+                          window.dispatchEvent(
+                            new Event("knowledge-review:before-close", {
+                              cancelable: true,
+                            }),
+                          )
+                        )
+                          setExtraction(null);
+                      }}
                     >
                       Close extraction preview
                     </button>
@@ -1262,6 +1286,25 @@ export function KnowledgeStudio({
                   {extraction.documents.map((d) => (
                     <div key={d.id}>
                       <h4>{d.title}</h4>
+                      {d.ai_extraction && (
+                        <ExtractionReview
+                          key={d.id + ":" + extraction.revision}
+                          knowledgeBaseId={selected}
+                          sourceId={extraction.sourceId}
+                          documentId={d.id}
+                          revision={extraction.revision}
+                          pages={d.ai_extraction.pages}
+                          canEdit={canManage && extraction.status === "ready"}
+                          onQueued={(message) => {
+                            setExtraction(null);
+                            setNotice(
+                              message ??
+                                "Corrections saved. Reindexing is queued; published releases remain unchanged.",
+                            );
+                            void cache.invalidateQueries();
+                          }}
+                        />
+                      )}
                       {d.ai_extraction && (
                         <details>
                           <summary>

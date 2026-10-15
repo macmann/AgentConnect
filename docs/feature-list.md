@@ -188,3 +188,10 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 
 - Optional multilingual vision extraction for scanned PDFs and PNG/JPEG/WebP uploads, using workspace OpenAI-compatible, OpenAI, Anthropic or Gemini models.
 - Scanned/table/all-page modes, original-script preservation, structured multi-header tables, uncertainty warnings, page/output budgets, source-scoped extraction caching and reviewable extraction previews.
+
+## Document quality benchmarks and correction workspace
+
+- Guided real-source benchmark cases, trusted reference transcription, exact table-cell expectations and cited-page coverage using existing Quality Lab datasets and runs.
+- Immutable extraction snapshots, dependency/source-drift checks, tag-level results, baseline comparisons and JSON result export; existing latency/cost and answer checks retained.
+- Side-by-side authenticated original-page images and editable AI text/tables, atomic audited corrections, optimistic revision protection and reindexing without another vision call.
+- Unchanged-source corrections persist through Reingest; an explicit automatic-extraction reset preserves history and existing reviewed-release controls.

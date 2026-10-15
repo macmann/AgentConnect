@@ -138,7 +138,7 @@ pnpm storage:init
 pnpm dev
 ```
 
-Migration **0033** adds approved workspace LLM/Cohere rerankers. Migration **0032** adds per-answer reports and verified knowledge corrections; **0030–0031** add connector OAuth and opt-in advanced knowledge processing. Migrations are tracked and repeatable; use the supported migration command instead of editing tables manually. Existing connector credentials remain supported.
+Migration **0034** adds audited extraction corrections and immutable document benchmark snapshots. Migration **0033** adds approved workspace LLM/Cohere rerankers. Migration **0032** adds per-answer reports and verified knowledge corrections; **0030–0031** add connector OAuth and opt-in advanced knowledge processing. Migrations are tracked and repeatable; use the supported migration command instead of editing tables manually. Existing connector credentials remain supported.
 
 Each migration and its tracking row commit in a separate transaction. A session advisory lock serializes concurrent migration commands. If a migration fails, earlier migrations remain applied; fix the reported migration error and rerun `pnpm db:migrate`. The failed migration is rolled back and retried. Error output contains only a safe code and, when available, the migration version.
 

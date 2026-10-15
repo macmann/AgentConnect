@@ -181,3 +181,7 @@ The [Agent Configure redesign](agent-configure.md) introduces section-based prog
 ## Integration convenience
 
 Implemented guided Google/Microsoft/Slack knowledge-source OAuth, server-side refresh and reconnect, bounded folder/channel discovery, explicit incremental sync history and recovery full refresh. Provider app/consent setup and live acceptance remain required. Native provider delta feeds remain an optimization backlog item. See [connectors](connectors.md), [feature list](feature-list.md) and [user guide](user-guide.md).
+
+## Improvement batches
+
+Batch 1 implements real-document quality benchmarks and the extraction correction workspace. Actual customer recognition/answer accuracy must be measured using customer-authored ground truth and live selected models; controlled automated fixtures validate the machinery. Subsequent requested batches remain: deterministic financial calculations plus extraction cost/tracing; multilingual retrieval validation plus semantic gap grouping; connector delta feeds plus reusable workflow components.

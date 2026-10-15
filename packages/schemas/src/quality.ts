@@ -1,4 +1,29 @@
 import { z } from "zod";
+export const documentCheck = z
+  .object({
+    sourceId: z.uuid(),
+    page: z.number().int().min(1).max(200),
+    expectedText: z.string().max(20000).optional(),
+    minTextSimilarity: z.number().min(0).max(1).default(0.98),
+    cells: z
+      .array(
+        z
+          .object({
+            table: z.number().int().min(0).max(199),
+            row: z.number().int().min(0).max(999),
+            column: z.number().int().min(0).max(99),
+            value: z.string().max(10000),
+          })
+          .strict(),
+      )
+      .max(100)
+      .default([]),
+  })
+  .strict()
+  .refine(
+    (v) => !!v.expectedText?.trim() || v.cells.length > 0,
+    "Add reference text or expected cells",
+  );
 export const example = z
   .object({
     id: z.uuid().default(() => globalThis.crypto.randomUUID()),
@@ -7,6 +32,18 @@ export const example = z
     expectedAnswer: z.string().trim().min(1).max(16000).optional(),
     contains: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
     forbidden: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
+    documentChecks: z.array(documentCheck).max(20).default([]),
+    expectedCitations: z
+      .array(
+        z
+          .object({
+            sourceId: z.uuid(),
+            page: z.number().int().min(1).max(200),
+          })
+          .strict(),
+      )
+      .max(20)
+      .default([]),
     expectedSourceIds: z.array(z.uuid()).max(20).default([]),
     tags: z.array(z.string().min(1).max(40)).max(10).default([]),
     metadata: z

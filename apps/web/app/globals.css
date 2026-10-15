@@ -5719,3 +5719,120 @@ input[type="range"] {
     --panel-gutter: 16px;
   }
 }
+
+.extraction-review {
+  margin-block: 24px;
+  min-width: 0;
+}
+.extraction-review-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.extraction-original {
+  position: sticky;
+  top: 96px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  max-height: 75vh;
+  overflow: auto;
+}
+.extraction-original img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  background: white;
+}
+.extraction-edit-fields {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+}
+.extraction-edit-fields label {
+  display: grid;
+  gap: 8px;
+}
+.extraction-edit-fields input,
+.extraction-edit-fields textarea {
+  width: 100%;
+}
+.extraction-edit-block {
+  margin-block: 20px;
+  padding-block: 16px;
+  border-top: 1px solid var(--line);
+}
+.extraction-edit-block td {
+  padding: 8px;
+}
+.extraction-edit-block td input {
+  min-width: 120px;
+}
+@media (max-width: 900px) {
+  .extraction-review-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .extraction-original {
+    position: static;
+    max-height: 50vh;
+  }
+}
+.benchmark-cell-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(64px, 0.6fr)) minmax(120px, 2fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-block: 12px;
+}
+.benchmark-cell-row input {
+  width: 100%;
+}
+.benchmark-summary {
+  margin-block: 20px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+@media (max-width: 900px) {
+  .benchmark-cell-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+/* Review fields live outside a form, so give them the shared form treatment. */
+.extraction-review input:not([type="range"]),
+.extraction-review select {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  width: 100%;
+}
+.extraction-review .button-row > label {
+  min-width: 140px;
+}
+.extraction-edit-block table {
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
+}
+.extraction-edit-block td .text-button {
+  white-space: nowrap;
+  min-width: 110px;
+}
+.extraction-original > label {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.extraction-original input[type="range"] {
+  width: 100%;
+}
+@media (min-width: 701px) {
+  .quality-layout .studio-form .workspace-section-mobile {
+    display: none;
+  }
+}

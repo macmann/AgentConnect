@@ -1,4 +1,5 @@
 "use client";
+import { DocumentBenchmarkBuilder } from "./document-benchmark-builder";
 import { HelpTooltip } from "./help-tooltip";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,6 +27,18 @@ type Run = {
     meanLatencyMs: number;
     retrievalRecall: number | null;
     cost: number | null;
+    extractionTextSimilarity?: number | null;
+    tableCellAccuracy?: number | null;
+    citationRecall?: number | null;
+    segments?: {
+      tag: string;
+      cases: number;
+      passRate: number;
+      meanLatencyMs: number | null;
+      extractionTextSimilarity: number | null;
+      tableCellAccuracy: number | null;
+      citationRecall: number | null;
+    }[];
     regression?: { passRateDelta: number };
   } | null;
   error_code: string | null;
@@ -39,6 +52,7 @@ type Detail = Run & {
     score: number | null;
     passed: boolean;
     error_code: string | null;
+    metrics: Record<string, unknown>;
   }[];
 };
 const starter = JSON.stringify(
@@ -300,6 +314,20 @@ export function QualityStudio({
                     maxLength={100}
                   />
                 </label>
+                <DocumentBenchmarkBuilder
+                  workspaceId={workspaceId}
+                  onAdd={(example) => {
+                    const current: unknown = JSON.parse(examples);
+                    if (!Array.isArray(current))
+                      throw new Error("Examples must be a JSON array");
+                    const rows =
+                      JSON.stringify(current) ===
+                      JSON.stringify(JSON.parse(starter))
+                        ? []
+                        : current;
+                    setExamples(JSON.stringify([...rows, example], null, 2));
+                  }}
+                />
                 <label>
                   Examples (JSON array)
                   <textarea
@@ -312,7 +340,8 @@ export function QualityStudio({
                 <div className="setting-label-row">
                   <span>
                     Fields: input, expectedBehavior, optional expectedAnswer,
-                    contains, forbidden, expectedSourceIds and tags.
+                    contains, forbidden, expectedSourceIds, expectedCitations,
+                    documentChecks and tags.
                   </span>
                   <HelpTooltip>
                     Example IDs are generated when omitted. Import by pasting a
@@ -684,6 +713,84 @@ export function QualityStudio({
                     Cancel evaluation
                   </Button>
                 )}
+              {detail.data.summary && (
+                <div className="benchmark-summary">
+                  <h4>Document benchmark</h4>
+                  <p>
+                    Extraction text similarity:{" "}
+                    {detail.data.summary.extractionTextSimilarity == null
+                      ? "not measured"
+                      : `${(detail.data.summary.extractionTextSimilarity * 100).toFixed(1)}%`}
+                    . Exact cell accuracy:{" "}
+                    {detail.data.summary.tableCellAccuracy == null
+                      ? "not measured"
+                      : `${(detail.data.summary.tableCellAccuracy * 100).toFixed(1)}%`}
+                    . Expected citation coverage:{" "}
+                    {detail.data.summary.citationRecall == null
+                      ? "not measured"
+                      : `${(detail.data.summary.citationRecall * 100).toFixed(1)}%`}
+                    .
+                  </p>
+                  <p>
+                    Only authored reference checks are measured; a passing run
+                    does not certify every extracted value.
+                  </p>
+                </div>
+              )}
+              {!!detail.data.summary?.segments?.length && (
+                <div className="table-wrap">
+                  <table>
+                    <caption>Benchmark results by tag</caption>
+                    <thead>
+                      <tr>
+                        <th>Segment</th>
+                        <th>Cases</th>
+                        <th>Pass rate</th>
+                        <th>Text similarity</th>
+                        <th>Exact cells</th>
+                        <th>Expected citations</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail.data.summary.segments.map((segment) => (
+                        <tr key={segment.tag}>
+                          <td>{segment.tag}</td>
+                          <td>{segment.cases}</td>
+                          {[
+                            segment.passRate,
+                            segment.extractionTextSimilarity,
+                            segment.tableCellAccuracy,
+                            segment.citationRecall,
+                          ].map((value, index) => (
+                            <td key={index}>
+                              {value == null
+                                ? "Not measured"
+                                : `${(value * 100).toFixed(1)}%`}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <Button
+                className="secondary"
+                onClick={() => {
+                  const blob = new Blob(
+                    [JSON.stringify(detail.data, null, 2)],
+                    { type: "application/json" },
+                  );
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `benchmark-${selected}.json`;
+                  a.click();
+                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                }}
+              >
+                Export evaluation JSON
+              </Button>
               {detail.data.results.map((r) => {
                 const e = detail.data!.examples_snapshot.find(
                   (e) => e.id === r.example_id,
@@ -698,6 +805,14 @@ export function QualityStudio({
                     {e?.tags.length ? <p>Tags: {e.tags.join(", ")}</p> : null}
                     <pre>{r.output || "No response"}</pre>
                     {r.error_code && <p className="error">{r.error_code}</p>}
+                    {r.metrics && (
+                      <details>
+                        <summary>
+                          Measured checks and document revisions
+                        </summary>
+                        <pre>{JSON.stringify(r.metrics, null, 2)}</pre>
+                      </details>
+                    )}
                   </article>
                 );
               })}

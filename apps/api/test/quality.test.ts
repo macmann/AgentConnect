@@ -1,3 +1,4 @@
+import { cleanupKnowledgeFixtures } from "./knowledge-cleanup.mjs";
 import { qualityFailure } from "../src/quality-errors.js";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -94,6 +95,7 @@ before(async () => {
   datasetId = d.json().id;
 });
 after(async () => {
+  await cleanupKnowledgeFixtures(sql, org);
   await sql.begin(async (tx) => {
     for (const table of [
       "evaluation_results",
@@ -103,6 +105,12 @@ after(async () => {
       "tool_executions",
       "agent_versions",
       "agents",
+      "knowledge_jobs",
+      "knowledge_documents",
+      "knowledge_sources",
+      "knowledge_bases",
+      "embedding_models",
+      "secrets",
       "model_prices",
       "model_configurations",
       "audit_events",
@@ -465,5 +473,178 @@ test("quality database diagnostics are actionable, scoped and contain no raw det
       new Error("private SQL detail"),
     )?.guidance,
     null,
+  );
+});
+
+test("Real-document benchmarks snapshot extraction, report dimensions and flag source drift", async () => {
+  const { processKnowledgeJob } = await import("../src/ingestion.js");
+  const secretResult = await call("POST", base + "/secrets", {
+    name: "BENCHMARK_EMBED",
+    value: "fixture-only",
+  });
+  assert.equal(secretResult.statusCode, 201, secretResult.body);
+  const [secret] =
+    await sql`SELECT id FROM secrets WHERE workspace_id=${workspace} AND name='BENCHMARK_EMBED'`;
+  const embedding = (
+    await call("POST", base + "/embedding-models", {
+      name: "Benchmark embedding",
+      provider: "openai",
+      modelId: "fixture",
+      secretId: secret!.id,
+      dimensions: 3,
+    })
+  ).json().id;
+  const kb = (
+    await call("POST", base + "/knowledge-bases", {
+      name: "Real source benchmark",
+      embeddingModelId: embedding,
+    })
+  ).json().id;
+  const source = await call("POST", `/knowledge-bases/${kb}/text`, {
+    title: "Reviewed multilingual document",
+    text: "Hello world မြန်မာ รายงาน",
+  });
+  assert.equal(source.statusCode, 202, source.body);
+  await processKnowledgeJob(() => ({
+    embed: async (input) => input.map(() => [1, 0, 0]),
+  }));
+  const dataset = await call("POST", base + "/datasets", {
+    name: "Real document benchmark",
+    examples: [
+      {
+        input: "hi",
+        expectedBehavior: "Greet",
+        contains: ["hello"],
+        tags: ["multilingual"],
+        documentChecks: [
+          {
+            sourceId: source.json().id,
+            page: 1,
+            expectedText: "Hello world မြန်မာ รายงาน",
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(dataset.statusCode, 201, dataset.body);
+  const [agent] = await sql`SELECT revision FROM agents WHERE id=${agentId}`;
+  const body = {
+    agentId,
+    datasetId: dataset.json().id,
+    revision: agent!.revision,
+    evaluator: ev,
+  };
+  const first = await call("POST", base + "/evaluations", body);
+  assert.equal(first.statusCode, 202, first.body);
+  await processEvaluationRun(provider);
+  const measured = (
+    await call("GET", base + "/evaluations/" + first.json().id)
+  ).json();
+  assert.equal(measured.status, "completed");
+  assert.equal(measured.summary.extractionTextSimilarity, 1);
+  assert.equal(measured.summary.passRate, 1);
+  assert.equal(measured.document_snapshots[0].revision, 1);
+  assert.equal(measured.summary.segments[0].tag, "multilingual");
+  const next = await call("POST", base + "/evaluations", {
+    ...body,
+    baselineRunId: first.json().id,
+  });
+  assert.equal(next.statusCode, 202, next.body);
+  await sql`UPDATE knowledge_sources SET revision=revision+1 WHERE id=${source.json().id}`;
+  await processEvaluationRun(provider);
+  const drifted = (
+    await call("GET", base + "/evaluations/" + next.json().id)
+  ).json();
+  assert.equal(drifted.status, "failed");
+  assert.equal(drifted.error_code, "EVALUATION_DEPENDENCIES_CHANGED");
+  const { verifyBenchmarkSources } =
+    await import("../src/document-benchmarks.js");
+  await assert.rejects(
+    () => verifyBenchmarkSources(measured.document_snapshots, workspace, org),
+    { code: "DOCUMENT_BENCHMARK_SOURCE_CHANGED" },
+  );
+  assert.equal(
+    measured.document_snapshots[0].revision,
+    1,
+    "Completed run snapshots remain immutable",
+  );
+  const foreign = await call("POST", base + "/datasets", {
+    name: "Foreign document benchmark",
+    examples: [
+      {
+        input: "hi",
+        expectedBehavior: "Greet",
+        documentChecks: [
+          { sourceId: randomUUID(), page: 1, expectedText: "No access" },
+        ],
+      },
+    ],
+  });
+  assert.equal(
+    (
+      await call("POST", base + "/evaluations", {
+        ...body,
+        datasetId: foreign.json().id,
+      })
+    ).statusCode,
+    400,
+  );
+});
+
+test("Benchmark scoring preserves financial separators, page citations and Unicode", async () => {
+  const { scoreDocumentBenchmarks, textSimilarity } =
+    await import("../src/document-benchmarks.js");
+  const sourceId = randomUUID();
+  const sample = example.parse({
+    input: "question",
+    expectedBehavior: "Use evidence",
+    documentChecks: [
+      {
+        sourceId,
+        page: 2,
+        expectedText: "မြန်မာ café",
+        cells: [
+          { table: 0, row: 1, column: 1, value: "(1,250.00)" },
+          { table: 0, row: 1, column: 2, value: "" },
+        ],
+      },
+    ],
+    expectedCitations: [{ sourceId, page: 2 }],
+  });
+  const snapshot = {
+    sourceId,
+    page: 2,
+    revision: 1,
+    contentHash: "fixture",
+    text: "မြန်မာ café",
+    tables: [
+      [
+        ["Metric", "Value", "Note"],
+        ["Revenue", "(1,250.00)", ""],
+      ],
+    ],
+  };
+  assert.equal(textSimilarity("မြန်မာ café", "မြန်မာ café"), 1);
+  assert.equal(
+    scoreDocumentBenchmarks(sample, [snapshot], [{ sourceId, page: 2 }]).passed,
+    true,
+  );
+  assert.equal(
+    scoreDocumentBenchmarks(sample, [snapshot], [{ sourceId, page: 1 }])
+      .citationRecall,
+    0,
+  );
+  const changed = structuredClone(snapshot);
+  changed.tables[0]![1]![1] = "1250.00";
+  const scored = scoreDocumentBenchmarks(
+    sample,
+    [changed],
+    [{ sourceId, page: 2 }],
+  );
+  assert.equal(scored.passed, false);
+  assert.equal(scored.pages[0]!.cellAccuracy, 0.5);
+  assert.throws(
+    () => scoreDocumentBenchmarks(sample, [], []),
+    /SNAPSHOT_MISSING/,
   );
 });
