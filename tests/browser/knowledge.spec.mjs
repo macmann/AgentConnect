@@ -11,6 +11,7 @@ const org = randomUUID(),
   workspace = randomUUID(),
   user = randomUUID(),
   session = randomUUID();
+let visionCalls = 0;
 let embedded = 0,
   generated = 0,
   grounded = false;
@@ -56,6 +57,7 @@ const provider = createServer(async (req, res) => {
     req.url === "/v1/chat/completions" &&
     Array.isArray(input.messages.at(-1)?.content)
   ) {
+    visionCalls++;
     const image = input.messages
       .at(-1)
       .content.find((part) => part.type === "image_url");
@@ -81,6 +83,7 @@ const provider = createServer(async (req, res) => {
           rows: [
             ["Period", "2026", "2025"],
             ["Revenue", "1,250.00", "(900.00)"],
+            ["Footnote"],
           ],
           headerRows: 1,
         },
@@ -90,6 +93,31 @@ const provider = createServer(async (req, res) => {
       "data: " +
         JSON.stringify({
           choices: [{ delta: { content: text }, finish_reason: "stop" }],
+        }) +
+        "\n\ndata: [DONE]\n\n",
+    );
+    return;
+  }
+  if (
+    req.url === "/v1/chat/completions" &&
+    input.model === "financial-benchmark"
+  ) {
+    const raw = input.messages[0].content
+      .split("<reference_passages>\n")[1]
+      ?.split("\n</reference_passages>")[0];
+    const passages = raw ? JSON.parse(raw) : [];
+    const reference =
+      passages.find((p) => p.text.includes("(950.00)"))?.reference ?? "1";
+    res.writeHead(200, { "content-type": "text/event-stream" }).end(
+      "data: " +
+        JSON.stringify({
+          choices: [
+            {
+              delta: { content: `Revenue is (950.00) MMK [${reference}].` },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 50, completion_tokens: 12 },
         }) +
         "\n\ndata: [DONE]\n\n",
     );
@@ -183,6 +211,10 @@ test.afterAll(async () => {
   await new Promise((resolve) => provider.close(resolve));
   await sql.begin(async (tx) => {
     for (const table of [
+      "evaluation_results",
+      "evaluation_runs",
+      "agent_quality_gates",
+      "evaluation_datasets",
       "messages",
       "agent_runs",
       "conversations",
@@ -643,7 +675,7 @@ test("AI extraction settings ingest multilingual images and rendered PDF pages w
   page,
   context,
 }) => {
-  test.setTimeout(120000);
+  test.setTimeout(180000);
   const budget = await fetch("http://localhost:4000/auth/me");
   if (Number(budget.headers.get("x-ratelimit-remaining") ?? 300) < 150) {
     await new Promise((resolve) =>
@@ -775,13 +807,103 @@ test("AI extraction settings ingest multilingual images and rendered PDF pages w
       .getByRole("button", { name: "Extraction preview", exact: true })
       .click();
     const preview = page.getByRole("region", { name: "Extraction preview" });
-    await preview.getByText("AI extraction · 1 pages", { exact: true }).click();
     await expect(
-      preview.getByText("မြန်မာ รายงาน", { exact: true }),
-    ).toBeVisible();
+      preview.getByRole("textbox", {
+        name: "Block 1 transcription",
+        exact: true,
+      }),
+    ).toHaveValue("မြန်မာ รายงาน");
     await expect(
-      preview.getByRole("cell", { name: "(900.00)", exact: true }),
-    ).toBeVisible();
+      preview.getByRole("textbox", {
+        name: "Block 2 row 2 column 3",
+        exact: true,
+      }),
+    ).toHaveValue("(900.00)");
+    if (file.name.endsWith(".pdf")) {
+      const review = page.getByRole("region", {
+        name: "Extraction correction workspace",
+      });
+      await expect(
+        review.getByAltText("Original document page 1"),
+      ).toBeVisible();
+      await expect
+        .poll(() =>
+          review
+            .getByAltText("Original document page 1")
+            .evaluate((image) => image.naturalWidth),
+        )
+        .toBeGreaterThan(0);
+      const removeRow = review.getByRole("button", {
+        name: "Remove row 1",
+        exact: true,
+      });
+      await expect(removeRow).toHaveCSS("white-space", "nowrap");
+      await review
+        .getByLabel("Original page zoom", { exact: true })
+        .press("ArrowRight");
+      await expect(review.getByAltText("Original document page 1")).toHaveCSS(
+        "max-width",
+        "none",
+      );
+      await review
+        .getByRole("button", { name: "Pad missing cells", exact: true })
+        .click();
+      await expect(
+        review.getByLabel("Block 2 row 3 column 3", { exact: true }),
+      ).toHaveValue("");
+      const before = visionCalls;
+      expect(before).toBeGreaterThan(0);
+      await review
+        .getByLabel("Block 2 row 2 column 3", { exact: true })
+        .fill("(950.00)");
+      await expect(review.getByRole("status")).toHaveText(
+        "Unsaved corrections",
+      );
+      await page.screenshot({
+        path: "/tmp/document-review-desktop.png",
+        fullPage: true,
+      });
+      await review
+        .getByRole("button", {
+          name: "Save correction and reindex",
+          exact: true,
+        })
+        .click();
+      await expect
+        .poll(
+          async () => {
+            const [source] =
+              await sql`SELECT revision,status FROM knowledge_sources WHERE workspace_id=${workspace} AND filename=${file.name}`;
+            return `${source.revision}:${source.status}`;
+          },
+          { timeout: 20000 },
+        )
+        .toBe("2:ready");
+      await expect(row.getByText("ready", { exact: true })).toBeVisible({
+        timeout: 20000,
+      });
+      expect(visionCalls).toBe(before);
+      await row
+        .getByRole("button", { name: "Extraction preview", exact: true })
+        .click();
+      await expect(
+        page.getByLabel("Block 2 row 2 column 3", { exact: true }),
+      ).toHaveValue("(950.00)");
+      await expect(
+        page.getByText("Correction history", { exact: true }),
+      ).toBeVisible();
+      await page.setViewportSize({ width: 390, height: 900 });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: "/tmp/document-review-mobile.png",
+        fullPage: true,
+      });
+      await page.setViewportSize({ width: 1280, height: 900 });
+    }
     await page
       .getByRole("button", { name: "Close extraction preview", exact: true })
       .click();
@@ -799,4 +921,105 @@ test("AI extraction settings ingest multilingual images and rendered PDF pages w
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const [kbRow] =
+    await sql`SELECT id FROM knowledge_bases WHERE workspace_id=${workspace} AND name='Multilingual scans'`;
+  const [sourceRow] =
+    await sql`SELECT id FROM knowledge_sources WHERE knowledge_base_id=${kbRow.id} AND filename='multilingual.pdf'`;
+  const modelResponse = await page.request.post(
+    `http://localhost:4000/workspaces/${workspace}/models`,
+    {
+      headers: { origin: "http://localhost:3000" },
+      data: {
+        name: "Financial benchmark engine",
+        provider: "openai-compatible",
+        modelId: "financial-benchmark",
+        baseUrl: "http://127.0.0.1:4546/v1",
+        contextWindow: 32768,
+        maxOutputTokens: 1024,
+      },
+    },
+  );
+  expect(modelResponse.ok(), await modelResponse.text()).toBe(true);
+  const benchmarkAgent = await page.request.post(
+    `http://localhost:4000/workspaces/${workspace}/agents`,
+    {
+      headers: { origin: "http://localhost:3000" },
+      data: {
+        name: "Financial benchmark agent",
+        config: {
+          modelId: (await modelResponse.json()).id,
+          rag: {
+            knowledgeBaseIds: [kbRow.id],
+            usageMode: "always",
+            topK: 10,
+            minScore: 0,
+          },
+        },
+      },
+    },
+  );
+  expect(benchmarkAgent.ok(), await benchmarkAgent.text()).toBe(true);
+  const agent = await benchmarkAgent.json();
+  const evaluationBudget = await fetch("http://localhost:4000/auth/me");
+  if (
+    Number(evaluationBudget.headers.get("x-ratelimit-remaining") ?? 300) < 100
+  )
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.min(
+          59000,
+          Number(
+            evaluationBudget.headers.get("retry-after") ??
+              evaluationBudget.headers.get("x-ratelimit-reset") ??
+              60,
+          ) *
+            1000 +
+            500,
+        ),
+      ),
+    );
+  await page.getByRole("button", { name: "Quality", exact: true }).click();
+  await page.getByRole("button", { name: "New dataset", exact: true }).click();
+  await page.getByLabel("Dataset name").fill("Verified financial benchmark");
+  await page
+    .getByText("Add a real-document benchmark case", { exact: true })
+    .click();
+  await page.getByLabel("Benchmark knowledge base").selectOption(kbRow.id);
+  await page.getByLabel("Benchmark source").selectOption(sourceRow.id);
+  await page
+    .getByLabel("Benchmark question")
+    .fill("What is the reported revenue?");
+  await page.getByLabel("Required answer text (optional)").fill("(950.00)");
+  await page
+    .getByRole("button", { name: "Add expected cell", exact: true })
+    .click();
+  await page.getByLabel("Expected cell 1 row", { exact: true }).fill("2");
+  await page.getByLabel("Expected cell 1 column", { exact: true }).fill("3");
+  await page
+    .getByLabel("Expected cell 1 value", { exact: true })
+    .fill("(950.00)");
+  await page.getByLabel("Benchmark tags").fill("financial, multilingual");
+  await page
+    .getByRole("button", { name: "Add benchmark case to dataset", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Save dataset", exact: true }).click();
+  await expect(page.getByText("Dataset saved.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Evaluation", exact: true }).click();
+  await page.getByLabel("Agent", { exact: true }).selectOption(agent.id);
+  await page
+    .getByRole("button", { name: "Run evaluation", exact: true })
+    .click();
+  await expect(page.getByText(/Run .* · completed/)).toBeVisible({
+    timeout: 20000,
+  });
+  await expect(page.getByText(/Exact cell accuracy: 100.0%/)).toBeVisible();
+  await expect(
+    page.getByText(/Expected citation coverage: 100.0%/),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "/tmp/document-benchmark-results.png",
+    fullPage: true,
+  });
 });

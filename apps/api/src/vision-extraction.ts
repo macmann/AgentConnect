@@ -65,6 +65,36 @@ export function validateExtraction(value: unknown) {
   }
   return parsed;
 }
+export function extractionSections(
+  result: z.infer<typeof extractedPage>,
+  page: number,
+) {
+  return result.blocks.map((block) => ({
+    page,
+    heading: block.heading || null,
+    text:
+      block.kind === "table"
+        ? block.rows.map((row) => row.join(" | ")).join("\n")
+        : block.text,
+    metadata: {
+      aiExtracted: true,
+      language: result.language,
+      ...(block.kind === "table"
+        ? {
+            rawRows: block.rows,
+            layoutBlocks: [
+              {
+                start: 0,
+                end: block.rows.length,
+                kind: "table",
+                headerRows: block.headerRows,
+              },
+            ],
+          }
+        : {}),
+    },
+  }));
+}
 export async function createVisionExtractor(
   settings: AdvancedProcessing,
   workspace: string,
@@ -94,6 +124,8 @@ export async function createVisionExtractor(
   const reports: {
     page: number;
     cached: boolean;
+    imageKey: string;
+    mimeType: "image/png" | "image/jpeg" | "image/webp";
     language: string;
     warnings: string[];
     blocks: z.infer<typeof extractedPage>["blocks"];
@@ -154,10 +186,24 @@ export async function createVisionExtractor(
       )
         throw error;
     }
-    if (!result) {
-      const image = native.mimeType
+    const inputHash = createHash("sha256").update(data).digest("hex");
+    const imageKey = `${key}/${source.split("/")[1]}/images/${inputHash}-${page}`;
+    let image: Buffer;
+    try {
+      image = await readKnowledge(imageKey, signal);
+    } catch (error) {
+      if (
+        !["NoSuchKey", "NotFound"].includes(
+          (error as { name?: string }).name ?? "",
+        )
+      )
+        throw error;
+      image = native.mimeType
         ? Buffer.from(data)
         : await renderPdfPage(data, page, signal);
+      await storeKnowledge(imageKey, image);
+    }
+    if (!result) {
       const maxOutputTokens = Math.min(
         options.maxOutputTokens,
         model.maxOutputTokens,
@@ -217,32 +263,14 @@ export async function createVisionExtractor(
       result.warnings.push(
         "Uncertain transcription needs review against the original page.",
       );
-    reports.push({ page, cached, ...result });
-    return result.blocks.map((block) => ({
+    reports.push({
       page,
-      heading: block.heading || null,
-      text:
-        block.kind === "table"
-          ? block.rows.map((row) => row.join(" | ")).join("\n")
-          : block.text,
-      metadata: {
-        aiExtracted: true,
-        language: result.language,
-        ...(block.kind === "table"
-          ? {
-              rawRows: block.rows,
-              layoutBlocks: [
-                {
-                  start: 0,
-                  end: block.rows.length,
-                  kind: "table",
-                  headerRows: block.headerRows,
-                },
-              ],
-            }
-          : {}),
-      },
-    }));
+      cached,
+      imageKey,
+      mimeType: native.mimeType ?? "image/png",
+      ...result,
+    });
+    return extractionSections(result, page);
   };
   return { extractPage, reports };
 }

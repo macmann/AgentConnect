@@ -1,3 +1,4 @@
+import { captureDocumentBenchmarks } from "./document-benchmarks.js";
 import {
   candidateRelease,
   previewConfig,
@@ -191,8 +192,10 @@ export async function registerQualityRoutes(app: FastifyInstance) {
         "quality:read",
       );
     const [run] =
-      await sql`SELECT id,status,summary,error_code,examples_snapshot,baseline_run_id,candidate_release_id,candidate_version_id FROM evaluation_runs WHERE id=${id(params(r).evaluationId)} AND workspace_id=${w.id}`;
+      await sql`SELECT id,status,summary,error_code,examples_snapshot,document_snapshots,baseline_run_id,candidate_release_id,candidate_version_id FROM evaluation_runs WHERE id=${id(params(r).evaluationId)} AND workspace_id=${w.id}`;
     if (!run) throw new HttpError(404, "Evaluation unavailable");
+    if (run.document_snapshots?.length)
+      await workspaceAccess(u.id, w.id, "knowledge:read");
     return {
       ...run,
       results:
@@ -230,7 +233,9 @@ export async function registerQualityRoutes(app: FastifyInstance) {
             !e.expectedAnswer &&
             !e.contains.length &&
             !e.forbidden.length &&
-            !e.expectedSourceIds.length,
+            !e.expectedSourceIds.length &&
+            !e.documentChecks.length &&
+            !e.expectedCitations.length,
         )
       )
         throw new HttpError(
@@ -297,6 +302,34 @@ export async function registerQualityRoutes(app: FastifyInstance) {
       const prices =
         await tx`SELECT model_id,input_usd_per_million::float8,output_usd_per_million::float8 FROM model_prices WHERE workspace_id=${w.id}`;
       const fingerprint = await qualityFingerprint(c, model, w.id, tx);
+      if (examples.some((e) => e.documentChecks.length)) {
+        await workspaceAccess(u.id, w.id, "knowledge:read");
+        if (body.candidateReleaseId)
+          throw new HttpError(
+            400,
+            "Document extraction benchmarks use current ready sources; run candidate correction gates separately",
+          );
+      }
+      const documentSnapshots = await captureDocumentBenchmarks(
+        examples,
+        w.id,
+        w.organization_id,
+        tx,
+      );
+      const expectedSourceIds = [
+        ...new Set(
+          examples.flatMap((e) => e.expectedCitations.map((c) => c.sourceId)),
+        ),
+      ];
+      if (expectedSourceIds.length) {
+        const owned =
+          await tx`SELECT id FROM knowledge_sources WHERE id IN ${tx(expectedSourceIds)} AND workspace_id=${w.id} AND organization_id=${w.organization_id} AND status<>'deleted'`;
+        if (owned.length !== expectedSourceIds.length)
+          throw new HttpError(
+            400,
+            "Expected citation sources must belong to this workspace",
+          );
+      }
       if (body.baselineRunId) {
         const [baseline] =
           await tx`SELECT id FROM evaluation_runs WHERE id=${body.baselineRunId} AND workspace_id=${w.id} AND agent_id=${a.id} AND dataset_id=${d.id} AND dataset_revision=${d.revision} AND evaluator=${tx.json(body.evaluator)} AND status='completed' AND candidate_release_id IS NOT DISTINCT FROM ${body.candidateReleaseId ?? null} AND candidate_version_id IS NOT DISTINCT FROM ${body.candidateVersionId ?? null}`;
@@ -307,6 +340,7 @@ export async function registerQualityRoutes(app: FastifyInstance) {
           );
       }
       await tx`INSERT INTO evaluation_runs(id,organization_id,workspace_id,agent_id,dataset_id,requested_by,agent_revision,dataset_revision,config_snapshot,model_snapshot,examples_snapshot,evaluator,judge_snapshot,prices_snapshot,fingerprint,baseline_run_id,candidate_release_id,candidate_version_id) VALUES (${runId},${w.organization_id},${w.id},${a.id},${d.id},${u.id},${a.revision},${d.revision},${tx.json(c)},${tx.json(model)},${tx.json(examples)},${tx.json(body.evaluator)},${judge ? tx.json(judge) : null},${tx.json(prices)},${fingerprint},${body.baselineRunId ?? null},${body.candidateReleaseId ?? null},${body.candidateVersionId ?? null})`;
+      await tx`UPDATE evaluation_runs SET document_snapshots=${tx.json(documentSnapshots)} WHERE id=${runId}`;
       await audit(
         tx,
         r,

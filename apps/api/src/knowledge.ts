@@ -1,3 +1,4 @@
+import { registerExtractionReview } from "./knowledge-review.js";
 import { registerKnowledgeReleases } from "./knowledge-releases.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
@@ -67,7 +68,7 @@ export async function ownedKnowledge(
   const w = await workspaceAccess(u.id, kb.workspace_id, cap);
   return { u, w, kb };
 }
-async function sourceFor(r: FastifyRequest, kb: KnowledgeBase) {
+export async function sourceFor(r: FastifyRequest, kb: KnowledgeBase) {
   const [source] =
     await sql`SELECT * FROM knowledge_sources WHERE id=${id(params(r).sourceId)} AND knowledge_base_id=${kb.id} AND workspace_id=${kb.workspace_id} AND organization_id=${kb.organization_id} AND status<>'deleted'`;
   if (!source) throw new HttpError(404, "Source not found");
@@ -167,6 +168,7 @@ export async function registerKnowledgeRoutes(
     );
   });
   await registerKnowledgeReleases(app, ownedKnowledge);
+  await registerExtractionReview(app, ownedKnowledge, sourceFor);
   const factory = override ?? defaultEmbeddingFactory;
   const rag = new PostgresRagTool(factory);
   const schema = (body: z.ZodType) => ({
@@ -651,7 +653,12 @@ export async function registerKnowledgeRoutes(
       const source = await sourceFor(r, kb);
       const documents =
         await sql`SELECT id,title,metadata->'processing' AS processing,metadata->'extraction' AS extraction,metadata->'aiExtraction' AS ai_extraction FROM knowledge_documents WHERE source_id=${source.id} AND workspace_id=${kb.workspace_id} AND organization_id=${kb.organization_id} AND revision=${source.revision} ORDER BY created_at LIMIT 100`;
-      return { status: source.status, revision: source.revision, documents };
+      return {
+        sourceId: source.id,
+        status: source.status,
+        revision: source.revision,
+        documents,
+      };
     },
   );
   app.get(

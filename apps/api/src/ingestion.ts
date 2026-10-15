@@ -25,6 +25,11 @@ import {
 import { crawlFirecrawl } from "./knowledge-firecrawl.js";
 import { decrypt } from "./security.js";
 import { crawlWebsite, type CrawlConfig } from "./knowledge-websites.js";
+import {
+  digestInput,
+  readParsedArtifact,
+  saveParsedArtifact,
+} from "./knowledge-artifacts.js";
 import { createVisionExtractor } from "./vision-extraction.js";
 import { ocrPdfPage } from "./pdf-ocr.js";
 import { config } from "./config.js";
@@ -144,42 +149,67 @@ export async function processKnowledgeJob(
         job.payload.objectKey,
         controller.signal,
       );
-      const vision = await createVisionExtractor(
-        settings,
-        job.workspace_id,
-        job.organization_id,
-        `${kb.id}/${job.source_id}`,
-        processingFactory,
-        async (page, extractedPages) => {
-          controller.signal.throwIfAborted();
-          await sql`UPDATE knowledge_sources SET metadata=metadata || ${sql.json({ aiExtractionProgress: { page, extractedPages, maxPages: settings.vision.maxPages } })}::jsonb WHERE id=${job.source_id} AND revision=${job.source_revision} AND status='processing'`;
-        },
-      );
-      const document = await parseDocument(
-        bytes,
-        job.payload.filename,
-        controller.signal,
-        !vision && kb.ocr_enabled
-          ? {
-              ocr: config.OCR_ENABLED
-                ? ocrPdfPage
-                : async () => {
-                    throw new KnowledgeError("OCR_NOT_AVAILABLE");
-                  },
-              maxOcrPages: 20,
-              advanced: settings.enabled,
-            }
-          : {
-              advanced: settings.enabled,
-              ...(vision ? { extractPage: vision.extractPage } : {}),
+      const prefix = `${job.organization_id}/${job.workspace_id}/${kb.id}/${job.source_id}/`;
+      const inputHash = digestInput(bytes);
+      const override = source.metadata.extractionOverride as
+        { artifactKey?: string; inputHash?: string } | undefined;
+      const corrected =
+        override?.inputHash === inputHash
+          ? await readParsedArtifact(
+              override.artifactKey,
+              prefix,
+              controller.signal,
+            )
+          : null;
+      if (corrected && corrected.inputHash !== inputHash)
+        throw new KnowledgeError("EXTRACTION_ARTIFACT_UNAVAILABLE");
+      const vision = corrected
+        ? null
+        : await createVisionExtractor(
+            settings,
+            job.workspace_id,
+            job.organization_id,
+            `${kb.id}/${job.source_id}`,
+            processingFactory,
+            async (page, extractedPages) => {
+              controller.signal.throwIfAborted();
+              await sql`UPDATE knowledge_sources SET metadata=metadata || ${sql.json({ aiExtractionProgress: { page, extractedPages, maxPages: settings.vision.maxPages } })}::jsonb WHERE id=${job.source_id} AND revision=${job.source_revision} AND status='processing'`;
             },
-      );
+          );
+      const document =
+        corrected?.document ??
+        (await parseDocument(
+          bytes,
+          job.payload.filename,
+          controller.signal,
+          !vision && kb.ocr_enabled
+            ? {
+                ocr: config.OCR_ENABLED
+                  ? ocrPdfPage
+                  : async () => {
+                      throw new KnowledgeError("OCR_NOT_AVAILABLE");
+                    },
+                maxOcrPages: 20,
+                advanced: settings.enabled,
+              }
+            : {
+                advanced: settings.enabled,
+                ...(vision ? { extractPage: vision.extractPage } : {}),
+              },
+        ));
       if (vision)
         document.metadata.aiExtraction = {
           modelId: settings.vision.modelId,
           pages: vision.reports,
         };
       document.title = source.title;
+      const parsedKey = await saveParsedArtifact(prefix, inputHash, document);
+      document.metadata = {
+        ...document.metadata,
+        parsedArtifactKey: parsedKey,
+        inputHash,
+        ...(corrected ? { humanCorrected: true } : {}),
+      };
       document.metadata = {
         ...document.metadata,
         kind: source.kind,
