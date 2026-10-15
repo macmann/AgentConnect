@@ -1,4 +1,5 @@
 "use client";
+import { ExtractionUsage } from "./extraction-usage";
 import { ExtractionReview, type ExtractionPage } from "./extraction-review";
 import { HelpTooltip } from "./help-tooltip";
 import { websiteInput } from "@agentconnect/schemas/knowledge";
@@ -120,6 +121,10 @@ export function KnowledgeStudio({
     | "import"
     | null
   >(null);
+  const [usageSource, setUsageSource] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
   const [extraction, setExtraction] = useState<{
     sourceId: string;
     status: string;
@@ -143,8 +148,8 @@ export function KnowledgeStudio({
         llm: {
           status: string;
           calls: number;
-          inputTokens: number;
-          outputTokens: number;
+          inputTokens: number | null;
+          outputTokens: number | null;
         };
       } | null;
     }[];
@@ -1173,6 +1178,15 @@ export function KnowledgeStudio({
                               >
                                 Extraction preview
                               </button>
+                              <button
+                                type="button"
+                                className="text-button"
+                                onClick={() =>
+                                  setUsageSource({ id: s.id, title: s.title })
+                                }
+                              >
+                                Usage &amp; traces
+                              </button>
                               {!!s.metadata.processingWarnings?.length && (
                                 <span className="muted">
                                   Extraction needs review
@@ -1259,6 +1273,25 @@ export function KnowledgeStudio({
                     finishes.
                   </p>
                 </div>
+              )}
+              {usageSource && (
+                <section className="studio-panel">
+                  <div className="studio-actions">
+                    <h3>{usageSource.title}</h3>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => setUsageSource(null)}
+                    >
+                      Close usage
+                    </button>
+                  </div>
+                  <ExtractionUsage
+                    key={usageSource.id}
+                    knowledgeBaseId={base.id}
+                    sourceId={usageSource.id}
+                  />
+                </section>
               )}
               {extraction && (
                 <section
@@ -1371,8 +1404,9 @@ export function KnowledgeStudio({
                           <p className="muted">
                             LLM assistance: {d.extraction.llm.status} ·{" "}
                             {d.extraction.llm.calls} calls · Reported usage:{" "}
-                            {d.extraction.llm.inputTokens} input /{" "}
-                            {d.extraction.llm.outputTokens} output tokens
+                            {d.extraction.llm.inputTokens ?? "Unknown"} input /{" "}
+                            {d.extraction.llm.outputTokens ?? "Unknown"} output
+                            tokens
                           </p>
                           {d.extraction.warnings.length > 0 && (
                             <div role="status">

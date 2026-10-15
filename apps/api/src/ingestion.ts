@@ -1,3 +1,5 @@
+import { extractionJob, trackExtraction } from "./extraction-usage.js";
+import { observe, observationError } from "./ai-tracing.js";
 import { randomUUID, createHash } from "node:crypto";
 import { sql } from "./db.js";
 import {
@@ -60,6 +62,7 @@ interface Job {
 }
 export async function claimKnowledgeJob(): Promise<Job | undefined> {
   return sql.begin(async (tx) => {
+    await tx`UPDATE knowledge_processing_usage u SET status='failed',error_code='WORKER_INTERRUPTED',finished_at=now() FROM knowledge_jobs j WHERE u.job_id=j.id AND u.status='running' AND (j.status<>'running' OR j.locked_until<now())`;
     await tx`UPDATE knowledge_jobs SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,error_code='WORKER_INTERRUPTED',locked_until=NULL,lease_token=NULL,finished_at=CASE WHEN attempts>=3 THEN now() ELSE NULL END WHERE status='running' AND locked_until<now()`;
     await tx`UPDATE knowledge_sources s SET status='failed',error_code='WORKER_INTERRUPTED',updated_at=now() FROM knowledge_jobs j WHERE j.source_id=s.id AND j.source_revision=s.revision AND j.status='failed' AND j.error_code='WORKER_INTERRUPTED' AND s.status='processing'`;
     await tx`UPDATE knowledge_jobs j SET status='cancelled',finished_at=now() FROM knowledge_sources s,knowledge_bases k WHERE j.source_id=s.id AND k.id=s.knowledge_base_id AND j.status IN ('queued','running') AND (s.status='deleted' OR k.archived_at IS NOT NULL OR s.revision<>j.source_revision)`;
@@ -88,271 +91,306 @@ export async function processKnowledgeJob(
 ): Promise<boolean> {
   const job = await claimKnowledgeJob();
   if (!job) return false;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 300000);
-  timeout.unref();
-  const heartbeat = setInterval(() => {
-    void (async () => {
-      const changed =
-        await sql`UPDATE knowledge_jobs j SET locked_until=now()+interval '120 seconds' FROM knowledge_sources s,knowledge_bases k WHERE j.id=${job.id} AND j.status='running' AND j.lease_token=${job.lease_token} AND j.locked_until>now() AND s.id=j.source_id AND k.id=j.knowledge_base_id AND s.revision=j.source_revision AND s.status<>'deleted' AND k.archived_at IS NULL RETURNING j.id`;
-      if (!changed.length) controller.abort();
-    })().catch(() => controller.abort());
-  }, 30000);
-  heartbeat.unref();
-  try {
-    const settings = advancedProcessing.parse(job.payload.processing ?? {});
-    const [kb] = await sql<
-      KnowledgeBase[]
-    >`SELECT * FROM knowledge_bases WHERE id=${job.knowledge_base_id} AND workspace_id=${job.workspace_id} AND organization_id=${job.organization_id} AND archived_at IS NULL`;
-    if (!kb) throw new KnowledgeError("KNOWLEDGE_BASE_UNAVAILABLE");
-    const [source] =
-      await sql`SELECT title,kind,metadata,source_url FROM knowledge_sources WHERE id=${job.source_id} AND revision=${job.source_revision} AND status<>'deleted'`;
-    if (!source) throw new KnowledgeError("LEASE_LOST");
-    const pages: {
-      document: ParsedDocument;
-      url: string | null;
-      objectKey: string | null;
-    }[] = [];
-    if (job.payload.website) {
-      const options = job.payload.website;
-      let apiKey: string | undefined;
-      if (options.crawler === "firecrawl") {
-        const [secret] =
-          await sql`SELECT name,ciphertext FROM secrets WHERE id=${options.secretId ?? null} AND workspace_id=${job.workspace_id} AND organization_id=${job.organization_id}`;
-        if (!secret)
-          throw new KnowledgeError("FIRECRAWL_CREDENTIAL_UNAVAILABLE");
-        apiKey = decrypt(
-          secret.ciphertext,
-          `${job.organization_id}:${job.workspace_id}:${secret.name}`,
-        );
-      }
-      const crawled =
-        apiKey !== undefined
-          ? await firecrawl(options, apiKey, controller.signal)
-          : await crawlWebsite(options, controller.signal);
-      for (let i = 0; i < crawled.length; i++) {
-        const page = crawled[i]!;
-        const key = `${job.organization_id}/${job.workspace_id}/${kb.id}/${job.source_id}/${job.source_revision}/page-${i}.html`;
-        await storeKnowledge(key, page.bytes);
-        pages.push({
-          document: settings.enabled
-            ? parseHTML(page.bytes, page.document.title, { advanced: true })
-            : page.document,
-          url: page.url,
-          objectKey: key,
-        });
-      }
-    } else {
-      if (!job.payload.objectKey || !job.payload.filename)
-        throw new KnowledgeError("SOURCE_MISSING");
-      const bytes = await readKnowledge(
-        job.payload.objectKey,
-        controller.signal,
-      );
-      const prefix = `${job.organization_id}/${job.workspace_id}/${kb.id}/${job.source_id}/`;
-      const inputHash = digestInput(bytes);
-      const override = source.metadata.extractionOverride as
-        { artifactKey?: string; inputHash?: string } | undefined;
-      const corrected =
-        override?.inputHash === inputHash
-          ? await readParsedArtifact(
-              override.artifactKey,
-              prefix,
-              controller.signal,
-            )
-          : null;
-      if (corrected && corrected.inputHash !== inputHash)
-        throw new KnowledgeError("EXTRACTION_ARTIFACT_UNAVAILABLE");
-      const vision = corrected
-        ? null
-        : await createVisionExtractor(
-            settings,
-            job.workspace_id,
-            job.organization_id,
-            `${kb.id}/${job.source_id}`,
-            processingFactory,
-            async (page, extractedPages) => {
-              controller.signal.throwIfAborted();
-              await sql`UPDATE knowledge_sources SET metadata=metadata || ${sql.json({ aiExtractionProgress: { page, extractedPages, maxPages: settings.vision.maxPages } })}::jsonb WHERE id=${job.source_id} AND revision=${job.source_revision} AND status='processing'`;
-            },
+  return extractionJob.run(job, () =>
+    observe(
+      "knowledge.ingestion",
+      "chain",
+      {
+        "workspace.id": job.workspace_id,
+        "knowledge.source.id": job.source_id,
+        "knowledge.job.id": job.id,
+        "knowledge.revision": job.source_revision,
+        "knowledge.attempt": job.attempts,
+      },
+      async (ingestionSpan) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 300000);
+        timeout.unref();
+        const heartbeat = setInterval(() => {
+          void (async () => {
+            const changed =
+              await sql`UPDATE knowledge_jobs j SET locked_until=now()+interval '120 seconds' FROM knowledge_sources s,knowledge_bases k WHERE j.id=${job.id} AND j.status='running' AND j.lease_token=${job.lease_token} AND j.locked_until>now() AND s.id=j.source_id AND k.id=j.knowledge_base_id AND s.revision=j.source_revision AND s.status<>'deleted' AND k.archived_at IS NULL RETURNING j.id`;
+            if (!changed.length) controller.abort();
+          })().catch(() => controller.abort());
+        }, 30000);
+        heartbeat.unref();
+        try {
+          const settings = advancedProcessing.parse(
+            job.payload.processing ?? {},
           );
-      const document =
-        corrected?.document ??
-        (await parseDocument(
-          bytes,
-          job.payload.filename,
-          controller.signal,
-          !vision && kb.ocr_enabled
-            ? {
-                ocr: config.OCR_ENABLED
-                  ? ocrPdfPage
-                  : async () => {
-                      throw new KnowledgeError("OCR_NOT_AVAILABLE");
-                    },
-                maxOcrPages: 20,
-                advanced: settings.enabled,
-              }
-            : {
-                advanced: settings.enabled,
-                ...(vision ? { extractPage: vision.extractPage } : {}),
-              },
-        ));
-      if (vision)
-        document.metadata.aiExtraction = {
-          modelId: settings.vision.modelId,
-          pages: vision.reports,
-        };
-      document.title = source.title;
-      const parsedKey = await saveParsedArtifact(prefix, inputHash, document);
-      document.metadata = {
-        ...document.metadata,
-        parsedArtifactKey: parsedKey,
-        inputHash,
-        ...(corrected ? { humanCorrected: true } : {}),
-      };
-      document.metadata = {
-        ...document.metadata,
-        kind: source.kind,
-        tags: source.metadata.tags ?? [],
-        filename: job.payload.filename,
-        ...(source.metadata.connectorId
-          ? {
-              connectorId: source.metadata.connectorId,
-              externalKey: source.metadata.externalKey,
+          const [kb] = await sql<
+            KnowledgeBase[]
+          >`SELECT * FROM knowledge_bases WHERE id=${job.knowledge_base_id} AND workspace_id=${job.workspace_id} AND organization_id=${job.organization_id} AND archived_at IS NULL`;
+          if (!kb) throw new KnowledgeError("KNOWLEDGE_BASE_UNAVAILABLE");
+          const [source] =
+            await sql`SELECT title,kind,metadata,source_url FROM knowledge_sources WHERE id=${job.source_id} AND revision=${job.source_revision} AND status<>'deleted'`;
+          if (!source) throw new KnowledgeError("LEASE_LOST");
+          const pages: {
+            document: ParsedDocument;
+            url: string | null;
+            objectKey: string | null;
+          }[] = [];
+          if (job.payload.website) {
+            const options = job.payload.website;
+            let apiKey: string | undefined;
+            if (options.crawler === "firecrawl") {
+              const [secret] =
+                await sql`SELECT name,ciphertext FROM secrets WHERE id=${options.secretId ?? null} AND workspace_id=${job.workspace_id} AND organization_id=${job.organization_id}`;
+              if (!secret)
+                throw new KnowledgeError("FIRECRAWL_CREDENTIAL_UNAVAILABLE");
+              apiKey = decrypt(
+                secret.ciphertext,
+                `${job.organization_id}:${job.workspace_id}:${secret.name}`,
+              );
             }
-          : {}),
-      };
-      pages.push({
-        document,
-        url: source.source_url,
-        objectKey: job.payload.objectKey,
-      });
-    }
-    const embedding = factory(
-      await embeddingConnection(
-        kb.embedding_model_id,
-        job.workspace_id,
-        job.organization_id,
-      ),
-    );
-    const prepared: {
-      id: string;
-      title: string;
-      url: string | null;
-      metadata: Record<string, unknown>;
-      pageCount: number;
-      hash: string;
-      chunks: {
-        content: string;
-        page: number | null;
-        heading: string | null;
-        metadata: Record<string, unknown>;
-        vector: number[];
-      }[];
-    }[] = [];
-    let total = 0;
-    const assistanceBudget = { remaining: 12 };
-    const processingReports: unknown[] = [];
-    for (const page of pages) {
-      const processed = settings.enabled
-        ? await processAdvancedDocument(
-            page.document,
-            settings,
-            job.workspace_id,
-            job.organization_id,
-            controller.signal,
-            processingFactory,
-            assistanceBudget,
-          )
-        : null;
-      if (processed) {
-        page.document = processed.document;
-        page.document.metadata = {
-          ...page.document.metadata,
-          processing: settings,
-          extraction: processed.report,
-        };
-        processingReports.push(processed.report);
-      }
-      const chunks =
-        processed?.chunks ??
-        chunkDocument(page.document, {
-          chunkSize: kb.chunk_size,
-          chunkOverlap: kb.chunk_overlap,
-          chunkStrategy: kb.chunk_strategy,
-        });
-      total += chunks.length;
-      if (total > 500) throw new KnowledgeError("CHUNK_LIMIT");
-      if (!chunks.length) throw new KnowledgeError("NO_EXTRACTABLE_TEXT");
-      const vectors: number[][] = [];
-      for (let i = 0; i < chunks.length; i += 32) {
-        controller.signal.throwIfAborted();
-        const batch = chunks.slice(i, i + 32);
-        vectors.push(
-          ...validateVectors(
-            await embedding.embed(
-              batch.map((c) => c.content),
+            const crawled =
+              apiKey !== undefined
+                ? await firecrawl(options, apiKey, controller.signal)
+                : await crawlWebsite(options, controller.signal);
+            for (let i = 0; i < crawled.length; i++) {
+              const page = crawled[i]!;
+              const key = `${job.organization_id}/${job.workspace_id}/${kb.id}/${job.source_id}/${job.source_revision}/page-${i}.html`;
+              await storeKnowledge(key, page.bytes);
+              pages.push({
+                document: settings.enabled
+                  ? parseHTML(page.bytes, page.document.title, {
+                      advanced: true,
+                    })
+                  : page.document,
+                url: page.url,
+                objectKey: key,
+              });
+            }
+          } else {
+            if (!job.payload.objectKey || !job.payload.filename)
+              throw new KnowledgeError("SOURCE_MISSING");
+            const bytes = await readKnowledge(
+              job.payload.objectKey,
               controller.signal,
-              "document",
+            );
+            const prefix = `${job.organization_id}/${job.workspace_id}/${kb.id}/${job.source_id}/`;
+            const inputHash = digestInput(bytes);
+            const override = source.metadata.extractionOverride as
+              { artifactKey?: string; inputHash?: string } | undefined;
+            const corrected =
+              override?.inputHash === inputHash
+                ? await readParsedArtifact(
+                    override.artifactKey,
+                    prefix,
+                    controller.signal,
+                  )
+                : null;
+            if (corrected && corrected.inputHash !== inputHash)
+              throw new KnowledgeError("EXTRACTION_ARTIFACT_UNAVAILABLE");
+            if (corrected)
+              await trackExtraction(
+                "correction",
+                null,
+                null,
+                true,
+                async () => undefined,
+              );
+            const vision = corrected
+              ? null
+              : await createVisionExtractor(
+                  settings,
+                  job.workspace_id,
+                  job.organization_id,
+                  `${kb.id}/${job.source_id}`,
+                  processingFactory,
+                  async (page, extractedPages) => {
+                    controller.signal.throwIfAborted();
+                    await sql`UPDATE knowledge_sources SET metadata=metadata || ${sql.json({ aiExtractionProgress: { page, extractedPages, maxPages: settings.vision.maxPages } })}::jsonb WHERE id=${job.source_id} AND revision=${job.source_revision} AND status='processing'`;
+                  },
+                );
+            const document =
+              corrected?.document ??
+              (await parseDocument(
+                bytes,
+                job.payload.filename,
+                controller.signal,
+                !vision && kb.ocr_enabled
+                  ? {
+                      ocr: config.OCR_ENABLED
+                        ? ocrPdfPage
+                        : async () => {
+                            throw new KnowledgeError("OCR_NOT_AVAILABLE");
+                          },
+                      maxOcrPages: 20,
+                      advanced: settings.enabled,
+                    }
+                  : {
+                      advanced: settings.enabled,
+                      ...(vision ? { extractPage: vision.extractPage } : {}),
+                    },
+              ));
+            if (vision)
+              document.metadata.aiExtraction = {
+                modelId: settings.vision.modelId,
+                pages: vision.reports,
+              };
+            document.title = source.title;
+            const parsedKey = await saveParsedArtifact(
+              prefix,
+              inputHash,
+              document,
+            );
+            document.metadata = {
+              ...document.metadata,
+              parsedArtifactKey: parsedKey,
+              inputHash,
+              ...(corrected ? { humanCorrected: true } : {}),
+            };
+            document.metadata = {
+              ...document.metadata,
+              kind: source.kind,
+              tags: source.metadata.tags ?? [],
+              filename: job.payload.filename,
+              ...(source.metadata.connectorId
+                ? {
+                    connectorId: source.metadata.connectorId,
+                    externalKey: source.metadata.externalKey,
+                  }
+                : {}),
+            };
+            pages.push({
+              document,
+              url: source.source_url,
+              objectKey: job.payload.objectKey,
+            });
+          }
+          const embedding = factory(
+            await embeddingConnection(
+              kb.embedding_model_id,
+              job.workspace_id,
+              job.organization_id,
             ),
-            batch.length,
-            kb.dimensions,
-          ),
-        );
-      }
-      prepared.push({
-        id: randomUUID(),
-        title: page.document.title,
-        url: page.url,
-        metadata: { ...page.document.metadata, objectKey: page.objectKey },
-        pageCount: Math.max(
-          1,
-          ...page.document.sections.map((s) => s.page ?? 1),
-        ),
-        hash: createHash("sha256")
-          .update(page.document.sections.map((s) => s.text).join("\n"))
-          .digest("hex"),
-        chunks: chunks.map((c, i) => ({ ...c, vector: vectors[i]! })),
-      });
-    }
-    controller.signal.throwIfAborted();
-    await sql.begin(async (tx) => {
-      const [locked] =
-        await tx`SELECT j.id FROM knowledge_jobs j JOIN knowledge_sources s ON s.id=j.source_id JOIN knowledge_bases k ON k.id=j.knowledge_base_id WHERE j.id=${job.id} AND j.status='running' AND j.lease_token=${job.lease_token} AND j.locked_until>now() AND s.revision=${job.source_revision} AND s.status<>'deleted' AND k.archived_at IS NULL FOR UPDATE OF j,s,k`;
-      if (!locked) throw new KnowledgeError("LEASE_LOST");
-      await tx`DELETE FROM knowledge_documents WHERE source_id=${job.source_id}`;
-      for (const d of prepared) {
-        await tx`INSERT INTO knowledge_documents(id,source_id,knowledge_base_id,workspace_id,organization_id,title,source_url,metadata,page_count,content_hash,revision) VALUES (${d.id},${job.source_id},${kb.id},${job.workspace_id},${job.organization_id},${d.title},${d.url},${tx.json(JSON.parse(JSON.stringify(d.metadata)))},${d.pageCount},${d.hash},${job.source_revision})`;
-        for (let i = 0; i < d.chunks.length; i++) {
-          const c = d.chunks[i]!;
-          await tx`INSERT INTO knowledge_chunks(id,document_id,source_id,knowledge_base_id,workspace_id,organization_id,embedding_model_id,dimensions,ordinal,content,page,heading,metadata,embedding) VALUES (${randomUUID()},${d.id},${job.source_id},${kb.id},${job.workspace_id},${job.organization_id},${kb.embedding_model_id},${kb.dimensions},${i},${c.content},${c.page},${c.heading},${tx.json(JSON.parse(JSON.stringify(c.metadata)))},${"[" + c.vector.join(",") + "]"}::vector)`;
+          );
+          const prepared: {
+            id: string;
+            title: string;
+            url: string | null;
+            metadata: Record<string, unknown>;
+            pageCount: number;
+            hash: string;
+            chunks: {
+              content: string;
+              page: number | null;
+              heading: string | null;
+              metadata: Record<string, unknown>;
+              vector: number[];
+            }[];
+          }[] = [];
+          let total = 0;
+          const assistanceBudget = { remaining: 12 };
+          const processingReports: unknown[] = [];
+          for (const page of pages) {
+            const processed = settings.enabled
+              ? await processAdvancedDocument(
+                  page.document,
+                  settings,
+                  job.workspace_id,
+                  job.organization_id,
+                  controller.signal,
+                  processingFactory,
+                  assistanceBudget,
+                )
+              : null;
+            if (processed) {
+              page.document = processed.document;
+              page.document.metadata = {
+                ...page.document.metadata,
+                processing: settings,
+                extraction: processed.report,
+              };
+              processingReports.push(processed.report);
+            }
+            const chunks =
+              processed?.chunks ??
+              chunkDocument(page.document, {
+                chunkSize: kb.chunk_size,
+                chunkOverlap: kb.chunk_overlap,
+                chunkStrategy: kb.chunk_strategy,
+              });
+            total += chunks.length;
+            if (total > 500) throw new KnowledgeError("CHUNK_LIMIT");
+            if (!chunks.length) throw new KnowledgeError("NO_EXTRACTABLE_TEXT");
+            const vectors: number[][] = [];
+            for (let i = 0; i < chunks.length; i += 32) {
+              controller.signal.throwIfAborted();
+              const batch = chunks.slice(i, i + 32);
+              vectors.push(
+                ...validateVectors(
+                  await embedding.embed(
+                    batch.map((c) => c.content),
+                    controller.signal,
+                    "document",
+                  ),
+                  batch.length,
+                  kb.dimensions,
+                ),
+              );
+            }
+            prepared.push({
+              id: randomUUID(),
+              title: page.document.title,
+              url: page.url,
+              metadata: {
+                ...page.document.metadata,
+                objectKey: page.objectKey,
+              },
+              pageCount: Math.max(
+                1,
+                ...page.document.sections.map((s) => s.page ?? 1),
+              ),
+              hash: createHash("sha256")
+                .update(page.document.sections.map((s) => s.text).join("\n"))
+                .digest("hex"),
+              chunks: chunks.map((c, i) => ({ ...c, vector: vectors[i]! })),
+            });
+          }
+          controller.signal.throwIfAborted();
+          await sql.begin(async (tx) => {
+            const [locked] =
+              await tx`SELECT j.id FROM knowledge_jobs j JOIN knowledge_sources s ON s.id=j.source_id JOIN knowledge_bases k ON k.id=j.knowledge_base_id WHERE j.id=${job.id} AND j.status='running' AND j.lease_token=${job.lease_token} AND j.locked_until>now() AND s.revision=${job.source_revision} AND s.status<>'deleted' AND k.archived_at IS NULL FOR UPDATE OF j,s,k`;
+            if (!locked) throw new KnowledgeError("LEASE_LOST");
+            await tx`DELETE FROM knowledge_documents WHERE source_id=${job.source_id}`;
+            for (const d of prepared) {
+              await tx`INSERT INTO knowledge_documents(id,source_id,knowledge_base_id,workspace_id,organization_id,title,source_url,metadata,page_count,content_hash,revision) VALUES (${d.id},${job.source_id},${kb.id},${job.workspace_id},${job.organization_id},${d.title},${d.url},${tx.json(JSON.parse(JSON.stringify(d.metadata)))},${d.pageCount},${d.hash},${job.source_revision})`;
+              for (let i = 0; i < d.chunks.length; i++) {
+                const c = d.chunks[i]!;
+                await tx`INSERT INTO knowledge_chunks(id,document_id,source_id,knowledge_base_id,workspace_id,organization_id,embedding_model_id,dimensions,ordinal,content,page,heading,metadata,embedding) VALUES (${randomUUID()},${d.id},${job.source_id},${kb.id},${job.workspace_id},${job.organization_id},${kb.embedding_model_id},${kb.dimensions},${i},${c.content},${c.page},${c.heading},${tx.json(JSON.parse(JSON.stringify(c.metadata)))},${"[" + c.vector.join(",") + "]"}::vector)`;
+              }
+            }
+            await tx`UPDATE knowledge_jobs SET status='completed',finished_at=now(),locked_until=NULL,lease_token=NULL,error_code=NULL WHERE id=${job.id}`;
+            await tx`UPDATE knowledge_sources SET status='ready',error_code=NULL,metadata=metadata || ${tx.json({ ...(job.payload.website ? { crawlPageCount: pages.length } : {}), processing: settings, processingWarnings: [...new Set(processingReports.flatMap((r) => (r as { warnings: string[] }).warnings))], ocrPages: pages.reduce((n, p) => n + Number(p.document.metadata.ocrPages ?? 0), 0), unrecognizedPages: pages.reduce((n, p) => n + Number(p.document.metadata.unrecognizedPages ?? 0), 0) })}::jsonb,updated_at=now() WHERE id=${job.source_id} AND revision=${job.source_revision}`;
+          });
+        } catch (error) {
+          observationError(ingestionSpan, error);
+          const code = controller.signal.aborted
+            ? "INGESTION_CANCELLED"
+            : error instanceof KnowledgeError || error instanceof ProviderError
+              ? error.code
+              : "INGESTION_ERROR";
+          const retryable =
+            error instanceof KnowledgeError || error instanceof ProviderError
+              ? error.retryable
+              : false;
+          const retry = retryable && job.attempts < 3;
+          await sql.begin(async (tx) => {
+            const changed =
+              await tx`UPDATE knowledge_jobs SET status=${retry ? "queued" : "failed"},error_code=${code},available_at=now()+${Math.min(60, 2 ** job.attempts)}*interval '1 second',locked_until=NULL,lease_token=NULL,finished_at=${retry ? null : new Date()} WHERE id=${job.id} AND status='running' AND lease_token=${job.lease_token} RETURNING id`;
+            if (changed.length)
+              await tx`UPDATE knowledge_sources SET status=${retry ? "queued" : "failed"},error_code=${code},updated_at=now() WHERE id=${job.source_id} AND revision=${job.source_revision} AND status<>'deleted'`;
+          });
+        } finally {
+          clearTimeout(timeout);
+          clearInterval(heartbeat);
         }
-      }
-      await tx`UPDATE knowledge_jobs SET status='completed',finished_at=now(),locked_until=NULL,lease_token=NULL,error_code=NULL WHERE id=${job.id}`;
-      await tx`UPDATE knowledge_sources SET status='ready',error_code=NULL,metadata=metadata || ${tx.json({ ...(job.payload.website ? { crawlPageCount: pages.length } : {}), processing: settings, processingWarnings: [...new Set(processingReports.flatMap((r) => (r as { warnings: string[] }).warnings))], ocrPages: pages.reduce((n, p) => n + Number(p.document.metadata.ocrPages ?? 0), 0), unrecognizedPages: pages.reduce((n, p) => n + Number(p.document.metadata.unrecognizedPages ?? 0), 0) })}::jsonb,updated_at=now() WHERE id=${job.source_id} AND revision=${job.source_revision}`;
-    });
-  } catch (error) {
-    const code = controller.signal.aborted
-      ? "INGESTION_CANCELLED"
-      : error instanceof KnowledgeError || error instanceof ProviderError
-        ? error.code
-        : "INGESTION_ERROR";
-    const retryable =
-      error instanceof KnowledgeError || error instanceof ProviderError
-        ? error.retryable
-        : false;
-    const retry = retryable && job.attempts < 3;
-    await sql.begin(async (tx) => {
-      const changed =
-        await tx`UPDATE knowledge_jobs SET status=${retry ? "queued" : "failed"},error_code=${code},available_at=now()+${Math.min(60, 2 ** job.attempts)}*interval '1 second',locked_until=NULL,lease_token=NULL,finished_at=${retry ? null : new Date()} WHERE id=${job.id} AND status='running' AND lease_token=${job.lease_token} RETURNING id`;
-      if (changed.length)
-        await tx`UPDATE knowledge_sources SET status=${retry ? "queued" : "failed"},error_code=${code},updated_at=now() WHERE id=${job.source_id} AND revision=${job.source_revision} AND status<>'deleted'`;
-    });
-  } finally {
-    clearTimeout(timeout);
-    clearInterval(heartbeat);
-  }
-  return true;
+        return true;
+      },
+    ),
+  );
 }
 
 export async function purgeDeletedKnowledge(): Promise<boolean> {

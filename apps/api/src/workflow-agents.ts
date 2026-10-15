@@ -30,6 +30,7 @@ import {
   validateToolIds,
   availableAgentTools,
   runAgentTools,
+  runGroundedFinancialTools,
   type ToolContext,
 } from "./tool-runtime.js";
 import { sql } from "./db.js";
@@ -191,6 +192,16 @@ export async function executeAgentSnapshot(
         });
       }
       if (c.answerPolicy.mode === "grounded") {
+        const financial = await runGroundedFinancialTools(
+          c,
+          provider,
+          [{ role: "user", content: input }],
+          sources,
+          ctx,
+          signal,
+          () => {},
+          contextBudget,
+        );
         const result = await generateGroundedAnswer(
           c,
           provider,
@@ -198,15 +209,20 @@ export async function executeAgentSnapshot(
           sources,
           signal,
           contextBudget,
+          financial.grounding,
         );
         return {
           output: result.message,
           inputTokens: completeUsage
             ? metered.usage().inputTokens
-            : result.inputTokens,
+            : result.inputTokens === null || financial.inputTokens === null
+              ? null
+              : result.inputTokens + financial.inputTokens,
           outputTokens: completeUsage
             ? metered.usage().outputTokens
-            : result.outputTokens,
+            : result.outputTokens === null || financial.outputTokens === null
+              ? null
+              : result.outputTokens + financial.outputTokens,
           citations: citedSources(result.message, sources),
           sources,
           modelUsage: metered.usage().modelUsage,
@@ -218,7 +234,7 @@ export async function executeAgentSnapshot(
         c,
         provider,
         input,
-        ctx,
+        { ...ctx, knowledgeSources: sources },
         signal,
         () => {},
         contextBudget,

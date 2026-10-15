@@ -130,7 +130,17 @@ export function useWorkspaceLeaveGuard(dirty: boolean) {
 export function WorkspaceSaveBar({ children }: { children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    // Pointer focus occurs between pointerdown and click. Scrolling here moves
+    // the control under the pointer and can cancel checkbox/button activation.
+    let pointerFocus = false;
+    const pointerDown = () => {
+      pointerFocus = true;
+    };
+    const resetPointer = () => {
+      pointerFocus = false;
+    };
     const reveal = (event: FocusEvent) => {
+      if (pointerFocus) return;
       const bar = ref.current;
       const field = event.target;
       if (
@@ -147,8 +157,18 @@ export function WorkspaceSaveBar({ children }: { children: ReactNode }) {
         field.scrollIntoView({ block: "center", behavior: "instant" });
       }
     };
+    document.addEventListener("pointerdown", pointerDown, true);
+    document.addEventListener("pointerup", resetPointer, true);
+    document.addEventListener("pointercancel", resetPointer, true);
+    document.addEventListener("keydown", resetPointer, true);
     document.addEventListener("focusin", reveal);
-    return () => document.removeEventListener("focusin", reveal);
+    return () => {
+      document.removeEventListener("pointerdown", pointerDown, true);
+      document.removeEventListener("pointerup", resetPointer, true);
+      document.removeEventListener("pointercancel", resetPointer, true);
+      document.removeEventListener("keydown", resetPointer, true);
+      document.removeEventListener("focusin", reveal);
+    };
   }, []);
   return (
     <div ref={ref} className="workspace-save-bar">

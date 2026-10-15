@@ -22,6 +22,19 @@ export async function registerExtractionReview(
   sourceFor: typeof import("./knowledge.js").sourceFor,
 ) {
   const path = "/knowledge-bases/:knowledgeBaseId/sources/:sourceId/extraction";
+  app.get(path + "/usage", async (r) => {
+    const { kb } = await own(r);
+    const source = await sourceFor(r, kb);
+    const rows =
+      await sql`SELECT id,source_revision,attempt,stage,page,model_name,provider,status,input_tokens,output_tokens,input_usd_per_million::float8,output_usd_per_million::float8,estimated_cost_usd::float8,duration_ms,error_code,trace_id,started_at,finished_at FROM knowledge_processing_usage WHERE source_id=${source.id} AND knowledge_base_id=${kb.id} AND workspace_id=${kb.workspace_id} AND organization_id=${kb.organization_id} ORDER BY started_at DESC,id DESC LIMIT 1001`;
+    const [summary] =
+      await sql`SELECT count(*)::int AS events,count(*) FILTER (WHERE status='cached')::int AS cache_hits,count(*) FILTER (WHERE status='failed')::int AS failures,count(*) FILTER (WHERE status='running')::int AS running,count(*) FILTER (WHERE stage<>'correction' AND status IN ('completed','failed','running'))::int AS model_attempts,sum(input_tokens)::float8 AS reported_input_tokens,sum(output_tokens)::float8 AS reported_output_tokens,sum(estimated_cost_usd)::float8 AS known_estimated_cost_usd,count(*) FILTER (WHERE estimated_cost_usd IS NULL)::int AS unknown_cost_events FROM knowledge_processing_usage WHERE source_id=${source.id} AND knowledge_base_id=${kb.id} AND workspace_id=${kb.workspace_id} AND organization_id=${kb.organization_id}`;
+    return {
+      rows: rows.slice(0, 1000),
+      truncated: rows.length > 1000,
+      summary,
+    };
+  });
   app.get(path + "/page-image", async (r, reply) => {
     const { kb } = await own(r);
     const source = await sourceFor(r, kb);

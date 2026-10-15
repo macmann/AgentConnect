@@ -942,3 +942,114 @@ test("Search adapter sends strict safe-search and applies exact domain policies 
     /SEARCH_PROVIDER_ERROR/,
   );
 });
+
+test("Financial tools register without credentials, execute exact arithmetic and enforce evidence and tenant boundaries", async () => {
+  const created = await call("POST", `/workspaces/${workspace}/tools`, {
+    name: "Financial calculations",
+    description: "Use for exact arithmetic on statement figures",
+    config: { kind: "financial", requireEvidence: false },
+    readOnlyAcknowledged: true,
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  const id = created.json().id;
+  const args = {
+    operation: "percentage_change",
+    operands: [
+      { label: "2026 revenue", value: "1,250", unit: "MMK" },
+      { label: "2025 revenue", value: "1,000", unit: "MMK" },
+    ],
+  };
+  const tested = await executeTool(
+    id,
+    args,
+    { workspaceId: workspace, organizationId: org },
+    AbortSignal.timeout(5000),
+  );
+  assert.equal((tested.result as { result: string }).result, "25.00");
+  await assert.rejects(
+    executeTool(
+      id,
+      args,
+      { workspaceId: randomUUID(), organizationId: org },
+      AbortSignal.timeout(5000),
+    ),
+    /TOOL_UNAVAILABLE/,
+  );
+  const strict = await call("PUT", `/tools/${id}`, {
+    revision: 1,
+    name: "Financial calculations",
+    description: "Use for exact arithmetic on statement figures",
+    config: { kind: "financial", requireEvidence: true },
+    readOnlyAcknowledged: true,
+  });
+  assert.equal(strict.statusCode, 200, strict.body);
+  await assert.rejects(
+    executeTool(
+      id,
+      args,
+      { workspaceId: workspace, organizationId: org },
+      AbortSignal.timeout(5000),
+    ),
+    /FINANCIAL_EVIDENCE_REQUIRED/,
+  );
+  const sources = [
+    {
+      id: 1,
+      chunkId: randomUUID(),
+      documentId: randomUUID(),
+      sourceId: randomUUID(),
+      knowledgeBaseId: randomUUID(),
+      title: "Statement",
+      page: 2,
+      sourceUrl: null,
+      heading: null,
+      content: "2026 revenue 1,250. 2025 revenue 1,000.",
+      score: 1,
+      vectorScore: 1,
+      lexicalScore: 1,
+    },
+  ];
+  const groundedArgs = {
+    ...args,
+    operands: args.operands.map((o) => ({
+      ...o,
+      reference: 1,
+      quote: o.label + " " + o.value,
+    })),
+  };
+  const result = await executeTool(
+    id,
+    groundedArgs,
+    { workspaceId: workspace, organizationId: org, knowledgeSources: sources },
+    AbortSignal.timeout(5000),
+  );
+  assert.equal((result.result as { result: string }).result, "25.00");
+  const config = agentConfig.parse({
+    name: "Finance",
+    modelId: model,
+    tools: { toolIds: [id] },
+  });
+  const events: unknown[] = [];
+  const planned = await runAgentTools(
+    config,
+    {
+      async *stream(request) {
+        assert.match(request.system, /2026 revenue 1,250/);
+        yield {
+          type: "token",
+          text: JSON.stringify({
+            calls: [{ toolId: id, arguments: groundedArgs }],
+          }),
+        };
+        yield { type: "usage", inputTokens: 50, outputTokens: 30 };
+      },
+    },
+    "Revenue growth?",
+    { workspaceId: workspace, organizationId: org, knowledgeSources: sources },
+    AbortSignal.timeout(5000),
+    (event) => events.push(event),
+  );
+  assert.match(planned.grounding, /25.00/);
+  assert.match(planned.grounding, /provenance/);
+  assert.equal(events.length, 2);
+});

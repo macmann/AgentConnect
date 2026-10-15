@@ -40,6 +40,7 @@ export const migrationFiles: Record<string, string> = {
   "0032": "0032_answer_feedback_loop.sql",
   "0033": "0033_rerankers.sql",
   "0034": "0034_document_review_benchmarks.sql",
+  "0035": "0035_extraction_usage_financial_tools.sql",
 };
 
 export class MigrationFailure extends Error {
