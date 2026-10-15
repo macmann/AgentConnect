@@ -215,6 +215,8 @@ test.afterAll(async () => {
       "evaluation_runs",
       "agent_quality_gates",
       "evaluation_datasets",
+      "tool_executions",
+      "tools",
       "messages",
       "agent_runs",
       "conversations",
@@ -907,6 +909,30 @@ test("AI extraction settings ingest multilingual images and rendered PDF pages w
     await page
       .getByRole("button", { name: "Close extraction preview", exact: true })
       .click();
+    await row
+      .getByRole("button", { name: "Usage & traces", exact: true })
+      .click();
+    await page.getByText("Extraction usage & tracing", { exact: true }).click();
+    await expect(page.locator(".extraction-usage")).toContainText(
+      "model attempts",
+    );
+    await expect(page.locator(".extraction-usage")).toContainText(
+      file.name.endsWith(".pdf") ? "reused" : "completed",
+    );
+    await page.setViewportSize({ width: 390, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: "/tmp/extraction-usage-mobile.png",
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page
+      .getByRole("button", { name: "Close usage", exact: true })
+      .click();
   }
   await page.getByRole("button", { name: "settings", exact: true }).click();
   await expect(
@@ -1020,6 +1046,44 @@ test("AI extraction settings ingest multilingual images and rendered PDF pages w
   ).toBeVisible();
   await page.screenshot({
     path: "/tmp/document-benchmark-results.png",
+    fullPage: true,
+  });
+});
+
+test("Financial calculator setup supports progressive help and explicit evidence policy", async ({
+  page,
+  context,
+}) => {
+  await context.addCookies([
+    { name: "session", value: session, domain: "localhost", path: "/" },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tools", exact: true }).click();
+  await page.getByRole("button", { name: "Tool setup", exact: true }).click();
+  await page
+    .getByLabel("Name", { exact: true })
+    .fill("Verified statement calculator");
+  await page.getByLabel("Tool type", { exact: true }).selectOption("financial");
+  await page
+    .getByLabel("Description for the agent")
+    .fill("Calculate sums and revenue changes from financial statements.");
+  await expect(
+    page.getByRole("checkbox", { name: /Require retrieved evidence/ }),
+  ).toBeChecked();
+  await expect(page.getByLabel("Encrypted credential")).toBeHidden();
+  await page
+    .getByRole("checkbox", { name: /I verified this integration/ })
+    .check();
+  await page
+    .getByRole("button", { name: "Register tool", exact: true })
+    .click();
+  await expect(
+    page.getByText("Tool registered. Attach it in an agent's configuration.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "/tmp/financial-tool-setup.png",
     fullPage: true,
   });
 });

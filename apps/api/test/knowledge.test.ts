@@ -133,14 +133,19 @@ before(async () => {
 });
 after(async () => {
   await cleanupKnowledgeFixtures(sql, org);
+  await sql`UPDATE knowledge_bases SET published_release_id=NULL WHERE organization_id=${org}`;
+  await sql`DELETE FROM knowledge_releases WHERE organization_id=${org}`;
   await sql.begin(async (tx) => {
     for (const table of [
+      "tool_executions",
+      "tools",
       "messages",
       "agent_runs",
       "conversations",
       "deployments",
       "agent_versions",
       "agents",
+      "model_prices",
       "model_configurations",
       "knowledge_jobs",
       "knowledge_documents",
@@ -1626,4 +1631,233 @@ test("Multilingual image extraction is scoped, cached, structured and available 
   );
   await sql`UPDATE knowledge_bases SET published_release_id=NULL WHERE id=${baseId}`;
   await sql`DELETE FROM knowledge_releases WHERE id=${releaseId}`;
+});
+
+test("Extraction usage persists attempts, unknowns, cache hits, price snapshots and safe failed traces with tenant isolation", async () => {
+  const { extractionJob, trackExtraction, extractionCost } =
+    await import("../src/extraction-usage.js");
+  const { observe } = await import("../src/ai-tracing.js");
+  const [job] =
+    await sql`SELECT * FROM knowledge_jobs WHERE workspace_id=${workspace} ORDER BY created_at DESC LIMIT 1`;
+  assert.ok(job);
+  const context = {
+    id: job.id,
+    source_id: job.source_id,
+    knowledge_base_id: job.knowledge_base_id,
+    workspace_id: workspace,
+    organization_id: org,
+    source_revision: job.source_revision,
+    attempts: job.attempts,
+  };
+  const model = {
+    id: chatModel,
+    provider: "openai-compatible",
+    modelId: "fixture-vision",
+  };
+  await sql`INSERT INTO model_prices(model_id,workspace_id,organization_id,input_usd_per_million,output_usd_per_million,updated_by) VALUES (${chatModel},${workspace},${org},2,4,${owner}) ON CONFLICT(model_id) DO UPDATE SET input_usd_per_million=2,output_usd_per_million=4`;
+  await extractionJob.run(context, () =>
+    observe("knowledge.ingestion", "chain", {}, async () => {
+      await trackExtraction("vision", 1, model, false, async (usage) => {
+        usage.inputTokens = 1000;
+        usage.outputTokens = 500;
+        return "done";
+      });
+      await trackExtraction("vision", 2, model, true, async () => undefined);
+      await assert.rejects(
+        trackExtraction("vision", 3, model, false, async () => {
+          throw new ProviderError("PROVIDER_HTTP_ERROR");
+        }),
+        { code: "PROVIDER_HTTP_ERROR" },
+      );
+      await trackExtraction(
+        "boundaries",
+        null,
+        model,
+        false,
+        async () => undefined,
+      );
+    }),
+  );
+  await sql`UPDATE model_prices SET input_usd_per_million=99 WHERE model_id=${chatModel}`;
+  const usagePath = `/knowledge-bases/${job.knowledge_base_id}/sources/${job.source_id}/extraction/usage`;
+  const response = await call("GET", usagePath);
+  assert.equal(response.statusCode, 200);
+  const rows = response.json().rows as {
+    page: number | null;
+    model_name: string;
+    status: string;
+    estimated_cost_usd: number | null;
+    input_usd_per_million: number | null;
+    input_tokens: number | null;
+    stage: string;
+    error_code: string | null;
+  }[];
+  const paid = rows.find(
+    (r) =>
+      r.page === 1 &&
+      r.model_name === "fixture-vision" &&
+      r.status === "completed",
+  );
+  assert.ok(paid);
+  assert.equal(paid.estimated_cost_usd, 0.004);
+  assert.equal(paid.input_usd_per_million, 2);
+  assert.ok(
+    rows.some(
+      (r) =>
+        r.page === 2 &&
+        r.status === "cached" &&
+        r.estimated_cost_usd === 0 &&
+        r.input_tokens === 0,
+    ),
+  );
+  assert.ok(
+    rows.some(
+      (r) =>
+        r.page === 3 &&
+        r.error_code === "PROVIDER_HTTP_ERROR" &&
+        r.estimated_cost_usd === null,
+    ),
+  );
+  assert.ok(
+    rows.some(
+      (r) =>
+        r.stage === "boundaries" &&
+        r.input_tokens === null &&
+        r.estimated_cost_usd === null,
+    ),
+  );
+  assert.equal(
+    extractionCost(
+      { inputTokens: null, outputTokens: 10 },
+      { input_usd_per_million: 2, output_usd_per_million: 4 },
+    ),
+    null,
+  );
+  assert.equal(
+    (await call("GET", usagePath, undefined, sessions.outsider)).statusCode,
+    403,
+  );
+  const spans = capturedSpans().filter(
+    (s) => s.name === "knowledge.extraction.vision",
+  );
+  assert.ok(
+    spans.some((s) => s.attributes["error.code"] === "PROVIDER_HTTP_ERROR"),
+  );
+  const paidSpan = spans.find(
+    (s) =>
+      s.attributes["langfuse.observation.cost_details"] === '{"total":0.004}',
+  );
+  assert.ok(paidSpan);
+  assert.ok(paidSpan.parentSpanContext);
+  assert.equal(JSON.stringify(paidSpan.attributes).includes("images"), false);
+  await sql`DELETE FROM model_prices WHERE model_id=${chatModel}`;
+});
+
+test("Grounded RAG snapshots calculate from authorized retrieved figures and retain cited provenance", async () => {
+  const base = await call("POST", `/workspaces/${workspace}/knowledge-bases`, {
+    name: "Financial calculator evidence",
+    embeddingModelId: modelId,
+  });
+  assert.equal(base.statusCode, 201, base.body);
+  const source = await call("POST", `/knowledge-bases/${base.json().id}/text`, {
+    title: "Revenue statement",
+    text: "Amounts in MMK. Current revenue 1,250.00; Previous revenue 1,000.00.",
+  });
+  assert.equal(source.statusCode, 202);
+  await processKnowledgeJob(embedding);
+  const tool = await call("POST", `/workspaces/${workspace}/tools`, {
+    name: "Verified financial calculator",
+    description: "Calculate financial changes using cited statement figures",
+    config: { kind: "financial" },
+    readOnlyAcknowledged: true,
+  });
+  assert.equal(tool.statusCode, 201, tool.body);
+  const release = await call(
+    "POST",
+    `/knowledge-bases/${base.json().id}/releases`,
+    { name: "Reviewed revenue", sourceIds: [source.json().id] },
+  );
+  assert.equal(release.statusCode, 201, release.body);
+  await sql`UPDATE knowledge_releases SET status='published' WHERE id=${release.json().id}`;
+  const c = agentConfig.parse({
+    modelId: chatModel,
+    rag: {
+      knowledgeBaseIds: [base.json().id],
+      minScore: 0,
+      topK: 5,
+      contentMode: "approved",
+      releasePins: { [base.json().id]: release.json().id },
+    },
+    tools: { toolIds: [tool.json().id] },
+    answerPolicy: { mode: "grounded" },
+  });
+  const { modelSnapshot } = await import("../src/agents.js");
+  const model = await modelSnapshot(chatModel, workspace);
+  const factory: ProviderFactory = () => ({
+    async *stream(request) {
+      if (request.system.startsWith("Choose useful")) {
+        assert.match(request.system, /Current revenue 1,250.00/);
+        yield {
+          type: "token",
+          text: JSON.stringify({
+            calls: [
+              {
+                toolId: tool.json().id,
+                arguments: {
+                  operation: "percentage_change",
+                  operands: [
+                    {
+                      label: "Current",
+                      value: "1,250.00",
+                      unit: "MMK",
+                      reference: 1,
+                      quote: "Current revenue 1,250.00",
+                    },
+                    {
+                      label: "Previous",
+                      value: "1,000.00",
+                      unit: "MMK",
+                      reference: 1,
+                      quote: "Previous revenue 1,000.00",
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        };
+      } else {
+        assert.match(request.system, /<tool_results>/);
+        assert.match(request.system, /25.00/);
+        assert.match(request.system, /provenance/);
+        yield {
+          type: "token",
+          text: JSON.stringify({
+            kind: "answer",
+            message:
+              "Revenue increased by 25.00%: (1,250.00 − 1,000.00) / 1,000.00 × 100, rounded to two decimals [1].",
+          }),
+        };
+      }
+      yield { type: "usage", inputTokens: 20, outputTokens: 10 };
+    },
+  });
+  const result = await executeAgentSnapshot(
+    c,
+    model,
+    "What is revenue growth?",
+    { workspaceId: workspace, organizationId: org, userId: owner },
+    AbortSignal.timeout(10000),
+    factory,
+    embedding,
+  );
+  assert.match(result.output, /25.00%/);
+  assert.equal(result.citations[0]!.sourceId, source.json().id);
+  assert.equal(result.inputTokens, 40);
+  const [execution] =
+    await sql`SELECT result FROM tool_executions WHERE tool_id=${tool.json().id} AND status='completed'`;
+  assert.equal(
+    execution!.result.operands[0].provenance.sourceId,
+    source.json().id,
+  );
 });

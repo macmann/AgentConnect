@@ -320,3 +320,36 @@ Reference transcription is compared using normalized Unicode character-trigram D
 Tag cases such as `multilingual`, `financial`, `layout` and `unanswerable`. For an unanswerable case, disable the citation requirement and add the expected refusal text or use the existing judge/advanced dataset options. Keep deliberately unanswerable questions in your dataset: unexpected answers or runtime failures should remain visible as failed cases.
 
 Run the dataset against a saved agent through **Evaluation**. Provider calls are real and can incur charges. Runs with document checks pin extraction text/table snapshots and source revisions when queued; source changes before or during evaluation invalidate the run instead of mixing revisions. Completed results retain their measured snapshot. Compare another run against a completed baseline with the same dataset revision and evaluator to measure changes after model, prompt or document improvements. Evaluation history shows extraction text similarity, exact-cell accuracy, expected citation coverage, tag-level results, detailed expected/actual cell checks and source revisions. **Export evaluation JSON** downloads the result, references and snapshots for reproducibility. Missing prices/usage remain unknown rather than being counted as zero.
+
+### Extraction usage and tracing
+
+In **Knowledge → Sources**, choose **Usage & traces** beside a source, then expand **Extraction usage & tracing**. This works for failed sources too. The table records vision-model calls, assisted boundary calls, cache hits and human-correction reuse, grouped by source revision and ingestion attempt. It shows model name, page (for vision), reported input/output tokens, call duration, safe error code and trace ID. Records are retained across reingestion; deleting/purging their source or job removes the associated records.
+
+Set input/output USD rates under **Operations → Model pricing** before ingesting to enable cost estimates. Each event snapshots its rates, so later price changes do not rewrite historical estimates. Missing token usage or prices stays **Unknown**; the known-cost subtotal excludes those events. A cache hit or corrected-artifact reuse has zero model cost and makes no generation call. Estimates cover vision and assisted boundaries only, not embeddings, native OCR, storage, or additional provider-specific charges. They are estimates, not invoices. Usage is recorded for new ingestion attempts; historical jobs are not reconstructed.
+
+The worker exports `knowledge.ingestion` traces with nested `knowledge.extraction.vision` and `knowledge.extraction.boundaries` generation observations to the existing Langfuse integration. Pages, usage, costs, cache status and safe errors are metadata; original image bytes and extraction content are not exported by these observations. Use the recorded trace ID to find the attempt in Langfuse when tracing is configured on the worker. Each retry gets its own trace and usage rows. An interrupted worker's unfinished rows are marked failed when job recovery next runs. Correction reuse has a `knowledge.extraction.correction` observation and no model call.
+
+### Deterministic financial calculations
+
+1. Open **Tools → Tool setup**, choose **Financial calculator**, and give it a clear name and description explaining when the agent should use it. No credential or external calculation service is required.
+2. Leave **Require retrieved evidence** enabled for financial RAG. Attach the tool and the statement knowledge base in **Agent → Configure**. Set tool usage instructions to request the calculator for arithmetic and clarification when the period, currency, unit or scale is ambiguous. Save and start a new Playground chat.
+3. Ask, for example: “What is revenue growth from 2025 to 2026?” Given verified revenue of 1,000 and 1,250 in the same units, the tool returns **25.00%**, its formula, rounding policy and operand provenance. Grounded-answer agents can use evidence-required financial tools too; other tool behavior in grounded mode stays unchanged. Workflow agent nodes use the same pipeline.
+
+Supported operations are sum, difference (first minus second), ratio, percentage (first / second × 100), and percentage change ((current − previous) / abs(previous) × 100). The latter explicitly uses an absolute baseline for negative prior values. Division by zero is rejected. Decimal arithmetic is exact up to 12 fractional digits; results use 0–12 configured decimal places and round halves away from zero. Inputs support accounting parentheses, explicit dot/comma decimal conventions, strict thousands grouping, and Myanmar/Arabic/Persian decimal digits. There is no currency conversion, formula execution or inference of missing values. Units must agree; explicitly selected scales normalize thousands/millions/billions to the base unit.
+
+With evidence required, each operand must copy a whole numeric token and an exact quote from an authorized passage retrieved for the current question. Results retain its source, document, chunk and page references. Verification establishes that the selected value occurs in that passage; it does **not** certify that the model selected the right period, financial concept, currency or scale, or that OCR was correct. Review extractions and benchmark important calculations. Prompt the agent to include the formula, units, rounding and citations. Tool execution history and Langfuse tool traces retain the deterministic result. The final prose remains model-generated and should be evaluated.
+
+For **Tool test** or explicit workflow tool nodes that receive user-supplied numbers rather than retrieved passages, intentionally disable the evidence requirement. Such inputs have no verified provenance; they are not eligible for the grounded-answer calculator path. Example test arguments:
+
+```json
+{
+  "operation": "percentage_change",
+  "operands": [
+    { "label": "Current revenue", "value": "1,250.00", "unit": "MMK", "scale": "1" },
+    { "label": "Previous revenue", "value": "1,000.00", "unit": "MMK", "scale": "1" }
+  ],
+  "precision": 2
+}
+```
+
+Evidence-required tools intentionally reject standalone tests without retrieved context. Use Playground with attached ready knowledge to test that path. For a public deployment, the financial tool and knowledge must both permit public access, as with existing attachments.

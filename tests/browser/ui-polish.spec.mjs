@@ -1,3 +1,4 @@
+import { paceApiBudget } from "../helpers/api-budget.mjs";
 import { test, expect } from "@playwright/test";
 import { randomUUID, createHash } from "node:crypto";
 import postgres from "postgres";
@@ -9,6 +10,9 @@ const org = randomUUID(),
   second = randomUUID(),
   user = randomUUID(),
   session = randomUUID();
+test.beforeEach(async ({}, testInfo) => {
+  await paceApiBudget(testInfo);
+});
 test.beforeAll(async () => {
   await sql`INSERT INTO organizations(id,name) VALUES (${org},'UI browser organization')`;
   await sql`INSERT INTO workspaces(id,organization_id,name) VALUES (${first},${org},'Alpha workspace'),(${second},${org},'Beta workspace')`;

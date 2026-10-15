@@ -22,8 +22,8 @@ export interface ProcessingReport {
   llm: {
     status: string;
     calls: number;
-    inputTokens: number;
-    outputTokens: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
   };
 }
 const numeric = (s: string) => /^[-+($€£¥]?\s*\d[\d,. %()−–-]*$/.test(s.trim());

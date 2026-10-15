@@ -49,7 +49,12 @@ import {
   validateModelSet,
   type ModelSnapshot,
 } from "./agent-models.js";
-import { validateToolIds, runAgentTools, ToolError } from "./tool-runtime.js";
+import {
+  validateToolIds,
+  runAgentTools,
+  runGroundedFinancialTools,
+  ToolError,
+} from "./tool-runtime.js";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
@@ -558,6 +563,32 @@ async function streamChat(
           }
           if (c.answerPolicy.mode === "grounded") {
             span.addEvent("generation.started", { mode: "grounded" });
+            const financial = await runGroundedFinancialTools(
+              {
+                ...c,
+                tools: {
+                  ...c.tools,
+                  toolIds: c.tools.toolIds.filter(
+                    (id) => !continuation.blockedToolIds.includes(id),
+                  ),
+                },
+              },
+              provider,
+              messages,
+              sources,
+              {
+                workspaceId: conversation.workspace_id,
+                organizationId: conversation.organization_id,
+                publicAccess: !!conversation.deployment_id,
+                userId: conversation.user_id ?? undefined,
+                runId,
+              },
+              controller.signal,
+              (data) => write("tool", data),
+              c.contextControls.enabled
+                ? Infinity
+                : model.contextWindow - c.maxOutputTokens,
+            );
             const result = await generateGroundedAnswer(
               c,
               provider,
@@ -570,12 +601,18 @@ async function streamChat(
               c.contextControls.enabled
                 ? Infinity
                 : model.contextWindow - c.maxOutputTokens,
-              continuation.grounding,
+              continuation.grounding + financial.grounding,
             );
             output = result.message;
             answerKind = result.kind;
-            inputTokens = result.inputTokens;
-            outputTokens = result.outputTokens;
+            inputTokens =
+              result.inputTokens === null || financial.inputTokens === null
+                ? null
+                : result.inputTokens + financial.inputTokens;
+            outputTokens =
+              result.outputTokens === null || financial.outputTokens === null
+                ? null
+                : result.outputTokens + financial.outputTokens;
             offerHuman =
               result.kind === "no_answer" &&
               c.answerPolicy.offerHumanOnNoAnswer;
@@ -599,6 +636,7 @@ async function streamChat(
                 publicAccess: !!conversation.deployment_id,
                 userId: conversation.user_id ?? undefined,
                 runId,
+                knowledgeSources: sources,
               },
               controller.signal,
               (data) => write("tool", data),

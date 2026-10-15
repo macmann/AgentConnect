@@ -3,6 +3,10 @@ const name = z.string().trim().min(1).max(100);
 const identifier = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,62}$/);
 export const toolConfig = z.discriminatedUnion("kind", [
   z.object({
+    kind: z.literal("financial"),
+    requireEvidence: z.boolean().default(true),
+  }),
+  z.object({
     kind: z.literal("http"),
     url: z.url().max(1000),
     queryParameters: z.array(identifier).max(12).default([]),

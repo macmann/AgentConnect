@@ -5836,3 +5836,29 @@ input[type="range"] {
     display: none;
   }
 }
+
+.extraction-usage {
+  min-width: 0;
+  margin-block: 16px;
+}
+.extraction-usage > summary {
+  cursor: pointer;
+  padding: 12px 0;
+  font-weight: 600;
+}
+.extraction-usage .table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-top: 16px;
+}
+.extraction-usage table {
+  min-width: 1000px;
+}
+.extraction-usage th,
+.extraction-usage td {
+  padding: 12px 16px;
+  vertical-align: top;
+}
+.extraction-usage code {
+  font-size: 11px;
+}

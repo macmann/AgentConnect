@@ -184,4 +184,4 @@ Implemented guided Google/Microsoft/Slack knowledge-source OAuth, server-side re
 
 ## Improvement batches
 
-Batch 1 implements real-document quality benchmarks and the extraction correction workspace. Actual customer recognition/answer accuracy must be measured using customer-authored ground truth and live selected models; controlled automated fixtures validate the machinery. Subsequent requested batches remain: deterministic financial calculations plus extraction cost/tracing; multilingual retrieval validation plus semantic gap grouping; connector delta feeds plus reusable workflow components.
+Batch 1 implements real-document quality benchmarks and the extraction correction workspace. Actual customer recognition/answer accuracy must be measured using customer-authored ground truth and live selected models; controlled automated fixtures validate the machinery. Batch 2 implements extraction cost/tracing (item 4) followed by deterministic, source-linked financial calculations (item 3). Subsequent requested batches remain: multilingual retrieval validation plus semantic gap grouping; connector delta feeds plus reusable workflow components.

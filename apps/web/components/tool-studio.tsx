@@ -6,6 +6,7 @@ import {
   useWorkspaceSection,
   WorkspaceSaveBar,
 } from "./workspace-sections";
+import { HelpTooltip } from "./help-tooltip";
 import { Button } from "./button";
 import { requestJson } from "./agent-client";
 type Tool = {
@@ -118,6 +119,7 @@ export function ToolStudio({
       requestJson<ToolTrace[]>(`/workspaces/${workspaceId}/tool-executions`),
     enabled: read,
   });
+  const [requireEvidence, setRequireEvidence] = useState(true);
   const [kind, setKind] = useState("http"),
     [name, setName] = useState(""),
     [description, setDescription] = useState(""),
@@ -166,27 +168,29 @@ export function ToolStudio({
     e.preventDefault();
     await action(async () => {
       const config =
-        kind === "http"
-          ? {
-              kind,
-              url,
-              queryParameters: split(parameters),
-              secretId: secretId || null,
-              auth,
-            }
-          : kind === "database"
+        kind === "financial"
+          ? { kind, requireEvidence }
+          : kind === "http"
             ? {
                 kind,
-                secretId,
-                schema,
-                table,
-                columns: split(columns),
-                filterColumns: split(parameters),
-                rowLimit: 20,
+                url,
+                queryParameters: split(parameters),
+                secretId: secretId || null,
+                auth,
               }
-            : kind === "search"
-              ? { kind, secretId, provider: "brave", resultCount: 5 }
-              : { kind, connectorId, remoteName };
+            : kind === "database"
+              ? {
+                  kind,
+                  secretId,
+                  schema,
+                  table,
+                  columns: split(columns),
+                  filterColumns: split(parameters),
+                  rowLimit: 20,
+                }
+              : kind === "search"
+                ? { kind, secretId, provider: "brave", resultCount: 5 }
+                : { kind, connectorId, remoteName };
       await requestJson(
         edit ? `/tools/${edit.id}` : `/workspaces/${workspaceId}/tools`,
         edit ? "PUT" : "POST",
@@ -239,6 +243,7 @@ export function ToolStudio({
       setName(t.name);
       setDescription(t.description);
       setKind(t.kind);
+      setRequireEvidence(c.requireEvidence !== false);
       setUrl(String(c.url ?? ""));
       setSecret(String(c.secretId ?? ""));
       setAuth(String(c.auth ?? "none"));
@@ -347,7 +352,12 @@ export function ToolStudio({
               </label>
               <label>
                 Type
-                <select value={kind} onChange={(e) => setKind(e.target.value)}>
+                <select
+                  aria-label="Tool type"
+                  value={kind}
+                  onChange={(e) => setKind(e.target.value)}
+                >
+                  <option value="financial">Financial calculator</option>
                   <option value="http">HTTP GET</option>
                   <option value="database">PostgreSQL read</option>
                   <option value="search">Brave web search</option>
@@ -373,7 +383,7 @@ export function ToolStudio({
                   onChange={(e) => setTimeout(Number(e.target.value))}
                 />
               </label>
-              {kind !== "mcp" && (
+              {kind !== "mcp" && kind !== "financial" && (
                 <label>
                   Encrypted credential
                   <select
@@ -388,6 +398,31 @@ export function ToolStudio({
                     ))}
                   </select>
                 </label>
+              )}
+              {kind === "financial" && (
+                <div>
+                  <p>
+                    Deterministic sums, differences, ratios, percentages and
+                    period-over-period changes. No credential required.
+                  </p>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={requireEvidence}
+                      onChange={(e) => setRequireEvidence(e.target.checked)}
+                    />
+                    Require retrieved evidence{" "}
+                    <HelpTooltip>
+                      Every operand must quote its exact value from an
+                      authorized passage retrieved for this question. Leave
+                      enabled for financial RAG. Disable only for explicit
+                      user-provided inputs or workflow tool nodes; those inputs
+                      have no verified source provenance. Decimal convention,
+                      units and scale must be explicit and consistent. Results
+                      include the formula, rounding and source references.
+                    </HelpTooltip>
+                  </label>
+                </div>
               )}
               {kind === "http" && (
                 <>

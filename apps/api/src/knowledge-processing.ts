@@ -1,3 +1,4 @@
+import { trackExtraction } from "./extraction-usage.js";
 import {
   structureDocument,
   validBlocks,
@@ -41,8 +42,8 @@ export async function processAdvancedDocument(
   const llm = {
     status: settings.llmAssisted ? "pending" : "disabled",
     calls: 0,
-    inputTokens: 0,
-    outputTokens: 0,
+    inputTokens: 0 as number | null,
+    outputTokens: 0 as number | null,
   };
   const warnings: string[] = [];
   let choose: ((rows: string[][]) => Promise<LayoutBlock[] | null>) | undefined;
@@ -90,31 +91,53 @@ export async function processAdvancedDocument(
           AbortSignal.timeout(20000),
         ]);
         try {
-          for await (const event of provider.stream({
-            system,
-            messages: [{ role: "user", content: input }],
-            temperature: 0,
-            topP: null,
-            maxOutputTokens,
-            signal: requestSignal,
-          })) {
-            if (event.type === "token") text += event.text;
-            else if (event.type === "usage") {
-              llm.inputTokens += event.inputTokens ?? 0;
-              llm.outputTokens += event.outputTokens ?? 0;
-            }
-            if (text.length > 24000)
-              throw new KnowledgeError("INVALID_LAYOUT_RESPONSE");
-          }
-          const result = validBlocks(JSON.parse(text), rows.length);
-          if (
-            result.some(
-              (b) =>
-                b.kind === "table" &&
-                rows.slice(b.start, b.start + b.headerRows).some(isDataRow),
-            )
-          )
-            throw new KnowledgeError("INVALID_LAYOUT_RESPONSE");
+          const result = await trackExtraction(
+            "boundaries",
+            null,
+            model,
+            false,
+            async (usage) => {
+              try {
+                for await (const event of provider.stream({
+                  system,
+                  messages: [{ role: "user", content: input }],
+                  temperature: 0,
+                  topP: null,
+                  maxOutputTokens,
+                  signal: requestSignal,
+                })) {
+                  if (event.type === "token") text += event.text;
+                  else if (event.type === "usage") {
+                    usage.inputTokens = event.inputTokens;
+                    usage.outputTokens = event.outputTokens;
+                  }
+                  if (text.length > 24000)
+                    throw new KnowledgeError("INVALID_LAYOUT_RESPONSE");
+                }
+                const result = validBlocks(JSON.parse(text), rows.length);
+                if (
+                  result.some(
+                    (b) =>
+                      b.kind === "table" &&
+                      rows
+                        .slice(b.start, b.start + b.headerRows)
+                        .some(isDataRow),
+                  )
+                )
+                  throw new KnowledgeError("INVALID_LAYOUT_RESPONSE");
+                return result;
+              } finally {
+                llm.inputTokens =
+                  llm.inputTokens === null || usage.inputTokens === null
+                    ? null
+                    : llm.inputTokens + usage.inputTokens;
+                llm.outputTokens =
+                  llm.outputTokens === null || usage.outputTokens === null
+                    ? null
+                    : llm.outputTokens + usage.outputTokens;
+              }
+            },
+          );
           if (llm.status === "pending") llm.status = "applied";
           return result;
         } catch {

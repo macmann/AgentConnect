@@ -195,3 +195,10 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 - Immutable extraction snapshots, dependency/source-drift checks, tag-level results, baseline comparisons and JSON result export; existing latency/cost and answer checks retained.
 - Side-by-side authenticated original-page images and editable AI text/tables, atomic audited corrections, optimistic revision protection and reindexing without another vision call.
 - Unchanged-source corrections persist through Reingest; an explicit automatic-extraction reset preserves history and existing reviewed-release controls.
+
+### Extraction observability and financial calculations
+
+- Durable extraction usage by source revision/job attempt: vision pages, boundary assistance, cache hits, correction reuse, safe failures, token usage, duration, immutable model-price snapshots and explicit unknown costs.
+- Source-level usage viewer, available for failed ingestion, and metadata-only nested Langfuse ingestion/extraction traces.
+- Built-in financial calculator tool: exact decimal sums, differences, ratios, percentages and growth; explicit scales, units, precision and rounding; multilingual digits and accounting negatives.
+- Evidence-required operands validated against authorized current-query passages, with formula and source/page/chunk provenance; supported in regular and grounded RAG agents and workflow agent nodes. Optional ungrounded mode supports explicit supplied workflow/test inputs without claiming source verification.
