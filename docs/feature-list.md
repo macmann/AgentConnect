@@ -223,3 +223,5 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 - Key-bound durable conversations; published version snapshots and current issuer permission checks.
 - Optional execution details: recorded tool inputs/outputs, raw retrieval candidates, vector/lexical/RRF stages, reranking scores and final context chunks.
 - Existing streaming agent API remains available for legacy keys. See [integration guide](platform-api.md).
+
+- **Approved Q&A preference:** agent-level balanced or approved-Q&A-first retrieval, configurable semantic threshold, published snapshot provenance, supporting documents and document fallback; preserved through reranking and shared agent API/MCP/workflow execution.

@@ -144,6 +144,10 @@ export const retrievalInput = z.object({
 export type RetrievalInput = z.infer<typeof retrievalInput>;
 export const ragConfig = z
   .object({
+    answerSourcePolicy: z
+      .enum(["balanced", "prefer_approved_qa"])
+      .default("balanced"),
+    qaMinScore: z.number().min(0).max(1).default(0.75),
     queryRewrite: z.boolean().default(false),
     rerank: z.boolean().default(false),
     rerankerId: z.uuid().nullable().default(null),
@@ -160,6 +164,8 @@ export const ragConfig = z
     requireCitations: z.boolean().default(true),
   })
   .default({
+    answerSourcePolicy: "balanced",
+    qaMinScore: 0.75,
     queryRewrite: false,
     rerank: false,
     rerankerId: null,

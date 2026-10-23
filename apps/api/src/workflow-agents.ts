@@ -248,7 +248,8 @@ export async function executeAgentSnapshot(
           ? null
           : tools.outputTokens + knowledgePlan.outputTokens;
       const grounding =
-        (sources.length ? groundedPrompt(sources) : "") + tools.grounding;
+        (sources.length ? groundedPrompt(sources, c.rag) : "") +
+        tools.grounding;
       if (
         !c.contextControls.enabled &&
         Buffer.byteLength(input) +

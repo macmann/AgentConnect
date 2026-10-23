@@ -354,7 +354,7 @@ export async function registerCopilotRoutes(
             })),
             availableActions: actions,
           };
-          const grounding = groundedPrompt(citations);
+          const grounding = groundedPrompt(citations, attached.agent.rag);
           for (const m of [...timeline].reverse()) {
             const next = [m, ...context.messages];
             if (
