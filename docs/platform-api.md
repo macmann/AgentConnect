@@ -184,3 +184,7 @@ try {
 ```
 
 For a knowledge key, call `knowledge_search` with `{ query, mode: "hybrid", topK: 5 }`. Use `conversationId` on subsequent `agent_invoke` calls to retain context. Clients supporting header-based Streamable HTTP connections can connect directly; OAuth discovery/sign-in, stdio transport and workspace-wide wildcard keys are not part of this implementation.
+
+### Metadata-filtered knowledge search
+
+Both REST KB search and the MCP `knowledge_search` tool accept `metadataFilter: { tagsAll: ["policy"], attributes: { product: "loans" } }`. All tags and string attributes must match, case-sensitively. Filters run before candidate ranking and combine with source IDs, release rules and key permissions. Raw chunks return `tags` and `attributes`. Published knowledge searches use the release's metadata snapshot; older snapshots without tags do not match nonempty filters. Agent invocation uses the filters saved in its published configuration. See [Source tags and metadata filters](rag.md#source-tags-and-metadata-filters) for limits and examples. Apply migration 0039 before running this release.

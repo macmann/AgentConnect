@@ -1,3 +1,10 @@
+import {
+  registerMetadataTagging,
+  enqueueMetadataTagging,
+  validateTaggingModel,
+} from "./metadata-tagging.js";
+import { uploadMetadata } from "@agentconnect/schemas/knowledge-metadata";
+import { sourceMetadataUpdate } from "@agentconnect/schemas/knowledge-metadata";
 import { registerExtractionReview } from "./knowledge-review.js";
 import { registerKnowledgeReleases } from "./knowledge-releases.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -98,6 +105,10 @@ export async function addSource(
       if (!active) throw new HttpError(404, "Knowledge base unavailable");
       await tx`INSERT INTO knowledge_sources(id,knowledge_base_id,workspace_id,organization_id,kind,title,filename,object_key,source_url,byte_size,metadata,status) VALUES (${sourceId},${kb.id},${kb.workspace_id},${kb.organization_id},${kind},${title},${filename},${key},${sourceUrl},${bytes?.byteLength ?? 0},${tx.json(JSON.parse(JSON.stringify(metadata)))},'queued')`;
       await tx`INSERT INTO knowledge_jobs(id,source_id,knowledge_base_id,workspace_id,organization_id,source_revision,payload,status) VALUES (${randomUUID()},${sourceId},${kb.id},${kb.workspace_id},${kb.organization_id},1,${tx.json(kind === "website" ? { website: JSON.parse(JSON.stringify(metadata)) } : { objectKey: key, filename })},'queued')`;
+      const tagging = metadata.tagging as
+        { enabled?: boolean; modelId?: string } | undefined;
+      if (tagging?.enabled && tagging.modelId)
+        await enqueueMetadataTagging(tx, sourceId, kb, userId, tagging.modelId);
       await audit(
         tx,
         r,
@@ -171,6 +182,7 @@ export async function registerKnowledgeRoutes(
   await registerExtractionReview(app, ownedKnowledge, sourceFor);
   const factory = override ?? defaultEmbeddingFactory;
   const rag = new PostgresRagTool(factory);
+  await registerMetadataTagging(app, ownedKnowledge);
   const schema = (body: z.ZodType) => ({
     schema: { body: z.toJSONSchema(body, { io: "input", target: "draft-7" }) },
   });
@@ -366,7 +378,24 @@ export async function registerKnowledgeRoutes(
     { bodyLimit: 11000000 },
     async (r, reply) => {
       const { u, kb } = await ownedKnowledge(r, "knowledge:manage");
-      const file = await r.file();
+      let file: import("@fastify/multipart").MultipartFile | undefined;
+      let bytes: Buffer = Buffer.alloc(0);
+      let metadataText: string | undefined;
+      for await (const part of r.parts()) {
+        if (part.type === "file") {
+          if (file) throw new HttpError(400, "Upload one file per request");
+          file = part;
+          bytes = await part.toBuffer();
+        } else if (part.fieldname === "metadata") {
+          if (
+            metadataText !== undefined ||
+            typeof part.value !== "string" ||
+            part.value.length > 20000
+          )
+            throw new HttpError(400, "Invalid upload metadata");
+          metadataText = part.value;
+        }
+      }
       if (!file) throw new HttpError(400, "Select a document");
       const filename = file.filename.split(/[\\/]/).at(-1)!.slice(0, 200);
       const ext = filename.split(".").at(-1)?.toLowerCase() ?? "";
@@ -383,25 +412,30 @@ export async function registerKnowledgeRoutes(
           400,
           "Enable AI document extraction in knowledge settings before uploading images",
         );
-      const bytes = await file.toBuffer();
       if (file.file.truncated || !bytes.length)
         throw new HttpError(400, "Document is empty or exceeds 10 MB");
+      let rawMetadata: unknown = {};
+      if (metadataText !== undefined) {
+        try {
+          rawMetadata = JSON.parse(metadataText);
+        } catch {
+          throw new HttpError(400, "Invalid upload metadata JSON");
+        }
+      }
+      const shared = uploadMetadata.parse(rawMetadata);
+      if (shared.tagging.enabled)
+        await validateTaggingModel(shared.tagging.modelId!, kb);
+      const optionsDigest = createHash("sha256")
+        .update(JSON.stringify(shared))
+        .digest("hex");
       const rawKey = r.headers["idempotency-key"];
       if (rawKey === undefined)
-        return reply
-          .code(202)
-          .send(
-            await addSource(
-              r,
-              kb,
-              u.id,
-              "upload",
-              filename,
-              bytes,
-              filename,
-              {},
-            ),
-          );
+        return reply.code(202).send(
+          await addSource(r, kb, u.id, "upload", filename, bytes, filename, {
+            ...shared,
+            uploadOptionsDigest: optionsDigest,
+          }),
+        );
       const uploadKey = z.uuid().parse(rawKey),
         digest = createHash("sha256").update(bytes).digest("hex");
       const result = await sql.begin(async (tx) => {
@@ -417,6 +451,10 @@ export async function registerKnowledgeRoutes(
             existing.organization_id !== kb.organization_id ||
             existing.metadata.uploadUserId !== u.id ||
             existing.metadata.uploadDigest !== digest ||
+            (existing.metadata.uploadOptionsDigest ??
+              createHash("sha256")
+                .update(JSON.stringify(uploadMetadata.parse({})))
+                .digest("hex")) !== optionsDigest ||
             existing.filename !== filename ||
             existing.status === "deleted"
           )
@@ -434,7 +472,12 @@ export async function registerKnowledgeRoutes(
           filename,
           bytes,
           filename,
-          { uploadUserId: u.id, uploadDigest: digest },
+          {
+            ...shared,
+            uploadUserId: u.id,
+            uploadDigest: digest,
+            uploadOptionsDigest: optionsDigest,
+          },
           null,
           tx,
           uploadKey,
@@ -489,6 +532,60 @@ export async function registerKnowledgeRoutes(
         );
     },
   );
+  app.get(
+    "/knowledge-bases/:knowledgeBaseId/sources/:sourceId/metadata",
+    async (r) => {
+      const { kb } = await ownedKnowledge(r);
+      const source = await sourceFor(r, kb);
+      return {
+        tags: source.metadata.tags ?? [],
+        attributes: source.metadata.attributes ?? {},
+        metadataRevision: source.metadata.metadataRevision ?? 0,
+      };
+    },
+  );
+  app.put(
+    "/knowledge-bases/:knowledgeBaseId/sources/:sourceId/metadata",
+    { ...schema(sourceMetadataUpdate), bodyLimit: 20000 },
+    async (r) => {
+      const { u, kb } = await ownedKnowledge(r, "knowledge:manage");
+      const source = await sourceFor(r, kb);
+      const data = sourceMetadataUpdate.parse(r.body);
+      return sql.begin(async (tx) => {
+        const [current] =
+          await tx`SELECT metadata,status FROM knowledge_sources WHERE id=${source.id} AND knowledge_base_id=${kb.id} AND workspace_id=${kb.workspace_id} FOR UPDATE`;
+        if (!current || current.status === "deleted")
+          throw new HttpError(404, "Source not found");
+        const revision = Number(current.metadata.metadataRevision ?? 0);
+        if (data.metadataRevision !== revision)
+          throw new HttpError(
+            409,
+            "Source metadata changed; reload before saving",
+          );
+        const metadata = {
+          ...current.metadata,
+          tags: [...new Set(data.tags)],
+          attributes: data.attributes,
+          metadataRevision: revision + 1,
+        };
+        await tx`UPDATE knowledge_sources SET metadata=${tx.json(metadata)},updated_at=now() WHERE id=${source.id}`;
+        await audit(
+          tx,
+          r,
+          u.id,
+          "knowledge.metadata_updated",
+          source.id,
+          kb.organization_id,
+          kb.workspace_id,
+        );
+        return {
+          tags: metadata.tags,
+          attributes: metadata.attributes,
+          metadataRevision: metadata.metadataRevision,
+        };
+      });
+    },
+  );
   app.put(
     "/knowledge-bases/:knowledgeBaseId/sources/:sourceId/qa",
     { ...schema(qaInput), bodyLimit: 100000 },
@@ -505,7 +602,7 @@ export async function registerKnowledgeRoutes(
       try {
         return await sql.begin(async (tx) => {
           const [saved] =
-            await tx`UPDATE knowledge_sources SET title=${data.question},metadata=${tx.json(data)},object_key=${key},byte_size=${bytes.length},revision=revision+1,status='queued',error_code=NULL,updated_at=now() WHERE id=${source.id} AND revision=${source.revision} RETURNING revision`;
+            await tx`UPDATE knowledge_sources SET title=${data.question},metadata=metadata || ${tx.json(data)}::jsonb || jsonb_build_object('metadataRevision',COALESCE((metadata->>'metadataRevision')::integer,0)+1),object_key=${key},byte_size=${bytes.length},revision=revision+1,status='queued',error_code=NULL,updated_at=now() WHERE id=${source.id} AND revision=${source.revision} RETURNING revision`;
           if (!saved) throw new HttpError(409, "Q&A changed; reload first");
           await tx`INSERT INTO knowledge_jobs(id,source_id,knowledge_base_id,workspace_id,organization_id,source_revision,payload,status) VALUES (${randomUUID()},${source.id},${kb.id},${kb.workspace_id},${kb.organization_id},${saved.revision},${tx.json({ objectKey: key, filename: "qa.txt" })},'queued')`;
           await audit(
@@ -682,6 +779,7 @@ export async function registerKnowledgeRoutes(
       await sql.begin(async (tx) => {
         await tx`UPDATE knowledge_sources SET status='deleted',updated_at=now(),revision=revision+1 WHERE id=${source.id}`;
         await tx`UPDATE knowledge_jobs SET status='cancelled',finished_at=now() WHERE source_id=${source.id} AND status IN ('queued','running')`;
+        await tx`DELETE FROM knowledge_metadata_jobs WHERE source_id=${source.id}`;
         await tx`DELETE FROM knowledge_documents WHERE source_id=${source.id}`;
         await audit(
           tx,

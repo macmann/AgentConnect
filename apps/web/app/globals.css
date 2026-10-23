@@ -6059,3 +6059,87 @@ input[type="range"] {
   gap: 0.5rem;
   margin-block: 0.25rem 1rem;
 }
+
+/* Source metadata and retrieval filters share the same compact, responsive form. */
+.source-metadata-editor {
+  margin-block: 0.75rem;
+  max-width: 42rem;
+}
+.source-metadata-editor > summary {
+  padding-block: 0.5rem;
+  cursor: pointer;
+}
+.source-metadata-editor > form {
+  margin-top: 0.75rem;
+}
+.knowledge-metadata-fields {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  min-width: 0;
+  margin-block: 0.75rem 1rem;
+}
+.knowledge-metadata-fields legend {
+  padding-inline: 0.4rem;
+  font-weight: 600;
+}
+.knowledge-metadata-fields > .button {
+  justify-self: start;
+}
+.knowledge-metadata-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+.knowledge-metadata-row label {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.knowledge-metadata-row input {
+  min-width: 0;
+  width: 100%;
+}
+@media (max-width: 760px) {
+  .knowledge-metadata-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .knowledge-metadata-row > .button {
+    justify-self: start;
+  }
+}
+.metadata-bulk-editor {
+  padding: 1.25rem;
+  margin: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+.metadata-bulk-editor > * + * {
+  margin-top: 1rem;
+}
+.metadata-bulk-preview {
+  max-height: 24rem;
+  overflow: auto;
+  padding: 1rem;
+}
+.metadata-bulk-preview li {
+  padding-block: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.metadata-suggestion-values {
+  display: grid;
+  gap: 0.75rem;
+  margin-block: 1rem;
+}
+.metadata-ai-options {
+  display: grid;
+  gap: 0.75rem;
+  margin-block: 1rem;
+}
+.metadata-ai-options select {
+  max-width: 28rem;
+}
+.metadata-ai-request {
+  margin-block: 1rem;
+}

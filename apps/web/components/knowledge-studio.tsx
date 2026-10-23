@@ -1,4 +1,17 @@
 "use client";
+import {
+  AITaggingOptions,
+  BulkMetadataEditor,
+  TaggingRequest,
+  SuggestionReview,
+  type TaggingJob,
+  type TaggingOptions,
+} from "./knowledge-bulk-metadata";
+import { MetadataFields, SourceMetadataEditor } from "./knowledge-metadata";
+import {
+  metadataFilter as metadataFilterSchema,
+  type MetadataFilter,
+} from "@agentconnect/schemas/knowledge-metadata";
 import { KnowledgeUploads, useKnowledgeUploads } from "./knowledge-uploads";
 import { ExtractionUsage } from "./extraction-usage";
 import { ExtractionReview, type ExtractionPage } from "./extraction-review";
@@ -59,6 +72,8 @@ type Source = {
   revision: number;
   chunk_count: number;
   metadata: {
+    attributes?: Record<string, string>;
+    metadataRevision?: number;
     aiExtractionProgress?: {
       page: number;
       extractedPages: number;
@@ -156,6 +171,19 @@ export function KnowledgeStudio({
       } | null;
     }[];
   } | null>(null);
+  const [sharedMetadata, setSharedMetadata] = useState<MetadataFilter>({
+    tagsAll: [],
+    attributes: {},
+  });
+  const [uploadTagging, setUploadTagging] = useState<TaggingOptions>({
+    enabled: false,
+    modelId: null,
+  });
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const [metadataFilter, setMetadataFilter] = useState<MetadataFilter>({
+    tagsAll: [],
+    attributes: {},
+  });
   const [editing, setEditing] = useState<Source | null>(null);
   const [provider, setProvider] = useState("openai");
   const [crawler, setCrawler] = useState("builtin");
@@ -211,6 +239,21 @@ export function KnowledgeStudio({
         ? 2000
         : false,
   });
+  const taggingJobs = useQuery({
+    queryKey: ["metadata-suggestions", selected],
+    queryFn: () =>
+      requestJson<TaggingJob[]>(
+        `/knowledge-bases/${selected}/metadata-suggestions`,
+      ),
+    enabled: canManage && !!selected,
+    refetchInterval: (q) =>
+      q.state.data?.some((j) => ["queued", "running"].includes(j.status))
+        ? 2000
+        : false,
+  });
+  async function refreshMetadata() {
+    await Promise.all([sources.refetch(), taggingJobs.refetch()]);
+  }
   const base = bases.data?.find((b) => b.id === selected);
   const path = `/knowledge-bases/${selected}`;
   async function action(task: () => Promise<void>) {
@@ -237,6 +280,11 @@ export function KnowledgeStudio({
         uploads.add(
           data.getAll("file").filter((f): f is File => f instanceof File),
           { id: base.id, name: base.name },
+          {
+            tags: sharedMetadata.tagsAll,
+            attributes: sharedMetadata.attributes,
+            tagging: uploadTagging,
+          },
         );
         setError("");
         setNotice(
@@ -364,8 +412,14 @@ export function KnowledgeStudio({
     e.preventDefault();
     const data = new FormData(e.currentTarget);
     await action(async () => {
+      const parsed = metadataFilterSchema.safeParse(metadataFilter);
+      if (!parsed.success)
+        throw new Error(
+          parsed.error.issues.map((issue) => issue.message).join(". "),
+        );
       setResult(
         await requestJson<Result>(path + "/search", "POST", {
+          metadataFilter: parsed.data,
           query: String(data.get("query")),
           topK: Number(data.get("topK")),
           minScore: Number(data.get("minScore")),
@@ -655,6 +709,18 @@ export function KnowledgeStudio({
                   extraction for scanned PDFs. Image uploads require AI
                   extraction.
                 </p>
+                <details className="source-metadata-editor">
+                  <summary>Shared metadata for all selected files</summary>
+                  <MetadataFields
+                    value={sharedMetadata}
+                    onChange={setSharedMetadata}
+                  />
+                </details>
+                <AITaggingOptions
+                  value={uploadTagging}
+                  onChange={setUploadTagging}
+                  models={processingModels.data ?? []}
+                />
               </>
             )}
             {form === "text" && (
@@ -875,6 +941,7 @@ export function KnowledgeStudio({
                     className="workspace-card"
                     onClick={() => {
                       setSelected(k.id);
+                      setSelectedSourceIds([]);
                       setTab("sources");
                       setResult(null);
                       setPreview(null);
@@ -1062,11 +1129,51 @@ export function KnowledgeStudio({
               {sources.error && (
                 <p className="error-banner">{sources.error.message}</p>
               )}
+              {canManage &&
+                selectedSourceIds.some((id) =>
+                  sources.data?.some((s) => s.id === id),
+                ) && (
+                  <BulkMetadataEditor
+                    path={path}
+                    sources={
+                      sources.data?.filter((s) =>
+                        selectedSourceIds.includes(s.id),
+                      ) ?? []
+                    }
+                    models={processingModels.data ?? []}
+                    onSaved={refreshMetadata}
+                  />
+                )}
               {sources.data?.length ? (
                 <div className="table-wrap">
                   <table>
                     <thead>
                       <tr>
+                        {canManage && (
+                          <th>
+                            <input
+                              type="checkbox"
+                              aria-label="Select up to 100 sources"
+                              checked={
+                                !!sources.data?.length &&
+                                sources.data
+                                  .slice(0, 100)
+                                  .every((s) =>
+                                    selectedSourceIds.includes(s.id),
+                                  )
+                              }
+                              onChange={(e) =>
+                                setSelectedSourceIds(
+                                  e.target.checked
+                                    ? sources
+                                        .data!.slice(0, 100)
+                                        .map((s) => s.id)
+                                    : [],
+                                )
+                              }
+                            />
+                          </th>
+                        )}
                         <th>Source</th>
                         <th>Status</th>
                         <th>Chunks</th>
@@ -1076,8 +1183,63 @@ export function KnowledgeStudio({
                     <tbody>
                       {sources.data.map((s) => (
                         <tr key={s.id}>
+                          {canManage && (
+                            <td>
+                              <input
+                                type="checkbox"
+                                aria-label={`Select source ${s.title}`}
+                                checked={selectedSourceIds.includes(s.id)}
+                                disabled={
+                                  selectedSourceIds.length >= 100 &&
+                                  !selectedSourceIds.includes(s.id)
+                                }
+                                onChange={(e) =>
+                                  setSelectedSourceIds(
+                                    e.target.checked
+                                      ? [...selectedSourceIds, s.id]
+                                      : selectedSourceIds.filter(
+                                          (id) => id !== s.id,
+                                        ),
+                                  )
+                                }
+                              />
+                            </td>
+                          )}
                           <td>
                             <strong>{s.title}</strong>
+                            {canManage ? (
+                              <SourceMetadataEditor
+                                key={s.id}
+                                path={path}
+                                source={s}
+                                onSaved={async () => {
+                                  await sources.refetch();
+                                }}
+                              />
+                            ) : (
+                              <small>{s.metadata.tags?.join(", ")}</small>
+                            )}
+                            {canManage && (
+                              <details className="source-metadata-editor">
+                                <summary>AI metadata tagging</summary>
+                                <TaggingRequest
+                                  path={path}
+                                  sourceIds={[s.id]}
+                                  models={processingModels.data ?? []}
+                                  onQueued={refreshMetadata}
+                                />
+                                {taggingJobs.data
+                                  ?.filter((j) => j.source_id === s.id)
+                                  .map((j) => (
+                                    <SuggestionReview
+                                      key={j.id + ":" + j.status}
+                                      path={path}
+                                      job={j}
+                                      onSaved={refreshMetadata}
+                                    />
+                                  ))}
+                              </details>
+                            )}
                             <small>
                               {s.metadata.connectorId
                                 ? "S3 connector"
@@ -1546,6 +1708,14 @@ export function KnowledgeStudio({
                       />
                     </label>
                   </div>
+                  <details className="source-metadata-editor">
+                    <summary>Filter by tags &amp; metadata</summary>
+                    <MetadataFields
+                      value={metadataFilter}
+                      onChange={setMetadataFilter}
+                      filtering
+                    />
+                  </details>
                   <Button type="submit" disabled={busy}>
                     <Search size={15} /> Search knowledge
                   </Button>

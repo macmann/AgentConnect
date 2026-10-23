@@ -1,8 +1,11 @@
+import type { MetadataFilter } from "@agentconnect/schemas/knowledge-metadata";
 import {
   preferredQa,
   type AnswerSourceOptions,
 } from "./answer-source-policy.js";
 export interface Citation {
+  tags?: string[];
+  attributes?: Record<string, string>;
   sourceKind?: "upload" | "text" | "qa" | "website";
   reviewStatus?: "approved" | "current";
   releaseId?: string;
@@ -59,6 +62,7 @@ export interface RagTool {
       minScore: number;
       mode: "vector" | "hybrid";
       sourceIds?: string[];
+      metadataFilter?: MetadataFilter;
       contentMode?: "current" | "approved";
       releasePins?: Record<string, string>;
     },

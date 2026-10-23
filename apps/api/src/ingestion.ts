@@ -245,6 +245,7 @@ export async function processKnowledgeJob(
               ...document.metadata,
               kind: source.kind,
               tags: source.metadata.tags ?? [],
+              attributes: source.metadata.attributes ?? {},
               filename: job.payload.filename,
               ...(source.metadata.connectorId
                 ? {

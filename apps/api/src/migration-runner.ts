@@ -44,6 +44,8 @@ export const migrationFiles: Record<string, string> = {
   "0036": "0036_multilingual_gap_review.sql",
   "0037": "0037_connector_feeds_workflow_components.sql",
   "0038": "0038_platform_api.sql",
+  "0039": "0039_knowledge_metadata_indexes.sql",
+  "0040": "0040_metadata_tagging_jobs.sql",
 };
 
 export class MigrationFailure extends Error {

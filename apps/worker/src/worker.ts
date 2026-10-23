@@ -1,3 +1,4 @@
+import { processMetadataTaggingJob } from "@agentconnect/api/metadata-tagging";
 import { shutdownTelemetry } from "@agentconnect/api/telemetry";
 import {
   WorkerProgress,
@@ -97,6 +98,7 @@ await Promise.all([
   loop(deliverMail, 3000, "Mail delivery", "mail"),
   loop(processWebhookDelivery, 1000, "Webhook delivery", "webhook"),
   loop(processKnowledgeJob, 1000, "Knowledge ingestion", "knowledge"),
+  loop(processMetadataTaggingJob, 1000, "Metadata tagging", "metadata_tagging"),
   loop(
     purgeDeletedKnowledge,
     5000,

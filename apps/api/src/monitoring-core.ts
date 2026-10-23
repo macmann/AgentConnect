@@ -112,6 +112,7 @@ export const workerTaskNames = [
   "webhook",
   "knowledge",
   "knowledge_cleanup",
+  "metadata_tagging",
 ] as const;
 export type WorkerTaskName = (typeof workerTaskNames)[number];
 export class WorkerProgress {

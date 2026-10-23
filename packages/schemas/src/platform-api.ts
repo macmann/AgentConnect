@@ -1,3 +1,4 @@
+import { metadataFilter } from "@agentconnect/schemas/knowledge-metadata";
 import { z } from "zod";
 export const agentInvocation = z
   .object({
@@ -9,6 +10,7 @@ export const agentInvocation = z
   .strict();
 export const knowledgeSearch = z
   .object({
+    metadataFilter: metadataFilter.optional(),
     query: z.string().trim().min(1).max(4000),
     mode: z.enum(["semantic", "vector", "hybrid"]).default("hybrid"),
     topK: z.number().int().min(1).max(30).default(5),

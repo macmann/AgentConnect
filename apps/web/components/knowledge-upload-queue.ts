@@ -1,3 +1,5 @@
+import type { z } from "zod";
+import { uploadMetadata } from "@agentconnect/schemas/knowledge-metadata";
 export const MAX_UPLOAD_FILES = 100;
 export const MAX_UPLOAD_BYTES = 10_000_000;
 export const uploadExtensions = [
@@ -28,6 +30,7 @@ export type UploadRow = {
   error?: string;
   invalid?: boolean;
   sourceId?: string;
+  metadata?: z.infer<typeof uploadMetadata>;
 };
 export type UploadSnapshot = {
   rows: UploadRow[];
@@ -101,6 +104,7 @@ export function uploadFile(apiBase: string): UploadTransport {
         return;
       }
       const body = new FormData();
+      if (row.metadata) body.append("metadata", JSON.stringify(row.metadata));
       body.append("file", file);
       xhr.send(body);
     });
@@ -142,7 +146,17 @@ export class KnowledgeUploadQueue {
       ),
     });
   }
-  add(files: File[], base: { id: string; name: string }) {
+  add(
+    files: File[],
+    base: { id: string; name: string },
+    metadata?: z.infer<typeof uploadMetadata>,
+  ) {
+    const parsed = metadata ? uploadMetadata.safeParse(metadata) : null;
+    if (parsed && !parsed.success)
+      throw new Error(
+        parsed.error.issues.map((issue) => issue.message).join(". "),
+      );
+    const shared = parsed?.success ? parsed.data : undefined;
     if (this.disposed) throw new Error("Upload queue is closed");
     if (!files.length) throw new Error("Select at least one document");
     if (this.snapshot.rows.length + files.length > MAX_UPLOAD_FILES)
@@ -166,6 +180,7 @@ export class KnowledgeUploadQueue {
         knowledgeBaseName: base.name,
         name: file.name,
         size: file.size,
+        ...(shared ? { metadata: structuredClone(shared) } : {}),
         status: error ? "failed" : "waiting",
         progress: 0,
         ...(error ? { error, invalid: true } : {}),
