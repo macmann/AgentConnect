@@ -84,3 +84,43 @@ Retrieval uses separate bounded document and approved-Q&A candidate searches wit
 The answer prompt identifies primary Q&A and supporting documents, asks the model to avoid contradicting approved answers with document content, and requires citations. This guides generation rather than returning a verbatim deterministic answer; test ambiguous and conflicting Q&A. Context budgets can trim evidence. API/MCP agent results include source kind, review status, release ID and source revision for provenance; private retrieval diagnostics expose the selection policy and approved-Q&A counts. Raw KB search keeps its existing balanced behavior. Quality Lab golden questions are evaluation cases: add a correction as knowledge Q&A and publish its release to make it eligible.
 
 No additional LLM call is introduced by the preference policy. It adds a bounded Q&A search lane and release lookup; existing query rewriting/reranking costs remain optional.
+
+## Source tags and metadata filters
+
+Open **Knowledge → a knowledge base → Sources → Tags & metadata** on any source (upload, text, Q&A, website or connector). Add up to 20 tags and 20 custom string fields. Field keys use lowercase letters, numbers and underscores, start with a letter and have at most 40 characters. Values have at most 200 characters; tags have at most 50. Examples: `department=support`, `product=loans`, `language=English`, `effective_date=2026-01-01`.
+
+Saving metadata applies to current retrieval immediately without changing the source's content revision, re-embedding it or queuing ingestion. Metadata has its own revision; conflicting edits return 409. **Reload metadata** loads the latest values before retrying. Connector refresh and Q&A content edits preserve custom fields. Q&A tags use the same existing tags as CSV import/export; arbitrary custom fields are managed in the metadata editor.
+
+**Agent → Configure → Knowledge → Retrieval → Filter by tags & metadata** saves filters with the agent draft. Save and start a new Playground chat, or publish a new version, to use the new filter. The knowledge retrieval playground exposes the same controls. Empty filters retain existing behavior. All required tags and every field/value pair must match exactly (case-sensitive); fields are strings, so dates are exact matches, not date ranges. Filters narrow eligible SQL candidates before vector/text search, fusion, reranking and approved-Q&A preference. They supplement existing permissions and source/release restrictions; they are not access controls.
+
+API and MCP KB search accept the same optional `metadataFilter`:
+
+```json
+{
+  "query": "What is the refund policy?",
+  "mode": "hybrid",
+  "metadataFilter": {
+    "tagsAll": ["policy", "retail"],
+    "attributes": { "product": "loans", "language": "English" }
+  }
+}
+```
+
+Raw result chunks include `tags` and `attributes`; internal ingestion and connector metadata are not added to those fields. Agent API/MCP execution uses its published agent's configured filters. Unsupported filter operators and nested/non-string values are rejected.
+
+New knowledge releases snapshot source tags/fields alongside chunk metadata. Current retagging never changes an existing release. Publish a new release to change approved filters. Older releases lacking these snapshots are treated as untagged, rather than inheriting mutable current metadata. Run `pnpm db:migrate` to install migration **0039**, which adds GIN indexes to the existing JSON storage; existing sources and unfiltered retrieval remain compatible.
+
+### Batch metadata and reviewed AI tagging
+
+Upload multipart requests can include a JSON `metadata` field containing `{ "tags": ["policy"], "attributes": { "department": "retail" }, "tagging": { "enabled": false, "modelId": null } }`. This works regardless of multipart field order. The browser applies shared values to every selected file; queued rows retain immutable options on retries. Reusing an upload key with changed metadata/model options returns 409. AI tagging defaults off. When enabled, modelId must select an active model in the same workspace, and an idempotent tagging job is created in the upload transaction.
+
+Private session endpoints under `/knowledge-bases/:id`:
+
+- `POST /metadata/bulk`: `sources: [{ id, metadataRevision }]`, `addTags`, `removeTags`, `setAttributes`, `removeAttributes`, optional `dryRun`. Preview does not mutate; application locks sources in a consistent order and commits all patches or none. Up to 100 sources; unknown/deleted/foreign sources or stale revisions cannot partially apply a batch.
+- `POST /metadata-suggestions`: `sourceIds` (1–100), `modelId`. Enqueues suggestions for current ready/queued/processing sources. An already active job is retained.
+- `GET /metadata-suggestions`: latest job per source, including status, proposed values, sanitized failure code and reported token usage.
+- `POST /metadata-suggestions/:suggestionId/review`: `action` (`apply`/`reject`), `metadataRevision`, selected `tags` and `attributes`. Apply can only use actual suggested values, requires unchanged content/metadata, and merges selected values. Use the normal metadata editor for other edits.
+
+Migration **0040** adds the durable tagging queue. A separate `metadata_tagging` worker lane waits for ready indexed content, checks the requesting user's current permissions and the model's workspace/credentials, and uses bounded excerpts (up to 12 chunks, 24,000 characters, 6,000 input tokens subject to model context). Output is bounded by the model limit/8,192 tokens and validated JSON. Generation has a 45-second deadline. Interrupted leases recover with at most three attempts; explicit provider/format failures require a new request. Optional generation is traced through the existing model tracing path; arbitrary provider error text is not stored. Suggestions never become retrieval metadata until explicitly reviewed. Source deletion removes tagging jobs and proposals.
+
+Run `pnpm db:migrate` and restart API and worker. No metadata generation occurs with the upload switch off and no explicit request.

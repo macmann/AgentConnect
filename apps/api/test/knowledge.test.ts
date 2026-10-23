@@ -2084,3 +2084,533 @@ test("Approved Q&A preference searches published snapshots separately from curre
     ),
   );
 });
+
+test("Source metadata filters run before retrieval and approved releases freeze tags and attributes", async () => {
+  const { PostgresRagTool } = await import("../src/knowledge-core.js");
+  const base = await call("POST", `/workspaces/${workspace}/knowledge-bases`, {
+    name: "Metadata filter fixture",
+    embeddingModelId: modelId,
+    chunkSize: 200,
+    chunkOverlap: 0,
+  });
+  assert.equal(base.statusCode, 201, base.body);
+  const id = base.json().id;
+  async function add(title: string, text: string) {
+    const made = await call("POST", `/knowledge-bases/${id}/text`, {
+      title,
+      text,
+    });
+    assert.equal(made.statusCode, 202, made.body);
+    for (let i = 0; i < 20; i++) {
+      const [row] =
+        await sql`SELECT status,error_code FROM knowledge_sources WHERE id=${made.json().id}`;
+      if (row!.status === "ready") return made.json().id as string;
+      assert.notEqual(row!.status, "failed", JSON.stringify(row));
+      assert.equal(await processKnowledgeJob(embedding), true);
+    }
+    throw new Error("Metadata fixture did not ingest");
+  }
+  const flood = await add(
+    "Other products",
+    Array.from(
+      { length: 40 },
+      (_, i) =>
+        `Refund 30 days. Other product section ${i}. ` +
+        "Irrelevant product information. ".repeat(10),
+    ).join("\n\n"),
+  );
+  const wanted = await add(
+    "Loan policy",
+    "Refund loan applications within 30 days. Approved product policy.",
+  );
+  const metadataPath = `/knowledge-bases/${id}/sources/${wanted}/metadata`;
+  const tags = ["policy", "retail"],
+    attributes = {
+      product: "loans",
+      language: "English",
+      effective_date: "2026-01-01",
+    };
+  const [before] =
+    await sql`SELECT revision,status FROM knowledge_sources WHERE id=${wanted}`;
+  const saved = await call("PUT", metadataPath, {
+    tags,
+    attributes,
+    metadataRevision: 0,
+  });
+  assert.equal(saved.statusCode, 200, saved.body);
+  assert.equal(saved.json().metadataRevision, 1);
+  const [after] =
+    await sql`SELECT revision,status FROM knowledge_sources WHERE id=${wanted}`;
+  assert.deepEqual(
+    after,
+    before,
+    "Retagging must not change content revision or ingestion status",
+  );
+  assert.equal(
+    (
+      await call("PUT", metadataPath, {
+        tags: [],
+        attributes: {},
+        metadataRevision: 0,
+      })
+    ).statusCode,
+    409,
+  );
+  assert.equal(
+    (
+      await call(
+        "PUT",
+        metadataPath,
+        { tags, attributes, metadataRevision: 1 },
+        sessions.viewer,
+      )
+    ).statusCode,
+    403,
+  );
+  assert.equal(
+    (
+      await call(
+        "PUT",
+        metadataPath,
+        { tags, attributes, metadataRevision: 1 },
+        sessions.outsider,
+      )
+    ).statusCode,
+    403,
+  );
+  assert.equal(
+    (
+      await call("PUT", metadataPath, {
+        tags,
+        attributes: { "Bad.Key": "value" },
+        metadataRevision: 1,
+      })
+    ).statusCode,
+    400,
+  );
+  const tool = new PostgresRagTool(embedding);
+  const options = {
+    topK: 5,
+    minScore: 0,
+    mode: "hybrid" as const,
+    metadataFilter: { tagsAll: tags, attributes: { product: "loans" } },
+  };
+  const context = {
+    workspaceId: workspace,
+    organizationId: org,
+    publicAccess: false,
+  };
+  const search = (overrides = {}) =>
+    tool.execute(
+      "refund 30 days",
+      [id],
+      { ...options, ...overrides },
+      context,
+      new AbortController().signal,
+    );
+  for (const mode of ["vector", "hybrid"] as const) {
+    const hits = await search({ mode });
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0]!.sourceId, wanted);
+    assert.deepEqual(hits[0]!.tags, tags);
+    assert.deepEqual(hits[0]!.attributes, attributes);
+  }
+  assert.deepEqual(
+    await search({ metadataFilter: { tagsAll: ["missing"], attributes: {} } }),
+    [],
+  );
+  assert.deepEqual(
+    await search({
+      metadataFilter: { tagsAll: [], attributes: { product: "LOANS" } },
+    }),
+    [],
+  );
+  assert.deepEqual(await search({ sourceIds: [flood] }), []);
+  const endpointSearch = await call("POST", `/knowledge-bases/${id}/search`, {
+    query: "refund",
+    ...options,
+  });
+  assert.equal(endpointSearch.statusCode, 200, endpointSearch.body);
+  assert.equal(endpointSearch.json().results[0].sourceId, wanted);
+  const release = await call("POST", `/knowledge-bases/${id}/releases`, {
+    name: "Frozen metadata",
+    sourceIds: [wanted],
+  });
+  assert.equal(release.statusCode, 201, release.body);
+  await sql`UPDATE knowledge_releases SET status='published' WHERE id=${release.json().id}`;
+  const pins = { [id]: release.json().id };
+  assert.equal(
+    (
+      await call("PUT", metadataPath, {
+        tags: ["updated"],
+        attributes: { product: "cards" },
+        metadataRevision: 1,
+      })
+    ).statusCode,
+    200,
+  );
+  assert.deepEqual(await search(), []);
+  const frozen = await search({ releasePins: pins });
+  assert.equal(frozen.length, 1);
+  assert.deepEqual(frozen[0]!.tags, tags);
+  assert.deepEqual(frozen[0]!.attributes, attributes);
+  // Older snapshots without metadata must not silently inherit a source's live metadata.
+  await sql`UPDATE knowledge_release_chunks SET metadata=metadata-'sourceTags'-'sourceAttributes' WHERE release_id=${release.json().id}`;
+  assert.deepEqual(await search({ releasePins: pins }), []);
+  const concurrent = await Promise.all(
+    [1, 2].map((n) =>
+      call("PUT", metadataPath, {
+        tags: [`concurrent-${n}`],
+        attributes: {},
+        metadataRevision: 2,
+      }),
+    ),
+  );
+  assert.deepEqual(concurrent.map((r) => r.statusCode).sort(), [200, 409]);
+});
+
+test("Bulk metadata previews and applies 100 bounded patches atomically without losing unrelated values", async () => {
+  const made = await call("POST", `/workspaces/${workspace}/knowledge-bases`, {
+    name: "Bulk metadata fixture",
+    embeddingModelId: modelId,
+  });
+  assert.equal(made.statusCode, 201, made.body);
+  const id = made.json().id;
+  const ids = Array.from({ length: 100 }, () => randomUUID());
+  await sql.begin(async (tx) => {
+    for (const sourceId of ids)
+      await tx`INSERT INTO knowledge_sources(id,knowledge_base_id,workspace_id,organization_id,kind,title,status,metadata) VALUES(${sourceId},${id},${workspace},${org},'text','Bulk source','ready',${tx.json({ tags: ["keep", "remove"], attributes: { department: "old", note: "keep", delete_me: "old" } })})`;
+  });
+  const path = `/knowledge-bases/${id}/metadata/bulk`;
+  const data = {
+    sources: ids.map((id) => ({ id, metadataRevision: 0 })),
+    addTags: ["policy"],
+    removeTags: ["remove"],
+    setAttributes: { department: "retail" },
+    removeAttributes: ["delete_me"],
+  };
+  const preview = await call("POST", path, { ...data, dryRun: true });
+  assert.equal(preview.statusCode, 200, preview.body);
+  assert.equal(preview.json().changes.length, 100);
+  let [source] =
+    await sql`SELECT metadata,revision FROM knowledge_sources WHERE id=${ids[0]!}`;
+  assert.deepEqual(source!.metadata.tags, ["keep", "remove"]);
+  assert.equal(
+    (await call("POST", path, data, sessions.viewer)).statusCode,
+    403,
+  );
+  assert.equal(
+    (
+      await call("POST", path, {
+        ...data,
+        sources: [{ id: randomUUID(), metadataRevision: 0 }],
+      })
+    ).statusCode,
+    409,
+  );
+  assert.equal(
+    (await call("POST", path, { ...data, removeTags: ["policy"] })).statusCode,
+    400,
+  );
+  const applied = await call("POST", path, data);
+  assert.equal(applied.statusCode, 200, applied.body);
+  [source] =
+    await sql`SELECT metadata,revision FROM knowledge_sources WHERE id=${ids[0]!}`;
+  assert.deepEqual(source!.metadata.tags, ["keep", "policy"]);
+  assert.deepEqual(source!.metadata.attributes, {
+    department: "retail",
+    note: "keep",
+  });
+  assert.equal(source!.revision, 1);
+  const stale = await call("POST", path, {
+    ...data,
+    addTags: ["forbidden-stale"],
+  });
+  assert.equal(stale.statusCode, 409);
+  const [count] =
+    await sql`SELECT count(*)::int AS n FROM knowledge_sources WHERE knowledge_base_id=${id} AND metadata->'tags' @> '["forbidden-stale"]'::jsonb`;
+  assert.equal(count!.n, 0);
+  const tooMany = await call("POST", path, {
+    ...data,
+    sources: [...data.sources, { id: randomUUID(), metadataRevision: 0 }],
+  });
+  assert.equal(tooMany.statusCode, 400);
+});
+
+test("Upload metadata and optional AI suggestions are durable, idempotent, reviewed and revision safe", async () => {
+  const { processMetadataTaggingJob } =
+    await import("../src/metadata-tagging.js");
+  const made = await call("POST", `/workspaces/${workspace}/knowledge-bases`, {
+    name: "Tagging uploads",
+    embeddingModelId: modelId,
+  });
+  assert.equal(made.statusCode, 201, made.body);
+  const id = made.json().id;
+  const upload = (key: string, metadata: unknown) =>
+    app.inject({
+      method: "POST",
+      url: `/knowledge-bases/${id}/upload`,
+      headers: {
+        origin: config.WEB_ORIGIN,
+        cookie: sessions.owner,
+        "idempotency-key": key,
+        "content-type": "multipart/form-data; boundary=meta-fixture",
+      },
+      payload: Buffer.from(
+        `--meta-fixture\r\nContent-Disposition: form-data; name="metadata"\r\n\r\n${JSON.stringify(metadata)}\r\n--meta-fixture\r\nContent-Disposition: form-data; name="file"; filename="retail.txt"\r\nContent-Type: text/plain\r\n\r\nRetail loan refund policy within 30 days.\r\n--meta-fixture--\r\n`,
+      ),
+    });
+  const shared = {
+    tags: ["shared"],
+    attributes: { department: "retail", keep: "yes" },
+    tagging: { enabled: true, modelId: chatModel },
+  };
+  const key = randomUUID();
+  const uploaded = await upload(key, shared);
+  assert.equal(uploaded.statusCode, 202, uploaded.body);
+  assert.equal((await upload(key, shared)).statusCode, 202);
+  assert.equal(
+    (await upload(key, { ...shared, tags: ["different"] })).statusCode,
+    409,
+  );
+  assert.equal(
+    (
+      await upload(randomUUID(), {
+        ...shared,
+        tagging: { enabled: true, modelId: randomUUID() },
+      })
+    ).statusCode,
+    400,
+  );
+  const [jobs] =
+    await sql`SELECT count(*)::int AS n FROM knowledge_metadata_jobs WHERE source_id=${key}`;
+  assert.equal(jobs!.n, 1);
+  let calls = 0;
+  const provider: ProviderFactory = () => ({
+    async *stream(input) {
+      calls++;
+      assert.match(input.system, /untrusted/);
+      assert.match(input.messages[0]!.content, /Retail loan/);
+      assert.ok(input.maxOutputTokens <= 8192);
+      yield {
+        type: "token",
+        text: JSON.stringify({
+          tags: ["policy", "retail"],
+          attributes: { product: "loans", language: "English" },
+        }),
+      };
+      yield { type: "usage", inputTokens: 123, outputTokens: 25 };
+    },
+  });
+  assert.equal(
+    await processMetadataTaggingJob(provider),
+    false,
+    "Tagging waits for ingestion",
+  );
+  for (let i = 0; i < 30; i++) {
+    const [s] = await sql`SELECT status FROM knowledge_sources WHERE id=${key}`;
+    if (s!.status === "ready") break;
+    assert.equal(await processKnowledgeJob(embedding), true);
+  }
+  const workers = await Promise.all([
+    processMetadataTaggingJob(provider),
+    processMetadataTaggingJob(provider),
+  ]);
+  assert.deepEqual(workers.sort(), [false, true]);
+  assert.equal(calls, 1);
+  const root = `/knowledge-bases/${id}`;
+  let list = await call("GET", root + "/metadata-suggestions");
+  assert.equal(list.statusCode, 200, list.body);
+  const job = list
+    .json()
+    .find((j: { source_id: string }) => j.source_id === key);
+  assert.equal(job.status, "pending_review");
+  assert.equal(job.input_tokens, 123);
+  let [source] =
+    await sql`SELECT metadata FROM knowledge_sources WHERE id=${key}`;
+  assert.deepEqual(source!.metadata.tags, ["shared"]);
+  assert.equal(
+    source!.metadata.attributes.product,
+    undefined,
+    "Suggestions are not automatically applied",
+  );
+  const review = root + `/metadata-suggestions/${job.id}/review`;
+  assert.equal(
+    (
+      await call("POST", review, {
+        action: "apply",
+        metadataRevision: 0,
+        tags: ["invented"],
+        attributes: {},
+      })
+    ).statusCode,
+    400,
+  );
+  assert.equal(
+    (
+      await call(
+        "POST",
+        review,
+        {
+          action: "apply",
+          metadataRevision: 0,
+          tags: ["policy"],
+          attributes: { product: "loans" },
+        },
+        sessions.viewer,
+      )
+    ).statusCode,
+    403,
+  );
+  const approved = await call("POST", review, {
+    action: "apply",
+    metadataRevision: 0,
+    tags: ["policy"],
+    attributes: { product: "loans" },
+  });
+  assert.equal(approved.statusCode, 200, approved.body);
+  [source] = await sql`SELECT metadata FROM knowledge_sources WHERE id=${key}`;
+  assert.deepEqual(source!.metadata.tags, ["shared", "policy"]);
+  assert.deepEqual(source!.metadata.attributes, {
+    department: "retail",
+    keep: "yes",
+    product: "loans",
+  });
+  assert.equal(
+    (await call("POST", review, { action: "apply", metadataRevision: 1 }))
+      .statusCode,
+    409,
+  );
+  assert.equal(
+    (
+      await call("POST", root + "/metadata-suggestions", {
+        sourceIds: [key],
+        modelId: chatModel,
+      })
+    ).statusCode,
+    202,
+  );
+  await processMetadataTaggingJob(provider);
+  list = await call("GET", root + "/metadata-suggestions");
+  const next = list
+    .json()
+    .find((j: { source_id: string }) => j.source_id === key);
+  assert.equal(next.status, "pending_review");
+  assert.equal(
+    (
+      await call("PUT", root + `/sources/${key}/metadata`, {
+        tags: ["manual"],
+        attributes: { keep: "manual" },
+        metadataRevision: 1,
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal(
+    (
+      await call("POST", root + `/metadata-suggestions/${next.id}/review`, {
+        action: "apply",
+        metadataRevision: 1,
+        tags: ["policy"],
+      })
+    ).statusCode,
+    409,
+  );
+  assert.equal(
+    (
+      await call("POST", root + `/metadata-suggestions/${next.id}/review`, {
+        action: "reject",
+        metadataRevision: 1,
+      })
+    ).statusCode,
+    200,
+  );
+  const noAI = randomUUID();
+  assert.equal(
+    (
+      await upload(noAI, {
+        tags: ["manual"],
+        attributes: {},
+        tagging: { enabled: false, modelId: null },
+      })
+    ).statusCode,
+    202,
+  );
+  const [noJobs] =
+    await sql`SELECT count(*)::int AS n FROM knowledge_metadata_jobs WHERE source_id=${noAI}`;
+  assert.equal(noJobs!.n, 0);
+});
+
+test("Malformed metadata AI responses and changed documents fail safely; expired leases are bounded", async () => {
+  const { processMetadataTaggingJob } =
+    await import("../src/metadata-tagging.js");
+  const made = await call("POST", `/workspaces/${workspace}/knowledge-bases`, {
+    name: "Failed tagging",
+    embeddingModelId: modelId,
+  });
+  assert.equal(made.statusCode, 201, made.body);
+  const root = `/knowledge-bases/${made.json().id}`;
+  const source = await call("POST", root + "/text", {
+    title: "Refund tagging",
+    text: "Refunds within 30 days.",
+  });
+  assert.equal(source.statusCode, 202, source.body);
+  for (let i = 0; i < 30; i++) {
+    const [s] =
+      await sql`SELECT status FROM knowledge_sources WHERE id=${source.json().id}`;
+    if (s!.status === "ready") break;
+    await processKnowledgeJob(embedding);
+  }
+  const request = () =>
+    call("POST", root + "/metadata-suggestions", {
+      sourceIds: [source.json().id],
+      modelId: chatModel,
+    });
+  assert.equal((await request()).statusCode, 202);
+  await processMetadataTaggingJob(() => ({
+    async *stream() {
+      yield { type: "token", text: "not json SECRET-MUST-NOT-LEAK" };
+    },
+  }));
+  let list = await call("GET", root + "/metadata-suggestions");
+  assert.equal(list.json()[0].status, "failed");
+  assert.equal(list.json()[0].error_code, "INVALID_SUGGESTION");
+  assert.equal(list.body.includes("SECRET-MUST-NOT-LEAK"), false);
+  assert.equal((await request()).statusCode, 202);
+  await processMetadataTaggingJob(() => ({
+    async *stream() {
+      throw new Error("SECRETKEYSHOULDNOTLEAK");
+    },
+  }));
+  const hidden = await call("GET", root + "/metadata-suggestions");
+  assert.equal(hidden.json()[0].error_code, "TAGGING_FAILED");
+  assert.equal(hidden.body.includes("SECRETKEYSHOULDNOTLEAK"), false);
+  assert.equal((await request()).statusCode, 202);
+  await sql`UPDATE knowledge_sources SET revision=revision+1 WHERE id=${source.json().id}`;
+  assert.equal(
+    await processMetadataTaggingJob(() => ({
+      async *stream() {
+        throw new Error("Must not call model for stale source");
+      },
+    })),
+    false,
+  );
+  list = await call("GET", root + "/metadata-suggestions");
+  assert.equal(list.json()[0].error_code, "SOURCE_UNAVAILABLE");
+  assert.equal((await request()).statusCode, 202);
+  const [active] =
+    await sql`SELECT id FROM knowledge_metadata_jobs WHERE source_id=${source.json().id} AND status='queued'`;
+  await sql`UPDATE knowledge_metadata_jobs SET status='running',attempts=3,locked_until=now()-interval '1 second',lease_token=${randomUUID()} WHERE id=${active!.id}`;
+  assert.equal(
+    await processMetadataTaggingJob(() => ({
+      async *stream() {
+        throw new Error("No retry after three interrupted attempts");
+      },
+    })),
+    false,
+  );
+  const [exhausted] =
+    await sql`SELECT status,error_code FROM knowledge_metadata_jobs WHERE id=${active!.id}`;
+  assert.equal(exhausted!.status, "failed");
+  assert.equal(exhausted!.error_code, "WORKER_INTERRUPTED");
+});

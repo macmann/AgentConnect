@@ -79,6 +79,7 @@ export type Config = {
     usageInstructions?: string;
   };
   rag: {
+    metadataFilter?: import("@agentconnect/schemas/knowledge-metadata").MetadataFilter;
     answerSourcePolicy?: "balanced" | "prefer_approved_qa";
     qaMinScore?: number;
     queryRewrite?: boolean;

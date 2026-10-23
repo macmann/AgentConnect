@@ -330,6 +330,18 @@ test("Configure preserves a single draft across sections, validates locally, pre
   await page
     .getByLabel("Approved Q&A minimum relevance", { exact: true })
     .fill("0.85");
+  await page
+    .locator("summary")
+    .filter({ hasText: "Filter by tags & metadata" })
+    .click();
+  await page
+    .getByLabel("Required tags", { exact: true })
+    .fill("policy, retail");
+  await page
+    .getByRole("button", { name: "Add metadata field", exact: true })
+    .click();
+  await page.getByLabel("Field key 1", { exact: true }).fill("product");
+  await page.getByLabel("Field value 1", { exact: true }).fill("loans");
   await section(page, "Tools");
   await page
     .getByLabel("Usage policy", { exact: true })
@@ -364,6 +376,10 @@ test("Configure preserves a single draft across sections, validates locally, pre
       minScore: 0.45,
       answerSourcePolicy: "prefer_approved_qa",
       qaMinScore: 0.85,
+      metadataFilter: {
+        tagsAll: ["policy", "retail"],
+        attributes: { product: "loans" },
+      },
       rerankerId: null,
       rerankMaxOutputTokens: 1024,
       usageMode: "automatic",
@@ -447,6 +463,20 @@ test("Configure preserves a single draft across sections, validates locally, pre
       .locator(".configure-section-header")
       .getByRole("heading", { name: "Knowledge", exact: true }),
   ).toBeVisible();
+  await page
+    .locator("summary")
+    .filter({ hasText: "Filter by tags & metadata" })
+    .click();
+  await page.getByLabel("Required tags", { exact: true }).fill("temporary");
+  await page.getByLabel("Field value 1", { exact: true }).fill("cards");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Discard", exact: true }).click();
+  await expect(page.getByLabel("Required tags", { exact: true })).toHaveValue(
+    "policy, retail",
+  );
+  await expect(page.getByLabel("Field value 1", { exact: true })).toHaveValue(
+    "loans",
+  );
   await page.setViewportSize({ width: 360, height: 800 });
   await expect(
     page.getByLabel("Configure section", { exact: true }),

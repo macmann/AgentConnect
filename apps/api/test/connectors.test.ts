@@ -344,6 +344,16 @@ test("real S3 adapter lists and reads signed prefix queries; sync ingests retrie
   );
 });
 test("incremental sync skips unchanged objects and updates changed source revisions", async () => {
+  const tagged = await call(
+    "PUT",
+    `/knowledge-bases/${kbId}/sources/${sourceId}/metadata`,
+    {
+      tags: ["reviewed-policy"],
+      attributes: { department: "support" },
+      metadataRevision: 0,
+    },
+  );
+  assert.equal(tagged.statusCode, 200, tagged.body);
   let job = await queue();
   await processConnectorSync();
   assert.equal((await run(job)).counts.unchanged, 1);
@@ -358,7 +368,9 @@ test("incremental sync skips unchanged objects and updates changed source revisi
   await processConnectorSync();
   assert.equal((await run(job)).counts.updated, 1);
   const [source] =
-    await sql`SELECT revision,status FROM knowledge_sources WHERE id=${sourceId}`;
+    await sql`SELECT revision,status,metadata FROM knowledge_sources WHERE id=${sourceId}`;
+  assert.deepEqual(source!.metadata.tags, ["reviewed-policy"]);
+  assert.deepEqual(source!.metadata.attributes, { department: "support" });
   assert.equal(source!.revision, 2);
   assert.equal(source!.status, "queued");
   await processKnowledgeJob(embedding);

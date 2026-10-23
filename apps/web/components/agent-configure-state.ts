@@ -88,7 +88,9 @@ export function configureIssues(
           key = String(i.path.at(-1));
         return {
           field,
-          label: labels[key] ?? key,
+          label: field.startsWith("config.rag.metadataFilter")
+            ? "Knowledge metadata filters"
+            : (labels[key] ?? key),
           section: fieldSection(field),
           message: i.message,
         };

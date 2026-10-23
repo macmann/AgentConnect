@@ -783,3 +783,81 @@ test("foreign tenant resources cannot be granted, searched or attached to keys",
     (e: unknown) => (e as { code: string }).code === "23503",
   );
 });
+
+test("API and MCP knowledge search share validated metadata filters and result metadata", async () => {
+  const [source] =
+    await sql`SELECT id FROM knowledge_sources WHERE knowledge_base_id=${kb} AND status='ready' ORDER BY id LIMIT 1`;
+  assert.ok(source);
+  const saved = await admin(
+    "PUT",
+    `/knowledge-bases/${kb}/sources/${source.id}/metadata`,
+    {
+      tags: ["api-fixture"],
+      attributes: { product: "loans" },
+      metadataRevision: 0,
+    },
+  );
+  assert.equal(saved.statusCode, 200, saved.body);
+  const args = {
+    query: "refund",
+    metadataFilter: {
+      tagsAll: ["api-fixture"],
+      attributes: { product: "loans" },
+    },
+  };
+  const result = await api(
+    "POST",
+    `/api/v1/knowledge-bases/${kb}/search`,
+    kbKey,
+    args,
+  );
+  assert.equal(result.statusCode, 200, result.body);
+  assert.equal(result.json().results.length, 1);
+  assert.deepEqual(result.json().results[0].tags, ["api-fixture"]);
+  assert.deepEqual(result.json().results[0].attributes, { product: "loans" });
+  const invalid = await api(
+    "POST",
+    `/api/v1/knowledge-bases/${kb}/search`,
+    kbKey,
+    { ...args, metadataFilter: { attributes: { "invalid.key": "x" } } },
+  );
+  assert.equal(invalid.statusCode, 400);
+  const unsupported = await api(
+    "POST",
+    `/api/v1/knowledge-bases/${kb}/search`,
+    kbKey,
+    { ...args, metadataFilter: { tagsAny: ["private"] } },
+  );
+  assert.equal(unsupported.statusCode, 400);
+  const client = new Client({ name: "metadata-client", version: "1" });
+  try {
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(address + "/mcp"), {
+        requestInit: { headers: { authorization: `Bearer ${kbKey}` } },
+      }),
+    );
+    const mcp = await client.callTool({
+      name: "knowledge_search",
+      arguments: args,
+    });
+    assert.notEqual(mcp.isError, true, JSON.stringify(mcp));
+    assert.equal(
+      (mcp.structuredContent as { results: { sourceId: string }[] }).results[0]!
+        .sourceId,
+      source.id,
+    );
+    const empty = await client.callTool({
+      name: "knowledge_search",
+      arguments: {
+        ...args,
+        metadataFilter: { tagsAll: ["missing"], attributes: {} },
+      },
+    });
+    assert.deepEqual(
+      (empty.structuredContent as { results: unknown[] }).results,
+      [],
+    );
+  } finally {
+    await client.close();
+  }
+});

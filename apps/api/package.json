@@ -64,6 +64,7 @@
     "./mail": "./src/mail.ts",
     "./config": "./src/config.ts",
     "./ingestion": "./src/ingestion.ts",
+    "./metadata-tagging": "./src/metadata-tagging.ts",
     "./workflows": "./src/workflow-runtime.ts",
     "./webhooks": "./src/webhooks.ts",
     "./quality": "./src/quality-worker.ts",

@@ -123,3 +123,37 @@ test("invalid files fail independently and disposal stops pending requests", asy
   assert.equal(calls.length, 2);
   assert.throws(() => queue.add(files(1), base), /closed/);
 });
+
+test("Shared upload metadata is immutable per file and survives retries and destination changes", async () => {
+  const seen: { id: string; metadata: unknown }[] = [];
+  let fail = true;
+  const q = new KnowledgeUploadQueue(async (row) => {
+    seen.push({ id: row.id, metadata: structuredClone(row.metadata) });
+    if (fail) {
+      fail = false;
+      throw new Error("Retry fixture");
+    }
+    return { id: row.id };
+  });
+  const shared = {
+    tags: ["policy"],
+    attributes: { department: "retail" },
+    tagging: { enabled: false, modelId: null },
+  };
+  q.add(files(1), base, shared);
+  shared.tags.push("later");
+  shared.attributes.department = "changed";
+  await settle();
+  const row = q.getSnapshot().rows[0]!;
+  q.retry(row.id);
+  await settle();
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0]!.id, seen[1]!.id);
+  assert.deepEqual(seen[0]!.metadata, {
+    tags: ["policy"],
+    attributes: { department: "retail" },
+    tagging: { enabled: false, modelId: null },
+  });
+  assert.deepEqual(seen[1]!.metadata, seen[0]!.metadata);
+  q.dispose();
+});

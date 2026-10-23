@@ -422,3 +422,26 @@ In **Operations → API keys**, choose an agent or knowledge base, set an expiry
 Use the Bearer key with the JSON endpoints under `/api/v1`, or connect a Streamable HTTP MCP client to `/mcp`. Knowledge keys return raw semantic/hybrid matches; agent keys return an answer and citations, with optional tool and RAG details. Pass the returned conversation ID to continue chatting. Keys can be revoked from the same page.
 
 See [Platform API and MCP](platform-api.md) for request examples, response fields, scopes, timeouts and client setup.
+
+### Tag knowledge and narrow retrieval
+
+1. Open a knowledge base's **Sources** tab and expand **Tags & metadata** beneath a source.
+2. Enter comma-separated tags, such as `policy, retail`. Use **Add metadata field** for pairs such as `product` → `loans` or `language` → `English`, then **Save metadata**. No reingestion is required.
+3. In **Retrieval playground**, expand **Filter by tags & metadata** and enter required tags or matching fields. All specified conditions must match exactly; no matches returns an empty result.
+4. To apply the same restriction to an agent, use **Configure → Knowledge → Retrieval → Filter by tags & metadata**, save and start a new chat. Publish to update customer-facing agent versions.
+
+Published knowledge releases keep the metadata they were created with. Retagging a current source does not change approved releases; create and publish another release when needed. If someone else changed metadata, use **Reload metadata** to load their changes before saving again.
+
+### Shared upload metadata and bulk edits
+
+For one file or up to 100 files, open **Upload document → Shared metadata for all selected files**. Enter shared tags and fields, such as `policy` and `department=retail`, then start uploads. Each queued file captures these values; later form edits do not change waiting files, and retries retain the original metadata.
+
+To change existing sources, select their checkboxes (up to 100). In the **Bulk metadata editor**, Tags and fields add tags and set specific fields; the separate removal controls remove only the named tags or field keys. Other metadata stays intact. Choose **Preview bulk changes**, review the before/after values, then **Apply to N sources**. Any source conflict stops the whole batch; reload and preview again.
+
+### Optional AI metadata suggestions
+
+**Suggest metadata with AI** is off by default and is available for both single-file and multi-file uploads. Turn it on and choose a registered workspace chat model. After ingestion, a separate background worker sends a bounded text excerpt to that model to suggest tags and fields such as product, language and document type. It normally makes one model call per file, with provider cost. This is separate from OCR/AI extraction and does not block other ingestion jobs.
+
+For existing files, expand **AI metadata tagging** on a source, or **AI suggestions for selected sources** in the bulk editor. Turn on the switch, choose a model and generate suggestions. Active requests for a source are reused.
+
+When generation finishes, expand **Review AI metadata suggestions** on each source. Select the suggested tags/fields you want, then **Apply reviewed suggestions**, or reject them. No AI values are applied automatically. Applying adds selected tags and updates selected fields while retaining other values. Samples can miss details in large documents, so verify the suggestions. Changed source content or metadata blocks stale approval: reject and generate again. Published knowledge releases retain their original metadata until you publish a new release.

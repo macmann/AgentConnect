@@ -1,4 +1,5 @@
 "use client";
+import { MetadataFields } from "./knowledge-metadata";
 import { HelpTooltip } from "./help-tooltip";
 import { useQuery } from "@tanstack/react-query";
 import { requestJson } from "./agent-client";
@@ -648,6 +649,25 @@ export function KnowledgeSection(p: SectionProps) {
       />
       <UsagePolicy {...p} kind="rag" />
       <Group title="Retrieval">
+        <details className="source-metadata-editor">
+          <summary>Filter by tags &amp; metadata</summary>
+          <MetadataFields
+            value={c.rag.metadataFilter ?? { tagsAll: [], attributes: {} }}
+            onChange={(metadataFilter) =>
+              config(p, "rag", { ...c.rag, metadataFilter })
+            }
+            filtering
+          />
+          {p.issues
+            .filter((issue) =>
+              issue.field.startsWith("config.rag.metadataFilter"),
+            )
+            .map((issue) => (
+              <p key={issue.field} className="error-banner" role="alert">
+                {issue.message}
+              </p>
+            ))}
+        </details>
         <Field
           field="config.rag.answerSourcePolicy"
           label="Answer source policy"

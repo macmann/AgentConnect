@@ -15,6 +15,7 @@ export function useKnowledgeUploads(workspaceId: string) {
         timer = undefined;
         void cache.invalidateQueries({ queryKey: ["knowledge", workspaceId] });
         void cache.invalidateQueries({ queryKey: ["knowledge-sources"] });
+        void cache.invalidateQueries({ queryKey: ["metadata-suggestions"] });
       }, 1000);
     });
     return {

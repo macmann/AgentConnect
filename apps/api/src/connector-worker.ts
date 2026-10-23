@@ -166,7 +166,7 @@ export async function processConnectorSync(
             if (!source || source.revision !== item.revision)
               throw new ConnectorError("CONNECTOR_SOURCE_CHANGED");
             await tx`UPDATE knowledge_jobs SET status='cancelled',finished_at=now() WHERE source_id=${sourceId} AND status IN ('queued','running')`;
-            await tx`UPDATE knowledge_sources SET title=${document.filename.slice(0, 200)},filename=${document.filename},object_key=${key},byte_size=${bytes.length},source_url=${document.url},metadata=${tx.json({ connectorId: connector.id, externalKey: document.key })},revision=${revision},status='queued',error_code=NULL,updated_at=now() WHERE id=${sourceId}`;
+            await tx`UPDATE knowledge_sources SET title=${document.filename.slice(0, 200)},filename=${document.filename},object_key=${key},byte_size=${bytes.length},source_url=${document.url},metadata=metadata || ${tx.json({ connectorId: connector.id, externalKey: document.key })}::jsonb,revision=${revision},status='queued',error_code=NULL,updated_at=now() WHERE id=${sourceId}`;
           } else {
             await tx`INSERT INTO knowledge_sources(id,knowledge_base_id,workspace_id,organization_id,kind,title,filename,object_key,source_url,byte_size,metadata,status) VALUES (${sourceId},${connector.knowledge_base_id},${connector.workspace_id},${connector.organization_id},'upload',${document.filename.slice(0, 200)},${document.filename},${key},${document.url},${bytes.length},${tx.json({ connectorId: connector.id, externalKey: document.key })},'queued')`;
           }

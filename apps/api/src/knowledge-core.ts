@@ -1,3 +1,4 @@
+import { metadataFilter } from "@agentconnect/schemas/knowledge-metadata";
 import {
   selectEvidence,
   DEFAULT_QA_MIN_SCORE,
@@ -124,6 +125,9 @@ export class PostgresRagTool implements RagTool {
           options.answerSourcePolicy ?? "balanced",
       },
       async (span) => {
+        const metadata = options.metadataFilter
+          ? metadataFilter.parse(options.metadataFilter)
+          : { tagsAll: [], attributes: {} };
         observationContent(span, "input", query);
         await validateKnowledgeIds(
           ids,
@@ -180,8 +184,8 @@ export class PostgresRagTool implements RagTool {
           const dim = sql.unsafe(String(kb.dimensions));
           const filters = options.sourceIds ?? [];
           const preferQa = options.answerSourcePolicy === "prefer_approved_qa";
-          const releaseSelect = sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,c.title,c.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,c.kind,true AS reviewed,c.release_id,c.source_revision FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=${releaseId ?? null} AND c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status<>'deleted' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`;
-          const currentSelect = sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,d.title,d.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,s.kind,false AS reviewed,NULL::uuid AS release_id,s.revision AS source_revision FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id JOIN knowledge_documents d ON d.id=c.document_id WHERE c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status='ready' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`;
+          const releaseSelect = sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,c.title,c.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,c.metadata->'sourceTags' AS source_tags,c.metadata->'sourceAttributes' AS source_attributes,c.kind,true AS reviewed,c.release_id,c.source_revision FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=${releaseId ?? null} AND c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status<>'deleted' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[])) AND COALESCE(c.metadata->'sourceTags','[]'::jsonb) @> ${sql.json(metadata.tagsAll)}::jsonb AND COALESCE(c.metadata->'sourceAttributes','{}'::jsonb) @> ${sql.json(metadata.attributes)}::jsonb`;
+          const currentSelect = sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,d.title,d.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,s.metadata->'tags' AS source_tags,s.metadata->'attributes' AS source_attributes,s.kind,false AS reviewed,NULL::uuid AS release_id,s.revision AS source_revision FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id JOIN knowledge_documents d ON d.id=c.document_id WHERE c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status='ready' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[])) AND COALESCE(s.metadata->'tags','[]'::jsonb) @> ${sql.json(metadata.tagsAll)}::jsonb AND COALESCE(s.metadata->'attributes','{}'::jsonb) @> ${sql.json(metadata.attributes)}::jsonb`;
           const select = approved ? releaseSelect : currentSelect;
           let qaReleaseAvailable = approved;
           if (preferQa && !approved && releaseId) {
@@ -421,6 +425,14 @@ export class PostgresRagTool implements RagTool {
             if (vectorScore < options.minScore) continue;
             result.push({
               id: 0,
+              tags: Array.isArray(row.source_tags)
+                ? (row.source_tags as string[])
+                : [],
+              attributes:
+                row.source_attributes &&
+                typeof row.source_attributes === "object"
+                  ? (row.source_attributes as Record<string, string>)
+                  : {},
               sourceKind: row.kind as Citation["sourceKind"],
               reviewStatus: row.reviewed ? "approved" : "current",
               ...(row.release_id ? { releaseId: String(row.release_id) } : {}),

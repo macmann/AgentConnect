@@ -1,3 +1,4 @@
+import { metadataFilter } from "@agentconnect/schemas/knowledge-metadata";
 import { z } from "zod";
 export const embeddingInput = z
   .object({
@@ -135,6 +136,7 @@ export const websiteInput = z
       });
   });
 export const retrievalInput = z.object({
+  metadataFilter: metadataFilter.optional(),
   query: z.string().trim().min(1).max(4000),
   topK: z.number().int().min(1).max(10).default(5),
   minScore: z.number().min(0).max(1).default(0),
@@ -144,6 +146,7 @@ export const retrievalInput = z.object({
 export type RetrievalInput = z.infer<typeof retrievalInput>;
 export const ragConfig = z
   .object({
+    metadataFilter: metadataFilter.optional(),
     answerSourcePolicy: z
       .enum(["balanced", "prefer_approved_qa"])
       .default("balanced"),
