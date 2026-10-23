@@ -174,3 +174,7 @@ Google Drive Changes and Microsoft OneDrive/SharePoint delta feeds now provide c
 ## Validation boundaries
 
 Local tests cover OAuth URL/state/PKCE construction, replay and tenant restrictions, denied/expired consent, encrypted credentials, refresh rotation, discovery and existing sync regressions using explicit provider fixtures. Real consent screens, enterprise administrator policies, app verification, provider rate limits and tenant download hosts require acceptance with your configured provider accounts.
+
+### Source metadata during synchronization
+
+Connector refreshes preserve tags and custom fields on existing sources. A source deleted and recreated by synchronization is a new source and needs metadata assigned again. Reviewed knowledge releases retain their metadata snapshots. See [metadata tagging](metadata-tagging.md).

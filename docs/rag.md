@@ -124,3 +124,5 @@ Private session endpoints under `/knowledge-bases/:id`:
 Migration **0040** adds the durable tagging queue. A separate `metadata_tagging` worker lane waits for ready indexed content, checks the requesting user's current permissions and the model's workspace/credentials, and uses bounded excerpts (up to 12 chunks, 24,000 characters, 6,000 input tokens subject to model context). Output is bounded by the model limit/8,192 tokens and validated JSON. Generation has a 45-second deadline. Interrupted leases recover with at most three attempts; explicit provider/format failures require a new request. Optional generation is traced through the existing model tracing path; arbitrary provider error text is not stored. Suggestions never become retrieval metadata until explicitly reviewed. Source deletion removes tagging jobs and proposals.
 
 Run `pnpm db:migrate` and restart API and worker. No metadata generation occurs with the upload switch off and no explicit request.
+
+For step-by-step metadata workflows, limits and troubleshooting, see the [metadata tagging guide](metadata-tagging.md).

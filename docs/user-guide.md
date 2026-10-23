@@ -445,3 +445,5 @@ To change existing sources, select their checkboxes (up to 100). In the **Bulk m
 For existing files, expand **AI metadata tagging** on a source, or **AI suggestions for selected sources** in the bulk editor. Turn on the switch, choose a model and generate suggestions. Active requests for a source are reused.
 
 When generation finishes, expand **Review AI metadata suggestions** on each source. Select the suggested tags/fields you want, then **Apply reviewed suggestions**, or reject them. No AI values are applied automatically. Applying adds selected tags and updates selected fields while retaining other values. Samples can miss details in large documents, so verify the suggestions. Changed source content or metadata blocks stale approval: reject and generate again. Published knowledge releases retain their original metadata until you publish a new release.
+
+For step-by-step metadata workflows, limits and troubleshooting, see the [metadata tagging guide](metadata-tagging.md).

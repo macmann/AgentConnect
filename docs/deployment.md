@@ -95,3 +95,9 @@ Apply migration 0016 and restart both API and worker for workspace retention. Cl
 ## Release automation and monitoring
 
 See [release packaging and rollout](releases.md) for digest-pinned images, validation/release workflows, explicit migrations and readiness-gated deployment/rollback. See [private monitoring](monitoring.md) for protected metrics, worker probes and collector/alert examples. Live deployment targets and monitoring receivers remain externally configured.
+
+## Metadata tagging upgrade
+
+Run `pnpm db:migrate` before starting the upgraded API and worker. Migration **0039** adds source-metadata indexes; **0040** adds the background AI metadata-suggestion queue. Restart both services, or deploy matching new images. No additional environment variable is required.
+
+AI tagging is optional and disabled by default. Its selected registered workspace model needs a valid workspace credential and an endpoint permitted by the worker’s existing model-host and outbound-network configuration. Check the `metadata_tagging` worker task when suggestions remain queued. Review is required before suggestions change retrieval metadata. See the [operations and troubleshooting guide](metadata-tagging.md).
