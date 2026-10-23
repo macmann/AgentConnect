@@ -1861,3 +1861,67 @@ test("Grounded RAG snapshots calculate from authorized retrieved figures and ret
     source.json().id,
   );
 });
+
+test("upload retry keys serialize concurrent requests, prevent duplicates and retain tenant permissions", async () => {
+  const base = await call("POST", `/workspaces/${workspace}/knowledge-bases`, {
+    workspaceId: workspace,
+    name: "Bulk upload retries",
+    embeddingModelId: modelId,
+  });
+  assert.equal(base.statusCode, 201, base.body);
+  const baseId = base.json().id,
+    key = randomUUID();
+  const upload = (
+    keyValue: string | undefined,
+    text = "Refund within 30 days",
+    session = sessions.owner,
+  ) => {
+    const boundary = "bulk-fixture-boundary";
+    return app.inject({
+      method: "POST",
+      url: `/knowledge-bases/${baseId}/upload`,
+      headers: {
+        origin: config.WEB_ORIGIN,
+        cookie: session,
+        "content-type": `multipart/form-data; boundary=${boundary}`,
+        ...(keyValue ? { "idempotency-key": keyValue } : {}),
+      },
+      payload: Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="refund.txt"\r\nContent-Type: text/plain\r\n\r\n${text}\r\n--${boundary}--\r\n`,
+      ),
+    });
+  };
+  const results = await Promise.all([upload(key), upload(key), upload(key)]);
+  for (const result of results) {
+    assert.equal(result.statusCode, 202, result.body);
+    assert.equal(result.json().id, key);
+  }
+  const [sources] =
+    await sql`SELECT count(*)::int AS n FROM knowledge_sources WHERE knowledge_base_id=${baseId}`;
+  const [jobs] =
+    await sql`SELECT count(*)::int AS n FROM knowledge_jobs WHERE source_id=${key}`;
+  assert.equal(sources!.n, 1);
+  assert.equal(jobs!.n, 1);
+  assert.equal((await upload(key, "Different bytes")).statusCode, 409);
+  assert.equal((await upload(key, undefined, sessions.viewer)).statusCode, 403);
+  assert.equal(
+    (await upload(key, undefined, sessions.outsider)).statusCode,
+    403,
+  );
+  assert.equal((await upload("invalid-key")).statusCode, 400);
+  assert.equal((await upload(undefined)).statusCode, 202);
+  const preflight = await app.inject({
+    method: "OPTIONS",
+    url: `/knowledge-bases/${baseId}/upload`,
+    headers: {
+      origin: config.WEB_ORIGIN,
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "idempotency-key,content-type",
+    },
+  });
+  assert.equal(preflight.statusCode, 204);
+  assert.match(
+    preflight.headers["access-control-allow-headers"] as string,
+    /idempotency-key/i,
+  );
+});

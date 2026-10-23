@@ -25,6 +25,7 @@ This inventory describes implemented product capabilities, not every requirement
 ## Knowledge and RAG
 
 - Text, document uploads, CSV Q&A import/export and controlled website crawling.
+- Multi-file knowledge uploads: up to 100 files (10 MB each), 1–3 concurrent transfers, progress, pause/cancel/retry and duplicate-safe retry keys; ingestion runs in the background.
 - PDF, DOCX, PPTX, XLSX, CSV, HTML, Markdown and text parsing.
 - Embedding ingestion jobs, source status, retry/reingestion and source previews.
 - Text/vector/hybrid retrieval, minimum relevance, retrieved passage limits and citations.

@@ -297,7 +297,7 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   await page
     .getByRole("button", { name: "Upload document", exact: true })
     .click();
-  await page.getByLabel("Document file").setInputFiles({
+  await page.getByLabel("Document files").setInputFiles({
     name: "refund-policy.md",
     mimeType: "text/markdown",
     buffer: Buffer.from(
@@ -305,7 +305,7 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
     ),
   });
   await page
-    .getByRole("button", { name: "Upload and ingest", exact: true })
+    .getByRole("button", { name: "Start uploads", exact: true })
     .click();
   const row = page.getByRole("row").filter({ hasText: "refund-policy.md" });
   await expect(row.getByText("ready", { exact: true })).toBeVisible({
@@ -474,13 +474,13 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   await page
     .getByRole("button", { name: "Upload document", exact: true })
     .click();
-  await page.getByLabel("Document file").setInputFiles({
+  await page.getByLabel("Document files").setInputFiles({
     name: "refund-policy.pdf",
     mimeType: "application/pdf",
     buffer: pdfFixture("Refunds within 30 days"),
   });
   await page
-    .getByRole("button", { name: "Upload and ingest", exact: true })
+    .getByRole("button", { name: "Start uploads", exact: true })
     .click();
   const pdfRow = page.getByRole("row").filter({ hasText: "refund-policy.pdf" });
   await expect(pdfRow.getByText("ready", { exact: true })).toBeVisible({
@@ -583,7 +583,7 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   await page
     .getByRole("button", { name: "Upload document", exact: true })
     .click();
-  await page.getByLabel("Document file").setInputFiles({
+  await page.getByLabel("Document files").setInputFiles({
     name: "financial-statement.html",
     mimeType: "text/html",
     buffer: Buffer.from(
@@ -591,7 +591,7 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
     ),
   });
   await page
-    .getByRole("button", { name: "Upload and ingest", exact: true })
+    .getByRole("button", { name: "Start uploads", exact: true })
     .click();
   const financial = page.getByRole("row").filter({
     has: page.getByText("financial-statement.html", { exact: true }),
@@ -797,9 +797,9 @@ test("AI extraction settings ingest multilingual images and rendered PDF pages w
     await page
       .getByRole("button", { name: "Upload document", exact: true })
       .click();
-    await page.getByLabel("Document file").setInputFiles(file);
+    await page.getByLabel("Document files").setInputFiles(file);
     await page
-      .getByRole("button", { name: "Upload and ingest", exact: true })
+      .getByRole("button", { name: "Start uploads", exact: true })
       .click();
     const row = page.getByRole("row").filter({ hasText: file.name });
     await expect(row.getByText("ready", { exact: true })).toBeVisible({

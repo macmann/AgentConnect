@@ -218,7 +218,12 @@ export async function buildApp(
           : config.WEB_ORIGIN,
         credentials: !widget,
         methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allowedHeaders: ["content-type", "authorization", "x-customer-token"],
+        allowedHeaders: [
+          "content-type",
+          "authorization",
+          "x-customer-token",
+          ...(!widget ? ["idempotency-key"] : []),
+        ],
       };
     },
   });

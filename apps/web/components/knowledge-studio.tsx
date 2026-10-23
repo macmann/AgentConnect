@@ -1,4 +1,5 @@
 "use client";
+import { KnowledgeUploads, useKnowledgeUploads } from "./knowledge-uploads";
 import { ExtractionUsage } from "./extraction-usage";
 import { ExtractionReview, type ExtractionPage } from "./extraction-review";
 import { HelpTooltip } from "./help-tooltip";
@@ -98,6 +99,7 @@ export function KnowledgeStudio({
     ["bases", "embeddings"],
   );
   const cache = useQueryClient();
+  const uploads = useKnowledgeUploads(workspaceId);
   const canManage = [
     "owner",
     "org_admin",
@@ -229,6 +231,23 @@ export function KnowledgeStudio({
     const data = new FormData(e.currentTarget);
     const value = (name: string) => String(data.get(name) ?? "");
     const number = (name: string) => Number(data.get(name));
+    if (form === "upload") {
+      try {
+        if (!base) throw new Error("Select a knowledge base first");
+        uploads.add(
+          data.getAll("file").filter((f): f is File => f instanceof File),
+          { id: base.id, name: base.name },
+        );
+        setError("");
+        setNotice(
+          "Files added to the upload queue. Keep Knowledge open until transfers finish.",
+        );
+        setForm(null);
+      } catch (error) {
+        setError((error as Error).message);
+      }
+      return;
+    }
     await action(async () => {
       if (form === "embedding") {
         await requestJson(
@@ -267,18 +286,6 @@ export function KnowledgeStudio({
         setSelected(created.id);
         setTab("sources");
         setNotice("Knowledge base created");
-      }
-      if (form === "upload") {
-        const payload = new FormData();
-        payload.append("file", data.get("file")!);
-        const response = await fetch(apiBase + path + "/upload", {
-          method: "POST",
-          credentials: "include",
-          body: payload,
-        });
-        const output = await response.json();
-        if (!response.ok) throw new Error(output.error ?? "Upload failed");
-        setNotice("Document queued for ingestion");
       }
       if (form === "text") {
         await requestJson(path + "/text", "POST", {
@@ -448,6 +455,7 @@ export function KnowledgeStudio({
       {embeddings.error && (
         <p className="error-banner">{embeddings.error.message}</p>
       )}
+      <KnowledgeUploads queue={uploads} sources={sources.data ?? []} />
       {form && (
         <form className="studio-form" onSubmit={submit}>
           <div className="panel-header">
@@ -456,7 +464,7 @@ export function KnowledgeStudio({
                 {
                   base: "Create knowledge base",
                   embedding: "Register embedding model",
-                  upload: "Upload document",
+                  upload: "Upload documents",
                   text: "Add manual text",
                   qa: editing ? "Edit Q&A" : "Add Q&A",
                   website: "Ingest website",
@@ -631,18 +639,21 @@ export function KnowledgeStudio({
             {form === "upload" && (
               <>
                 <label>
-                  Document file
+                  Document files
                   <input
                     name="file"
                     type="file"
+                    multiple
                     accept=".pdf,.docx,.pptx,.xlsx,.csv,.txt,.md,.markdown,.html,.htm,.json,.png,.jpg,.jpeg,.webp"
                     required
                   />
                 </label>
                 <p className="muted">
                   PDF, Office documents, CSV, text, Markdown, HTML and JSON.
-                  Maximum 10 MB. Enable OCR or AI extraction for scanned PDFs.
-                  Image uploads require AI extraction.
+                  Select up to 100 files, maximum 10 MB each. Files upload
+                  gradually and queue for background ingestion. Enable OCR or AI
+                  extraction for scanned PDFs. Image uploads require AI
+                  extraction.
                 </p>
               </>
             )}
@@ -817,7 +828,7 @@ export function KnowledgeStudio({
                   : form === "base"
                     ? "Save knowledge base"
                     : form === "upload"
-                      ? "Upload and ingest"
+                      ? "Start uploads"
                       : form === "website"
                         ? "Start website crawl"
                         : "Queue ingestion"}
