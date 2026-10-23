@@ -411,3 +411,11 @@ Google Drive, OneDrive and SharePoint use native change feeds automatically with
 This conservative approach uses feeds as invalidation signals, not direct partial deletion lists: changes anywhere in the authorized Drive/drive scope can trigger a scan of the selected folder. A complete inventory safely handles nested folder moves and removals. Failed/incomplete/cancelled scans retain the previous checkpoint and never infer deletions. Failed/deleted imported sources force a repair scan even if the feed is quiet. Expired provider cursors automatically establish a fresh baseline. Connector revisions (including credential changes) and **Recovery: full refresh** reset checkpoints. Full refresh still reimports unchanged content.
 
 S3, Teams and Slack continue their bounded scans. There are no new inbound webhooks, push subscriptions or messaging event feeds. Existing source/page/time limits and provider API rate limits still apply. Large or frequently changing drives may see limited savings. Real provider acceptance requires your configured Google/Microsoft account; local protocol fixtures validate cursor and failure behavior.
+
+## Connect your application through API or MCP
+
+In **Operations → API keys**, choose an agent or knowledge base, set an expiry and create a key. Copy it once into your application’s secret store. Agents must have a published version. Enable **Allow execution details** only for clients that should inspect tool outputs and private retrieval evidence.
+
+Use the Bearer key with the JSON endpoints under `/api/v1`, or connect a Streamable HTTP MCP client to `/mcp`. Knowledge keys return raw semantic/hybrid matches; agent keys return an answer and citations, with optional tool and RAG details. Pass the returned conversation ID to continue chatting. Keys can be revoked from the same page.
+
+See [Platform API and MCP](platform-api.md) for request examples, response fields, scopes, timeouts and client setup.

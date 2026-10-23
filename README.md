@@ -87,6 +87,8 @@ Compose versioned agent workflows and manage customer handoffs from the support 
 - Human support operations with an inbox, routing, operator presence, private AI copilot, approvals, supervision and reporting.
 - Quality and improvement processes with evaluation datasets, regression comparisons, publication gates, knowledge review and knowledge-gap drafts.
 
+Applications can access published agents and raw semantic/hybrid knowledge search through the [Platform REST API and MCP server](docs/platform-api.md), with resource-scoped keys and optional tool/RAG execution details.
+
 Knowledge supports [multi-file uploads](docs/user-guide.md#upload-multiple-documents) of up to 100 documents per queue, with bounded concurrent transfers, per-file progress and duplicate-safe retries. Received files are ingested in the background.
 
 Optional **multilingual AI document extraction** transcribes scanned PDF pages and image uploads with a registered vision model before RAG indexing. It preserves original scripts and structured tables, caches extraction results, and exposes page-level previews and uncertainty warnings. See the [configuration and review guide](docs/user-guide.md#multilingual-ai-document-extraction). PDF rendering requires Poppler; the worker image supports `ENABLE_AI_EXTRACTION=true` at build time.

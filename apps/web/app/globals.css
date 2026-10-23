@@ -6053,3 +6053,9 @@ input[type="range"] {
     grid-template-columns: 1fr;
   }
 }
+
+.platform-key-form .checkbox-row {
+  align-items: center;
+  gap: 0.5rem;
+  margin-block: 0.25rem 1rem;
+}

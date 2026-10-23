@@ -13,8 +13,28 @@ export interface Citation {
   score: number;
   vectorScore: number;
   lexicalScore: number;
+  /** Ranking score used to order matches; semantic similarity remains in score. */
+  rankingScore?: number;
+  rrfScore?: number;
+  rerankScore?: number;
+}
+export interface RetrievalStage {
+  stage: "vector_search" | "lexical_search" | "ranking_fusion";
+  knowledgeBaseId: string;
+  query: string;
+  results: {
+    chunkId: string;
+    sourceId: string;
+    rank: number;
+    score: number;
+    vectorRank?: number | null;
+    lexicalRank?: number | null;
+    rrfScore?: number;
+    eligible?: boolean;
+  }[];
 }
 export interface RetrievalContext {
+  onStage?: (stage: RetrievalStage) => void;
   workspaceId: string;
   organizationId: string;
   publicAccess: boolean;

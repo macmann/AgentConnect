@@ -1,3 +1,5 @@
+import { registerPlatformApi } from "./platform-api.js";
+import { platformRequest, platformKey } from "./platform-auth.js";
 import { qualityFailure } from "./quality-errors.js";
 import { registerAnswerIssues } from "./answer-issues.js";
 import { startMessagingWorker } from "./messaging-worker.js";
@@ -222,7 +224,7 @@ export async function buildApp(
           "content-type",
           "authorization",
           "x-customer-token",
-          ...(!widget ? ["idempotency-key"] : []),
+          ...(!widget ? ["idempotency-key", "mcp-protocol-version"] : []),
         ],
       };
     },
@@ -233,6 +235,15 @@ export async function buildApp(
     openapi: {
       info: { title: "Agent Connex Foundation API", version: "0.1.0" },
       servers: [{ url: "http://localhost:4000" }],
+      components: {
+        securitySchemes: {
+          platformKey: {
+            type: "http",
+            scheme: "bearer",
+            description: "Scoped workspace API key",
+          },
+        },
+      },
     },
   });
 
@@ -291,7 +302,7 @@ export async function buildApp(
     };
   });
   app.addHook("onRequest", async (r) => {
-    if (apiKeyChatRequest(r)) {
+    if (apiKeyChatRequest(r) || platformRequest(r)) {
       const bucket = `api-chat-ip:${digest(r.ip)}:${Math.floor(Date.now() / 60000)}`;
       const count = Number(
         await redis.eval(
@@ -310,12 +321,15 @@ export async function buildApp(
       !["GET", "HEAD", "OPTIONS"].includes(r.method) &&
       r.headers.origin !== config.WEB_ORIGIN &&
       !apiKeyChatRequest(r) &&
+      !platformRequest(r) &&
       !widgetDeploymentPath(r) &&
       !messagingWebhookPath(r.url)
     )
       throw new HttpError(403, "Invalid request origin");
   });
-  app.addHook("onRequest", async (r) => {
+  app.addHook("onRequest", async (r, reply) => {
+    if (platformRequest(r)) reply.header("Cache-Control", "no-store");
+    if (platformRequest(r) && r.method !== "OPTIONS") await platformKey(r);
     if (widgetDeploymentPath(r) && r.method !== "OPTIONS")
       await requireWidgetOrigin(r);
   });
@@ -784,6 +798,11 @@ export async function buildApp(
   await registerConnectorDiscovery(app, options.connectorOAuthHttp);
   await registerRetentionRoutes(app);
   await registerAgentRoutes(
+    app,
+    options.providerFactory,
+    options.embeddingFactory,
+  );
+  await registerPlatformApi(
     app,
     options.providerFactory,
     options.embeddingFactory,

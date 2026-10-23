@@ -215,3 +215,11 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 
 - Google Drive Changes and Microsoft OneDrive/SharePoint delta checkpoints skip unchanged inventories. Cursors advance only after successful sync, recover from expiry, reset on connector revision/full refresh, and are never exposed in API history. Changed scopes still use bounded complete reconciliation for deletion and folder-move safety. S3/Teams/Slack retain scans.
 - Workspace workflow component library: save selected processing nodes with a single entry/exit, immutable versions, select an older version, insert independent editable copies, and archive unused entries. Node IDs and internal inputs are remapped. Normal workflow validation, permissions, traces and published snapshots remain authoritative.
+
+## Platform API and MCP
+
+- Published agent JSON invocation and raw knowledge search with scoped, expiring, revocable keys.
+- Stateless MCP Streamable HTTP with `agent_invoke` and `knowledge_search` tools.
+- Key-bound durable conversations; published version snapshots and current issuer permission checks.
+- Optional execution details: recorded tool inputs/outputs, raw retrieval candidates, vector/lexical/RRF stages, reranking scores and final context chunks.
+- Existing streaming agent API remains available for legacy keys. See [integration guide](platform-api.md).

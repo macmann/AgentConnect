@@ -15,7 +15,7 @@ export async function apiKeyActor(r: FastifyRequest) {
   if (raw.length > 200) throw new HttpError(401, "Invalid API key");
   const agentId = r.url.split("/")[2]!;
   const [key] =
-    await sql`SELECT k.id,k.created_by FROM workspace_api_keys k JOIN agents a ON a.id=k.agent_id AND a.workspace_id=k.workspace_id AND a.organization_id=k.organization_id WHERE k.token_hash=${digest(raw)} AND k.agent_id=${agentId} AND k.revoked_at IS NULL AND k.expires_at>now() AND a.archived_at IS NULL`;
+    await sql`SELECT k.id,k.created_by FROM workspace_api_keys k JOIN agents a ON a.id=k.agent_id AND a.workspace_id=k.workspace_id AND a.organization_id=k.organization_id WHERE k.scope='agent:execute' AND k.token_hash=${digest(raw)} AND k.agent_id=${agentId} AND k.revoked_at IS NULL AND k.expires_at>now() AND a.archived_at IS NULL`;
   if (!key)
     throw new HttpError(
       401,
