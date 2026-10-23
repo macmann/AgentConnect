@@ -224,6 +224,10 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 - Optional execution details: recorded tool inputs/outputs, raw retrieval candidates, vector/lexical/RRF stages, reranking scores and final context chunks.
 - Existing streaming agent API remains available for legacy keys. See [integration guide](platform-api.md).
 
+## Knowledge curation and metadata
+
 - **Approved Q&A preference:** agent-level balanced or approved-Q&A-first retrieval, configurable semantic threshold, published snapshot provenance, supporting documents and document fallback; preserved through reranking and shared agent API/MCP/workflow execution.
 - **RAG metadata tagging and filtering:** editable tags and flat custom fields for every knowledge source, metadata revision conflicts, connector refresh preservation, frozen release metadata, SQL prefilters in vector/hybrid retrieval, agent/playground controls and REST/MCP search parity.
 - **Bulk metadata and optional AI tagging:** shared metadata on single/bulk uploads, retry-stable options, previews and atomic 100-source patches, optional workspace-model tagging jobs, and per-source reviewed application with stale-edit protection.
+
+See the [metadata tagging guide](metadata-tagging.md) for upload, bulk editing, AI review and filter examples.

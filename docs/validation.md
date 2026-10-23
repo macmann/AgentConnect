@@ -401,3 +401,9 @@ Validated on 2026-10-11 in the supplied cloud environment.
 - Both browser scenarios passed using real API endpoints: builder guidance and denied enable permissions; administrator inline enablement after a revision conflict, explicit selection/save, preserved unsaved prompt edits and a 390px viewport without page overflow. Enablement uses the existing optimistic tool update API and changes workspace availability without automatically attaching the tool.
 - Lint, all eight package type checks and production builds passed. No schema migration or dependency change is needed. Tool fixtures use unique simulated client addresses so repeated runs retain Redis rate-limit enforcement without sharing counters from prior runs.
 - Temporary private-host grants were limited to browser fixture startup and were not written to environment files. Normal development startup was restored after checks. Query rewriting/reranking behavior is outside this fix.
+
+## Knowledge metadata tagging validation
+
+The implementation merged in PR #50 passed **504 backend tests**, **3 browser scenarios**, lint, type checking and production builds. Coverage includes metadata filters, release snapshots, shared upload options and retries, atomic bulk changes, revision conflicts, background suggestion processing and explicit review. Browser scenarios cover source editing, bulk operations and reviewed suggestions.
+
+Provider fixtures validate integration behavior; these checks do not establish live model tagging accuracy or production throughput. The documentation follow-up checks Markdown formatting, relative links and whitespace without rerunning the unchanged application suite. See the [metadata tagging guide](metadata-tagging.md).
