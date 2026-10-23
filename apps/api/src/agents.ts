@@ -90,6 +90,7 @@ import {
   citedSources,
   type Citation,
   type RagTool,
+  type RetrievalStage,
 } from "@agentconnect/rag/tool";
 import { KnowledgeError } from "@agentconnect/rag/parsers";
 import type { EmbeddingFactory } from "@agentconnect/provider-sdk/embeddings";
@@ -243,6 +244,7 @@ async function streamChat(
   guestToken?: string,
   ragTool: RagTool = new PostgresRagTool(),
   quickActionId?: string,
+  integration?: { json: true; includeDetails: boolean; signal?: AbortSignal },
 ) {
   const c = agentConfig.parse(conversation.config_snapshot);
   const model = modelSnapshotSchema.parse(conversation.model_snapshot);
@@ -365,7 +367,10 @@ async function streamChat(
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 90000);
       timer.unref();
-      reply.hijack();
+      const cancelled = () => controller.abort();
+      integration?.signal?.addEventListener("abort", cancelled, { once: true });
+      if (integration?.signal?.aborted) controller.abort();
+      if (!integration) reply.hijack();
       const responseHeaders: Record<string, string | number | string[]> = {};
       for (const [name, value] of Object.entries(reply.getHeaders())) {
         if (typeof value === "string" || typeof value === "number")
@@ -373,14 +378,24 @@ async function streamChat(
         else if (Array.isArray(value))
           responseHeaders[name] = value.map(String);
       }
-      reply.raw.writeHead(200, {
-        ...responseHeaders,
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-store",
-        "X-Accel-Buffering": "no",
-        Connection: "keep-alive",
-      });
+      if (!integration)
+        reply.raw.writeHead(200, {
+          ...responseHeaders,
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Accel-Buffering": "no",
+          Connection: "keep-alive",
+        });
+      let responseError: unknown;
+      let support: unknown;
+      const stages: RetrievalStage[] = [];
+      let retrievalDetails: unknown;
       const write = (event: string, data: unknown) => {
+        if (integration) {
+          if (event === "error") responseError = data;
+          if (event === "support") support = data;
+          return;
+        }
         if (!reply.raw.destroyed)
           reply.raw.write(
             `event: ${event}\ndata: ${JSON.stringify({ protocolVersion: 1, ...(data as object) })}\n\n`,
@@ -390,10 +405,12 @@ async function streamChat(
         if (!reply.raw.writableEnded) controller.abort();
       };
       reply.raw.on("close", disconnected);
-      const heartbeat = setInterval(() => {
-        if (!reply.raw.destroyed) reply.raw.write(": heartbeat\n\n");
-      }, 15000);
-      heartbeat.unref();
+      const heartbeat = integration
+        ? undefined
+        : setInterval(() => {
+            if (!reply.raw.destroyed) reply.raw.write(": heartbeat\n\n");
+          }, 15000);
+      heartbeat?.unref();
       write("meta", {
         runId,
         traceId,
@@ -522,6 +539,9 @@ async function streamChat(
                 workspaceId: conversation.workspace_id,
                 organizationId: conversation.organization_id,
                 publicAccess: !!conversation.deployment_id,
+                ...(integration?.includeDetails
+                  ? { onStage: (stage: RetrievalStage) => stages.push(stage) }
+                  : {}),
               },
               controller.signal,
               c.maxOutputTokens,
@@ -534,6 +554,7 @@ async function streamChat(
                 metered,
               ),
             );
+            retrievalDetails = retrieval.details;
             sources = retrieval.sources;
             retrievalDiagnostics = {
               ...retrievalDiagnostics,
@@ -807,6 +828,7 @@ async function streamChat(
         );
       } finally {
         clearTimeout(timer);
+        integration?.signal?.removeEventListener("abort", cancelled);
         clearInterval(heartbeat);
         reply.raw.off("close", disconnected);
         try {
@@ -942,6 +964,10 @@ async function streamChat(
           await Promise.allSettled(
             artifacts.map((a) => deleteKnowledge(a.key)),
           );
+          if (integration) {
+            status = "failed";
+            errorCode = "PERSISTENCE_ERROR";
+          }
           write("error", {
             code: "PERSISTENCE_ERROR",
             message: "The response could not be saved.",
@@ -953,8 +979,41 @@ async function streamChat(
           if (outputTokens !== null)
             span.setAttribute("model.output_tokens", outputTokens);
           observationContent(span, "output", output, true);
-          reply.raw.end();
+          if (!integration) reply.raw.end();
         }
+      }
+      if (integration) {
+        const tools = integration.includeDetails
+          ? await sql`SELECT id AS "executionId",tool_id AS "toolId",tool_name AS name,status,arguments AS input,result,error_code AS "errorCode",duration_ms AS "durationMs",started_at AS "startedAt",finished_at AS "finishedAt" FROM tool_executions WHERE run_id=${runId} AND workspace_id=${conversation.workspace_id} AND organization_id=${conversation.organization_id} ORDER BY started_at,id`
+          : undefined;
+        return {
+          protocolVersion: 1,
+          agentId: conversation.agent_id,
+          versionId: conversation.version_id,
+          conversationId: conversation.id,
+          messageId: output || uiBlocks.length ? messageId : null,
+          runId,
+          traceId,
+          status,
+          output: status === "completed" ? output : null,
+          citations: status === "completed" ? citations : [],
+          blocks: status === "completed" ? uiBlocks : [],
+          usage: { inputTokens, outputTokens },
+          retrievalMs,
+          ...(responseError ? { error: responseError } : {}),
+          ...(support ? { support } : {}),
+          ...(integration.includeDetails
+            ? {
+                tools,
+                retrieval: {
+                  diagnostics: retrievalDiagnostics,
+                  stages,
+                  details: retrievalDetails ?? null,
+                  chunks: sources,
+                },
+              }
+            : {}),
+        };
       }
     } catch (error) {
       observationError(span, error);
@@ -964,6 +1023,51 @@ async function streamChat(
     }
   });
 }
+export async function invokePlatformAgent(
+  r: FastifyRequest,
+  reply: FastifyReply,
+  key: import("./platform-auth.js").PlatformKey,
+  data: import("zod").infer<
+    typeof import("@agentconnect/schemas/platform-api").agentInvocation
+  >,
+  factory: ProviderFactory,
+  embeddingOverride?: EmbeddingFactory,
+  signal?: AbortSignal,
+) {
+  let conversation: ConversationRow | undefined;
+  if (data.conversationId) {
+    [conversation] = await sql<
+      ConversationRow[]
+    >`SELECT * FROM conversations WHERE id=${data.conversationId} AND api_key_id=${key.id} AND agent_id=${key.agent_id!} AND workspace_id=${key.workspace_id} AND organization_id=${key.organization_id} AND channel='api'`;
+    if (!conversation)
+      throw new HttpError(404, "Conversation unavailable for this API key");
+    if (data.versionId && data.versionId !== conversation.version_id)
+      throw new HttpError(
+        409,
+        "Conversation uses a different published version; start a new conversation",
+      );
+  } else {
+    const [version] =
+      await sql`SELECT * FROM agent_versions WHERE agent_id=${key.agent_id!} AND workspace_id=${key.workspace_id} AND organization_id=${key.organization_id} AND (${data.versionId ?? null}::uuid IS NULL OR id=${data.versionId ?? null}) ORDER BY version DESC LIMIT 1`;
+    if (!version)
+      throw new HttpError(409, "Publish an agent version before invoking it");
+    [conversation] = await sql<
+      ConversationRow[]
+    >`INSERT INTO conversations(id,organization_id,workspace_id,agent_id,version_id,user_id,api_key_id,config_snapshot,model_snapshot,channel) VALUES (${randomUUID()},${key.organization_id},${key.workspace_id},${key.agent_id!},${version.id},${key.created_by},${key.id},${sql.json(version.config)},${sql.json(version.model_snapshot)},'api') RETURNING *`;
+  }
+  return (await streamChat(
+    r,
+    reply,
+    conversation!,
+    data.message,
+    factory,
+    undefined,
+    new PostgresRagTool(embeddingOverride),
+    undefined,
+    { json: true, includeDetails: data.includeDetails, signal },
+  ))!;
+}
+
 export async function recoverInterruptedRuns() {
   await sql`UPDATE tool_executions SET status='failed',error_code='PROCESS_INTERRUPTED',finished_at=now() WHERE status='running' AND started_at<now()-interval '5 minutes'`;
   await sql`UPDATE agent_runs SET status='failed',error_code='PROCESS_INTERRUPTED',finished_at=now() WHERE status='running' AND started_at<now()-interval '5 minutes'`;
@@ -1431,7 +1535,7 @@ export async function registerAgentRoutes(
   app.get("/agents/:agentId/conversations/:conversationId", async (r) => {
     const { u, a } = await ownedAgent(r, "agent:execute");
     const [conversation] =
-      await sql`SELECT id FROM conversations WHERE id=${id(params(r).conversationId)} AND agent_id=${a.id} AND user_id=${u.id} AND deployment_id IS NULL`;
+      await sql`SELECT id FROM conversations WHERE id=${id(params(r).conversationId)} AND agent_id=${a.id} AND user_id=${u.id} AND deployment_id IS NULL AND channel<>'api'`;
     if (!conversation)
       throw new HttpError(404, "Playground conversation unavailable");
     const messages =
@@ -1469,7 +1573,7 @@ export async function registerAgentRoutes(
       if (data.conversationId) {
         [conversation] = await sql<
           ConversationRow[]
-        >`SELECT * FROM conversations WHERE id=${data.conversationId} AND agent_id=${a.id} AND user_id=${u.id} AND deployment_id IS NULL`;
+        >`SELECT * FROM conversations WHERE id=${data.conversationId} AND agent_id=${a.id} AND user_id=${u.id} AND deployment_id IS NULL AND channel<>'api'`;
         if (!conversation) throw new HttpError(404, "Conversation not found");
       } else {
         const c = agentConfig.parse(a.draft_config);

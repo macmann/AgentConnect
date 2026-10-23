@@ -185,6 +185,9 @@ export async function enhancedRetrieval(
   }
   sources = sources.map((s, i) => ({ ...s, id: i + 1 }));
   diagnostics.candidates = sources.length;
+  const candidates = context.onStage
+    ? sources.map((s) => ({ ...s }))
+    : undefined;
   if (options.rerank && sources.length) {
     try {
       const value = await observe(
@@ -233,6 +236,7 @@ export async function enhancedRetrieval(
         },
       );
       const byId = rankingScores(value, sources);
+      sources = sources.map((s) => ({ ...s, rerankScore: byId.get(s.id)! }));
       sources.sort((a, b) => byId.get(b.id)! - byId.get(a.id)! || a.id - b.id);
       diagnostics.rerank = "applied";
     } catch (error) {
@@ -244,6 +248,19 @@ export async function enhancedRetrieval(
   } else if (options.rerank) diagnostics.rerank = "no_candidates";
   diagnostics.selectedChunks = Math.min(sources.length, options.topK);
   return {
+    ...(context.onStage
+      ? {
+          details: {
+            originalQuery: query,
+            effectiveQuery: rewritten,
+            candidates,
+            reranked:
+              diagnostics.rerank === "applied"
+                ? sources.map((s) => ({ ...s }))
+                : null,
+          },
+        }
+      : {}),
     sources: sources
       .slice(0, options.topK)
       .map((s, i) => ({ ...s, id: i + 1 })),

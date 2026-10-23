@@ -37,11 +37,29 @@ export const priceInput = z.object({
   inputUsdPerMillion: z.number().min(0).max(10000),
   outputUsdPerMillion: z.number().min(0).max(10000),
 });
-export const apiKeyInput = z.object({
-  label: z.string().trim().min(1).max(100),
-  agentId: z.uuid(),
-  expiresInDays: z.number().int().min(1).max(365).default(30),
-});
+export const apiKeyInput = z
+  .object({
+    label: z.string().trim().min(1).max(100),
+    agentId: z.uuid().optional(),
+    knowledgeBaseId: z.uuid().optional(),
+    detailsEnabled: z.boolean().default(false),
+    scope: z
+      .enum(["agent:execute", "agent:invoke", "knowledge:search"])
+      .optional(),
+    expiresInDays: z.number().int().min(1).max(365).default(30),
+  })
+  .refine(
+    (v) => !!v.agentId !== !!v.knowledgeBaseId,
+    "Select exactly one agent or knowledge base",
+  )
+  .refine(
+    (v) =>
+      !v.scope ||
+      (v.knowledgeBaseId
+        ? v.scope === "knowledge:search"
+        : v.scope !== "knowledge:search"),
+    "Scope must match the selected resource",
+  );
 export const webhookInput = z.object({
   name: z.string().trim().min(1).max(100),
   url: z.url().max(500),

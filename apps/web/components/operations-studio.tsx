@@ -1,4 +1,5 @@
 "use client";
+import { PlatformKeyForm } from "./platform-key-form";
 import { AnswerIssues } from "./answer-issues";
 import { CustomerInsights } from "./customer-insights";
 import { KnowledgeGaps } from "./knowledge-gaps";
@@ -49,7 +50,9 @@ type Key = {
   id: string;
   label: string;
   prefix: string;
-  agent_id: string;
+  agent_id: string | null;
+  knowledge_base_id: string | null;
+  details_enabled: boolean;
   scope: string;
   expires_at: string;
   last_used_at: string | null;
@@ -565,67 +568,29 @@ export function OperationsStudio({
         )}
         {tab === "API keys" && (
           <>
-            <h4>Agent API keys</h4>
-            <p className="muted">
-              Each key can execute one agent in this workspace. Keys use the
-              issuer’s current permissions, expire automatically and can be
-              revoked. Send it as a Bearer token to POST /agents/:agentId/chat.
-              The endpoint is rate limited.
-            </p>
-            <form
-              className="form-grid"
-              onSubmit={(e) => {
-                const f = form(e);
+            <PlatformKeyForm
+              workspaceId={workspaceId}
+              agents={agents.data ?? []}
+              busy={busy}
+              onCreate={(data) => {
                 setOneTime("");
                 void mutate(async () => {
                   const result = await requestJson<{ key: string }>(
                     `${base}/api-keys`,
                     "POST",
-                    {
-                      label: f.get("label"),
-                      agentId: f.get("agentId"),
-                      expiresInDays: Number(f.get("days")),
-                    },
+                    data,
                   );
                   setOneTime(result.key);
                 }, "API key created");
               }}
-            >
-              <label>
-                Key label
-                <input name="label" required maxLength={100} />
-              </label>
-              <label>
-                Agent
-                <select name="agentId" required>
-                  {agents.data?.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Expires in days
-                <input
-                  name="days"
-                  type="number"
-                  min={1}
-                  max={365}
-                  defaultValue={30}
-                  required
-                />
-              </label>
-              <Button disabled={busy || !agents.data?.length}>
-                Create API key
-              </Button>
-            </form>
+            />
             {keys.data?.map((k) => (
               <div className="version-row" key={k.id}>
                 <div>
                   <strong>{k.label}</strong>
                   <small>
-                    {k.prefix}… · {k.scope} · expires{" "}
+                    {k.prefix}… · {k.scope}
+                    {k.details_enabled ? " · Details enabled" : ""} · expires{" "}
                     {new Date(k.expires_at).toLocaleDateString()} · last used{" "}
                     {k.last_used_at
                       ? new Date(k.last_used_at).toLocaleString()

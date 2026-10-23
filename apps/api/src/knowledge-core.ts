@@ -227,6 +227,17 @@ export class PostgresRagTool implements RagTool {
               return rows;
             },
           );
+          context.onStage?.({
+            stage: "vector_search",
+            knowledgeBaseId: kb.id,
+            query,
+            results: semantic.map((row, i) => ({
+              chunkId: row.id,
+              sourceId: row.source_id,
+              rank: i + 1,
+              score: Number(row.vector_score),
+            })),
+          });
           const lexical =
             options.mode === "hybrid"
               ? await observe(
@@ -275,6 +286,18 @@ export class PostgresRagTool implements RagTool {
                   },
                 )
               : [];
+          if (options.mode === "hybrid")
+            context.onStage?.({
+              stage: "lexical_search",
+              knowledgeBaseId: kb.id,
+              query,
+              results: lexical.map((row, i) => ({
+                chunkId: row.id,
+                sourceId: row.source_id,
+                rank: i + 1,
+                score: Number(row.lexical_score),
+              })),
+            });
           const fusionSpan = startObservation(
             "knowledge.ranking_fusion",
             "chain",
@@ -314,6 +337,12 @@ export class PostgresRagTool implements RagTool {
               (a, b) => b.score - a.score || a.chunkId.localeCompare(b.chunkId),
             )
             .map((r, i) => ({ ...r, rank: i + 1 }));
+          context.onStage?.({
+            stage: "ranking_fusion",
+            knowledgeBaseId: kb.id,
+            query,
+            results: fused,
+          });
           fusionSpan.setAttribute("retrieval.mode", options.mode);
           fusionSpan.setAttribute("retrieval.rrf_constant", 60);
           fusionSpan.setAttribute("retrieval.matches", JSON.stringify(fused));
@@ -354,6 +383,11 @@ export class PostgresRagTool implements RagTool {
               title: String(row.title),
               sourceUrl: row.source_url as string | null,
               score: vectorScore,
+              rankingScore:
+                options.mode === "hybrid"
+                  ? fusion + (row.kind === "qa" ? 0.0001 : 0)
+                  : vectorScore,
+              ...(options.mode === "hybrid" ? { rrfScore: fusion } : {}),
               vectorScore,
               lexicalScore: Number(row.lexical_score),
               fusion:

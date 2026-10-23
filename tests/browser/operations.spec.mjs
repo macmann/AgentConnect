@@ -17,7 +17,9 @@ const org = randomUUID(),
   run = randomUUID(),
   message = randomUUID(),
   version = randomUUID(),
-  deployment = randomUUID();
+  deployment = randomUUID(),
+  embedding = randomUUID(),
+  knowledgeBase = randomUUID();
 test.beforeEach(async ({}, testInfo) => {
   await paceApiBudget(testInfo);
 });
@@ -34,6 +36,8 @@ test.beforeAll(async () => {
     await tx`INSERT INTO workspaces(id,organization_id,name) VALUES (${workspace},${org},'Operations workspace')`;
     await tx`INSERT INTO memberships(id,organization_id,user_id,role) VALUES (${randomUUID()},${org},${user},'owner')`;
     await tx`INSERT INTO memberships(id,organization_id,workspace_id,user_id,role) VALUES (${randomUUID()},${org},${workspace},${analyst},'analyst')`;
+    await tx`INSERT INTO embedding_models(id,organization_id,workspace_id,name,provider,model_id,base_url,dimensions) VALUES (${embedding},${org},${workspace},'Key UI embedding','openai-compatible','fixture','https://api.openai.com/v1',3)`;
+    await tx`INSERT INTO knowledge_bases(id,organization_id,workspace_id,name,description,embedding_model_id,dimensions,chunk_size,chunk_overlap,chunk_strategy) VALUES (${knowledgeBase},${org},${workspace},'Key UI knowledge','',${embedding},3,1000,100,'recursive')`;
     await tx`INSERT INTO model_configurations(id,organization_id,workspace_id,name,provider,model_id,base_url,context_window,max_output_tokens,capabilities) VALUES (${model},${org},${workspace},'Operations browser model','openai-compatible','fixture','https://api.openai.com/v1',4096,1024,'{"streaming":true,"temperature":true,"topP":true}')`;
     const config = tx.json({ modelId: model }),
       snapshot = tx.json({
@@ -68,6 +72,8 @@ test.afterAll(async () => {
       "agent_versions",
       "agents",
       "model_prices",
+      "knowledge_bases",
+      "embedding_models",
       "model_configurations",
       "audit_events",
       "memberships",
@@ -110,6 +116,7 @@ test("operations analytics, pricing, key revocation, review and deployment envir
   await expect(page.getByText("Pricing saved", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "API keys", exact: true }).click();
   await page.getByLabel("Key label").fill("Browser application");
+  await page.getByLabel("Agent", { exact: true }).selectOption(agent);
   await page
     .getByRole("button", { name: "Create API key", exact: true })
     .click();
@@ -220,4 +227,53 @@ test("analyst sees operational reports and reviews without administration contro
   await expect(
     page.getByRole("button", { name: "Review response" }),
   ).toHaveCount(0);
+});
+
+test("API key setup supports knowledge search and explicit detail grants on mobile", async ({
+  page,
+  context,
+}) => {
+  await login(page, context);
+  await page.getByRole("button", { name: "Operations", exact: true }).click();
+  await page.getByRole("button", { name: "API keys", exact: true }).click();
+  await page.getByLabel("Resource type").selectOption("knowledge");
+  await page.getByLabel("Key label").fill("Knowledge integration");
+  await page
+    .getByLabel("Knowledge base", { exact: true })
+    .selectOption(knowledgeBase);
+  await expect(
+    page.getByLabel("Allow execution details", { exact: true }),
+  ).not.toBeChecked();
+  await page
+    .getByRole("button", { name: "About execution details", exact: true })
+    .click();
+  await expect(page.getByRole("tooltip")).toContainText("tool inputs/outputs");
+  await page.getByLabel("Allow execution details", { exact: true }).check();
+  await page
+    .getByRole("button", { name: "Create API key", exact: true })
+    .click();
+  const key = await page.locator(".operations-secret code").innerText();
+  const response = await fetch("http://localhost:4000/api/v1/resources", {
+    headers: { authorization: `Bearer ${key}` },
+  });
+  expect(response.status).toBe(200);
+  const resource = await response.json();
+  expect(resource.scope).toBe("knowledge:search");
+  expect(resource.resource.id).toBe(knowledgeBase);
+  expect(resource.detailsEnabled).toBe(true);
+  await page.getByRole("button", { name: "Dismiss secret" }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByText("Connection endpoints", { exact: true }).click();
+  await expect(
+    page.getByText("http://localhost:4000/mcp", { exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.screenshot({
+    path: "test-results/platform-api-keys-mobile.png",
+    fullPage: true,
+  });
 });
