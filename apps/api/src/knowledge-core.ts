@@ -1,3 +1,8 @@
+import {
+  selectEvidence,
+  DEFAULT_QA_MIN_SCORE,
+  preferredQa,
+} from "@agentconnect/rag/answer-source-policy";
 import { observe, observationContent, startObservation } from "./ai-tracing.js";
 import { HttpError } from "./http-error.js";
 import { sql } from "./db.js";
@@ -102,14 +107,7 @@ export class PostgresRagTool implements RagTool {
   async execute(
     query: string,
     ids: string[],
-    options: {
-      topK: number;
-      minScore: number;
-      mode: "vector" | "hybrid";
-      sourceIds?: string[];
-      contentMode?: "current" | "approved";
-      releasePins?: Record<string, string>;
-    },
+    options: Parameters<RagTool["execute"]>[2],
     context: RetrievalContext,
     signal: AbortSignal,
   ): Promise<Citation[]> {
@@ -122,6 +120,8 @@ export class PostgresRagTool implements RagTool {
         "retrieval.mode": options.mode,
         "retrieval.top_k": options.topK,
         "retrieval.min_score": options.minScore,
+        "retrieval.answer_source_policy":
+          options.answerSourcePolicy ?? "balanced",
       },
       async (span) => {
         observationContent(span, "input", query);
@@ -179,16 +179,45 @@ export class PostgresRagTool implements RagTool {
           const literal = vectorLiteral(vector, kb.dimensions);
           const dim = sql.unsafe(String(kb.dimensions));
           const filters = options.sourceIds ?? [];
-          const select = approved
-            ? sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,c.title,c.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,c.kind FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=${releaseId!} AND c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status<>'deleted' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`
-            : sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,d.title,d.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,s.kind FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id JOIN knowledge_documents d ON d.id=c.document_id WHERE c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status='ready' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`;
+          const preferQa = options.answerSourcePolicy === "prefer_approved_qa";
+          const releaseSelect = sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,c.title,c.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,c.kind,true AS reviewed,c.release_id,c.source_revision FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=${releaseId ?? null} AND c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status<>'deleted' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`;
+          const currentSelect = sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,d.title,d.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,s.kind,false AS reviewed,NULL::uuid AS release_id,s.revision AS source_revision FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id JOIN knowledge_documents d ON d.id=c.document_id WHERE c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status='ready' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[]))`;
+          const select = approved ? releaseSelect : currentSelect;
+          let qaReleaseAvailable = approved;
+          if (preferQa && !approved && releaseId) {
+            const [release] =
+              await sql`SELECT id FROM knowledge_releases WHERE id=${releaseId} AND knowledge_base_id=${kb.id} AND workspace_id=${context.workspaceId} AND organization_id=${context.organizationId} AND (status='published' OR (${context.publicAccess}=false AND id=${context.candidateReleaseId ?? null} AND status='approved'))`;
+            qaReleaseAvailable = !!release;
+          }
+          // Separate bounded lanes keep matching approved Q&A from being crowded
+          // out by documents, and never promote an edited current Q&A revision.
+          const selections = preferQa
+            ? [
+                sql`${select} AND ${approved ? sql`c.kind` : sql`s.kind`}<>'qa'`,
+                ...(qaReleaseAvailable
+                  ? [sql`${releaseSelect} AND c.kind='qa'`]
+                  : []),
+              ]
+            : [select];
           const semantic = await observe(
             "knowledge.vector_search",
             "chain",
             { "knowledge.base.id": kb.id },
             async (searchSpan) => {
-              const rows =
-                await sql`${select} ORDER BY c.embedding::vector(${dim}) <=> ${literal}::vector(${dim}) LIMIT 30`;
+              const rows = (
+                await Promise.all(
+                  selections.map(
+                    (selection) =>
+                      sql`${selection} ORDER BY c.embedding::vector(${dim}) <=> ${literal}::vector(${dim}) LIMIT 30`,
+                  ),
+                )
+              ).flat();
+              if (preferQa)
+                rows.sort(
+                  (a, b) =>
+                    Number(b.vector_score) - Number(a.vector_score) ||
+                    String(a.id).localeCompare(String(b.id)),
+                );
               searchSpan.setAttribute("retrieval.results", rows.length);
               searchSpan.setAttribute(
                 "retrieval.matches",
@@ -245,8 +274,20 @@ export class PostgresRagTool implements RagTool {
                   "chain",
                   { "knowledge.base.id": kb.id },
                   async (searchSpan) => {
-                    const rows =
-                      await sql`${select} AND c.search_vector @@ websearch_to_tsquery('simple',${query}) ORDER BY lexical_score DESC LIMIT 30`;
+                    const rows = (
+                      await Promise.all(
+                        selections.map(
+                          (selection) =>
+                            sql`${selection} AND c.search_vector @@ websearch_to_tsquery('simple',${query}) ORDER BY lexical_score DESC LIMIT 30`,
+                        ),
+                      )
+                    ).flat();
+                    if (preferQa)
+                      rows.sort(
+                        (a, b) =>
+                          Number(b.lexical_score) - Number(a.lexical_score) ||
+                          String(a.id).localeCompare(String(b.id)),
+                      );
                     searchSpan.setAttribute("retrieval.results", rows.length);
                     searchSpan.setAttribute(
                       "retrieval.matches",
@@ -331,7 +372,21 @@ export class PostgresRagTool implements RagTool {
                   : Math.max(0, Math.min(1, Number(row.vector_score))),
               eligible:
                 Math.max(0, Math.min(1, Number(row.vector_score))) >=
-                options.minScore,
+                  options.minScore &&
+                (!preferQa ||
+                  row.kind !== "qa" ||
+                  (!!row.reviewed &&
+                    Number(row.vector_score) >=
+                      (options.qaMinScore ?? DEFAULT_QA_MIN_SCORE))),
+              ...(preferQa
+                ? {
+                    qaPreferred:
+                      row.kind === "qa" &&
+                      !!row.reviewed &&
+                      Number(row.vector_score) >=
+                        (options.qaMinScore ?? DEFAULT_QA_MIN_SCORE),
+                  }
+                : {}),
             }))
             .sort(
               (a, b) => b.score - a.score || a.chunkId.localeCompare(b.chunkId),
@@ -366,6 +421,10 @@ export class PostgresRagTool implements RagTool {
             if (vectorScore < options.minScore) continue;
             result.push({
               id: 0,
+              sourceKind: row.kind as Citation["sourceKind"],
+              reviewStatus: row.reviewed ? "approved" : "current",
+              ...(row.release_id ? { releaseId: String(row.release_id) } : {}),
+              sourceRevision: Number(row.source_revision),
               chunkId: String(row.id),
               documentId: String(row.document_id),
               sourceId: String(row.source_id),
@@ -400,10 +459,14 @@ export class PostgresRagTool implements RagTool {
         result.sort(
           (a, b) => b.fusion - a.fusion || a.chunkId.localeCompare(b.chunkId),
         );
-        const selected = result
-          .slice(0, options.topK)
-          .map(({ fusion, ...r }, i) => (void fusion, { ...r, id: i + 1 }));
+        const selected = selectEvidence(result, options, options.topK).map(
+          ({ fusion, ...r }, i) => (void fusion, { ...r, id: i + 1 }),
+        );
         span.setAttribute("retrieval.results", selected.length);
+        span.setAttribute(
+          "retrieval.preferred_qa_results",
+          selected.filter((s) => preferredQa(s, options)).length,
+        );
         span.setAttribute(
           "retrieval.matches",
           JSON.stringify(

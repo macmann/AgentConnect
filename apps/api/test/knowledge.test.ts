@@ -1925,3 +1925,162 @@ test("upload retry keys serialize concurrent requests, prevent duplicates and re
     /idempotency-key/i,
   );
 });
+
+test("Approved Q&A preference searches published snapshots separately from current documents", async () => {
+  const { PostgresRagTool } = await import("../src/knowledge-core.js");
+  const base = await call("POST", `/workspaces/${workspace}/knowledge-bases`, {
+    name: "Approved answer priority",
+    embeddingModelId: modelId,
+    chunkSize: 200,
+    chunkOverlap: 0,
+  });
+  assert.equal(base.statusCode, 201, base.body);
+  const id = base.json().id;
+  async function ingest(sourceId: string) {
+    for (let i = 0; i < 20; i++) {
+      const [source] =
+        await sql`SELECT status,error_code FROM knowledge_sources WHERE id=${sourceId}`;
+      if (source!.status === "ready") return;
+      assert.notEqual(source!.status, "failed", JSON.stringify(source));
+      assert.equal(await processKnowledgeJob(embedding), true);
+    }
+    assert.fail("Fixture source did not finish ingestion");
+  }
+  const document = await call("POST", `/knowledge-bases/${id}/text`, {
+    title: "Supporting refund policy",
+    text: Array.from(
+      { length: 40 },
+      (_, i) =>
+        `Refund within 30 days. Supporting policy section ${i}. ` +
+        "Details for customers. ".repeat(8),
+    ).join("\n\n"),
+  });
+  assert.equal(document.statusCode, 202, document.body);
+  await ingest(document.json().id);
+  const qa = await call("POST", `/knowledge-bases/${id}/qa`, {
+    question: "What is the refund policy?",
+    answer: "Approved refunds within 30 days.",
+  });
+  assert.equal(qa.statusCode, 202, qa.body);
+  await ingest(qa.json().id);
+  const release = await call("POST", `/knowledge-bases/${id}/releases`, {
+    name: "Approved refund answer",
+    sourceIds: [qa.json().id],
+  });
+  assert.equal(release.statusCode, 201, release.body);
+  const releaseId = release.json().id;
+  await sql`UPDATE knowledge_releases SET status='published' WHERE id=${releaseId}`;
+  await sql`UPDATE knowledge_bases SET published_release_id=${releaseId} WHERE id=${id}`;
+  const unreviewed = await call("POST", `/knowledge-bases/${id}/qa`, {
+    question: "Refund within 30 days?",
+    answer: "Unreviewed refund policy",
+  });
+  assert.equal(unreviewed.statusCode, 202, unreviewed.body);
+  await ingest(unreviewed.json().id);
+  // Make the approved answer relevant but lower in semantic rank than >30 document chunks.
+  await sql`UPDATE knowledge_chunks SET embedding='[1,0,0]'::vector WHERE knowledge_base_id=${id}`;
+  await sql`UPDATE knowledge_release_chunks SET embedding='[0.8,0.6,0]'::vector WHERE release_id=${releaseId}`;
+  const tool = new PostgresRagTool(() => ({
+    async embed(texts) {
+      return texts.map(() => [1, 0, 0]);
+    },
+  }));
+  const context = {
+    workspaceId: workspace,
+    organizationId: org,
+    publicAccess: false,
+  };
+  const options = {
+    topK: 2,
+    minScore: 0,
+    mode: "vector" as const,
+    answerSourcePolicy: "prefer_approved_qa" as const,
+    qaMinScore: 0.75,
+  };
+  const search = (overrides = {}) =>
+    tool.execute(
+      "refund within 30 days",
+      [id],
+      { ...options, ...overrides },
+      context,
+      new AbortController().signal,
+    );
+  for (const mode of ["vector", "hybrid"] as const) {
+    const results = await search({ mode });
+    assert.equal(results.length, 2);
+    assert.equal(results[0]!.sourceId, qa.json().id);
+    assert.equal(results[0]!.reviewStatus, "approved");
+    assert.equal(results[0]!.releaseId, releaseId);
+    assert.equal(results[1]!.sourceKind, "text");
+    assert.ok(results.every((s) => s.sourceId !== unreviewed.json().id));
+  }
+  const { modelSnapshot } = await import("../src/agents.js");
+  let policySeen = false;
+  const result = await executeAgentSnapshot(
+    agentConfig.parse({
+      modelId: chatModel,
+      rag: { ...options, knowledgeBaseIds: [id] },
+    }),
+    await modelSnapshot(chatModel, workspace),
+    "refund within 30 days",
+    context,
+    new AbortController().signal,
+    () => ({
+      async *stream(input) {
+        policySeen =
+          input.system.includes("primary_approved_qa") &&
+          input.system.includes("supporting_document");
+        yield { type: "token", text: "Approved refunds within 30 days [1]." };
+        yield { type: "usage", inputTokens: 20, outputTokens: 8 };
+      },
+    }),
+    () => ({
+      async embed(texts) {
+        return texts.map(() => [1, 0, 0]);
+      },
+    }),
+  );
+  assert.equal(policySeen, true);
+  assert.equal(result.citations[0]!.sourceId, qa.json().id);
+  assert.ok(
+    (await search({ qaMinScore: 0.95 })).every((s) => s.sourceKind === "text"),
+  );
+  assert.equal((await search({ topK: 1 }))[0]!.sourceId, qa.json().id);
+  const edited = await call(
+    "PUT",
+    `/knowledge-bases/${id}/sources/${qa.json().id}/qa`,
+    { question: "Refund policy?", answer: "Edited unapproved replacement" },
+  );
+  assert.equal(edited.statusCode, 200, edited.body);
+  await ingest(qa.json().id);
+  assert.match((await search())[0]!.content, /Approved refunds/);
+  assert.doesNotMatch((await search())[0]!.content, /Edited unapproved/);
+  assert.ok(
+    (await search({ sourceIds: [document.json().id] })).every(
+      (s) => s.sourceKind === "text",
+    ),
+  );
+  await sql`UPDATE knowledge_bases SET published_release_id=NULL WHERE id=${id}`;
+  assert.ok((await search()).every((s) => s.sourceKind === "text"));
+  await sql`UPDATE knowledge_bases SET published_release_id=${releaseId} WHERE id=${id}`;
+  await sql`UPDATE knowledge_sources SET status='deleted' WHERE id=${qa.json().id}`;
+  assert.ok((await search()).every((s) => s.sourceKind === "text"));
+  await assert.rejects(
+    tool.execute(
+      "refund",
+      [id],
+      options,
+      { ...context, organizationId: randomUUID() },
+      new AbortController().signal,
+    ),
+  );
+  await assert.rejects(
+    tool.execute(
+      "refund",
+      [id],
+      options,
+      { ...context, publicAccess: true },
+      new AbortController().signal,
+    ),
+  );
+});

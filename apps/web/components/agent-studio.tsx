@@ -79,6 +79,8 @@ export type Config = {
     usageInstructions?: string;
   };
   rag: {
+    answerSourcePolicy?: "balanced" | "prefer_approved_qa";
+    qaMinScore?: number;
     queryRewrite?: boolean;
     rerank?: boolean;
     rerankerId?: string | null;

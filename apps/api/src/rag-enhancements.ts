@@ -1,3 +1,7 @@
+import {
+  selectEvidence,
+  preferredQa,
+} from "@agentconnect/rag/answer-source-policy";
 import { observe, observationContent } from "./ai-tracing.js";
 import {
   ProviderError,
@@ -181,7 +185,7 @@ export async function enhancedRetrieval(
       for (const source of [sources[i], original[i]])
         if (source && !merged.has(source.chunkId))
           merged.set(source.chunkId, source);
-    sources = [...merged.values()].slice(0, candidateCount);
+    sources = selectEvidence([...merged.values()], options, candidateCount);
   }
   sources = sources.map((s, i) => ({ ...s, id: i + 1 }));
   diagnostics.candidates = sources.length;
@@ -246,7 +250,19 @@ export async function enhancedRetrieval(
         error instanceof ProviderError ? error.code : "RERANK_UNAVAILABLE";
     }
   } else if (options.rerank) diagnostics.rerank = "no_candidates";
-  diagnostics.selectedChunks = Math.min(sources.length, options.topK);
+  const selected = selectEvidence(sources, options, options.topK);
+  diagnostics.selectedChunks = selected.length;
+  const authority = {
+    answerSourcePolicy: options.answerSourcePolicy ?? "balanced",
+    approvedQaMatches: sources.filter((s) => preferredQa(s, options)).length,
+    selectedApprovedQa: selected.filter((s) => preferredQa(s, options)).length,
+    sourceSelection:
+      options.answerSourcePolicy !== "prefer_approved_qa"
+        ? "balanced"
+        : selected.some((s) => preferredQa(s, options))
+          ? "approved_qa"
+          : "document_fallback",
+  };
   return {
     ...(context.onStage
       ? {
@@ -261,9 +277,7 @@ export async function enhancedRetrieval(
           },
         }
       : {}),
-    sources: sources
-      .slice(0, options.topK)
-      .map((s, i) => ({ ...s, id: i + 1 })),
-    diagnostics,
+    sources: selected.map((s, i) => ({ ...s, id: i + 1 })),
+    diagnostics: { ...diagnostics, ...authority },
   };
 }

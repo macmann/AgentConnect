@@ -321,6 +321,15 @@ test("Configure preserves a single draft across sections, validates locally, pre
   await page
     .getByLabel("Usage instructions", { exact: true })
     .fill("Skip greetings; search policies");
+  await expect(
+    page.getByLabel("Answer source policy", { exact: true }),
+  ).toHaveValue("balanced");
+  await page
+    .getByLabel("Answer source policy", { exact: true })
+    .selectOption("prefer_approved_qa");
+  await page
+    .getByLabel("Approved Q&A minimum relevance", { exact: true })
+    .fill("0.85");
   await section(page, "Tools");
   await page
     .getByLabel("Usage policy", { exact: true })
@@ -353,6 +362,8 @@ test("Configure preserves a single draft across sections, validates locally, pre
     rag: {
       ...config.rag,
       minScore: 0.45,
+      answerSourcePolicy: "prefer_approved_qa",
+      qaMinScore: 0.85,
       rerankerId: null,
       rerankMaxOutputTokens: 1024,
       usageMode: "automatic",

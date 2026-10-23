@@ -66,6 +66,9 @@ You can close the upload form or switch knowledge bases while transfers continue
 4. In **Knowledge**, attach the prepared knowledge base. Select hybrid/vector/text retrieval and enable citations if your answers must show evidence.
 5. Set the knowledge usage policy. **Automatic** decides relevance using your instructions; **Always** searches attached knowledge for every message; **Never retrieve** retains the attachment but skips retrieval. Automatic tolerates wrapped JSON and repairs an invalid decision once; persistent formatting failures fall back to normal retrieval rather than failing the chat.
 6. Add usage instructions such as: “Search knowledge for policies and procedures; skip greetings and thanks.”
+
+   Under **Retrieval → Answer source policy**, choose **Prefer approved Q&A** to make matching published Q&A the primary evidence. Documents supply supporting details, or answer on their own when no approved Q&A passes the relevance threshold (default 0.75). Calibrate the threshold with representative questions. Publish a knowledge release containing reviewed Q&A first; merely adding a ready Q&A or a Quality Lab golden question does not approve it for this policy. **Balanced retrieval** preserves existing behavior. Start a new Playground chat after saving.
+
 7. In **Behavior**, choose response creativity and conversation memory. Use advanced settings only when needed; respect the configured model’s supported values and output budget.
 8. In **Experience**, configure the welcome message, fallback response and conversation starters. Enable rich response components only for the formats you want.
 9. Save the draft, then use **Save and test in Playground** or open Playground.

@@ -648,6 +648,54 @@ export function KnowledgeSection(p: SectionProps) {
       />
       <UsagePolicy {...p} kind="rag" />
       <Group title="Retrieval">
+        <Field
+          field="config.rag.answerSourcePolicy"
+          label="Answer source policy"
+          issues={p.issues}
+          help="Balanced ranks all eligible knowledge together. Prefer approved Q&A searches published Q&A snapshots first, keeps matching approved answers ahead of documents after reranking, and uses documents for supporting details or when no approved Q&A matches. Evaluation golden questions are not runtime knowledge."
+        >
+          {(a) => (
+            <select
+              {...a}
+              value={c.rag.answerSourcePolicy ?? "balanced"}
+              onChange={(e) =>
+                config(p, "rag", {
+                  ...c.rag,
+                  answerSourcePolicy: e.target.value as
+                    "balanced" | "prefer_approved_qa",
+                })
+              }
+            >
+              <option value="balanced">Balanced retrieval</option>
+              <option value="prefer_approved_qa">Prefer approved Q&A</option>
+            </select>
+          )}
+        </Field>
+        {c.rag.answerSourcePolicy === "prefer_approved_qa" && (
+          <Field
+            field="config.rag.qaMinScore"
+            label="Approved Q&A minimum relevance"
+            issues={p.issues}
+            help="Minimum semantic similarity for an approved Q&A to become primary evidence (0–1). Calibrate this threshold using your embedding model and test questions. Below it, only document passages are used. With two or more retrieved passages, one place is reserved for supporting documents when available."
+          >
+            {(a) => (
+              <input
+                {...a}
+                type="number"
+                min={0}
+                max={1}
+                step={0.01}
+                value={c.rag.qaMinScore ?? 0.75}
+                onChange={(e) =>
+                  config(p, "rag", {
+                    ...c.rag,
+                    qaMinScore: Number(e.target.value),
+                  })
+                }
+              />
+            )}
+          </Field>
+        )}
         <Field field="config.rag.mode" label="Retrieval mode" issues={p.issues}>
           {(a) => (
             <select

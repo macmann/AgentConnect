@@ -679,7 +679,7 @@ async function streamChat(
                 : toolsResult.outputTokens + knowledgePlan.outputTokens;
             const grounding =
               continuation.grounding +
-              (sources.length ? groundedPrompt(sources) : "") +
+              (sources.length ? groundedPrompt(sources, c.rag) : "") +
               toolsResult.grounding +
               (c.generative.enabled
                 ? generativePrompt() +
@@ -690,7 +690,7 @@ async function streamChat(
               c,
               model,
               messages,
-              sources.length ? groundedPrompt(sources) : "",
+              sources.length ? groundedPrompt(sources, c.rag) : "",
               toolsResult.grounding,
               continuation.grounding,
             );
@@ -841,7 +841,7 @@ async function streamChat(
               await tx`INSERT INTO generated_artifacts(id,organization_id,workspace_id,message_id,name,content_type,storage_key,byte_size) VALUES (${a.id},${conversation.organization_id},${conversation.workspace_id},${messageId},${a.name},${a.contentType},${a.key},${a.byteSize})`;
             if (status === "completed" && newSummary)
               await tx`UPDATE conversations SET context_summary=${tx.json({ text: newSummary, updatedAt: new Date().toISOString(), tokenizer: c.contextControls.tokenizer, beforeTime: (fitted.removed.at(-1) as (typeof rows)[number] | undefined)?.created_at?.toISOString(), beforeId: (fitted.removed.at(-1) as (typeof rows)[number] | undefined)?.id })} WHERE id=${conversation.id}`;
-            await tx`UPDATE agent_runs SET context_breakdown=${tx.json(breakdown ?? componentPreview(c, model, messages, sources.length ? groundedPrompt(sources) : "", "", continuation.grounding))} WHERE id=${runId}`;
+            await tx`UPDATE agent_runs SET context_breakdown=${tx.json(breakdown ?? componentPreview(c, model, messages, sources.length ? groundedPrompt(sources, c.rag) : "", "", continuation.grounding))} WHERE id=${runId}`;
             if (status === "completed")
               await tx`UPDATE conversations SET journey_state=${tx.json(journey!.state as never)} WHERE id=${conversation.id}`;
             if (
