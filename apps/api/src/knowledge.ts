@@ -1,7 +1,7 @@
 import { registerExtractionReview } from "./knowledge-review.js";
 import { registerKnowledgeReleases } from "./knowledge-releases.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import multipart from "@fastify/multipart";
 import { z } from "zod";
 import { stringify } from "csv-stringify/sync";
@@ -85,8 +85,8 @@ export async function addSource(
   metadata: Record<string, unknown>,
   sourceUrl: string | null = null,
   transaction?: import("postgres").TransactionSql,
+  sourceId: string = randomUUID(),
 ) {
-  const sourceId = randomUUID();
   const key = bytes
     ? `${kb.organization_id}/${kb.workspace_id}/${kb.id}/${sourceId}/1/input`
     : null;
@@ -386,11 +386,61 @@ export async function registerKnowledgeRoutes(
       const bytes = await file.toBuffer();
       if (file.file.truncated || !bytes.length)
         throw new HttpError(400, "Document is empty or exceeds 10 MB");
-      return reply
-        .code(202)
-        .send(
-          await addSource(r, kb, u.id, "upload", filename, bytes, filename, {}),
+      const rawKey = r.headers["idempotency-key"];
+      if (rawKey === undefined)
+        return reply
+          .code(202)
+          .send(
+            await addSource(
+              r,
+              kb,
+              u.id,
+              "upload",
+              filename,
+              bytes,
+              filename,
+              {},
+            ),
+          );
+      const uploadKey = z.uuid().parse(rawKey),
+        digest = createHash("sha256").update(bytes).digest("hex");
+      const result = await sql.begin(async (tx) => {
+        // Lock across API instances, including requests whose first response
+        // was lost. The existing source ID is the durable retry identity.
+        await tx`SELECT pg_advisory_xact_lock(hashtextextended(${"knowledge-upload:" + uploadKey},0))`;
+        const [existing] =
+          await tx`SELECT id,knowledge_base_id,workspace_id,organization_id,metadata,filename,status FROM knowledge_sources WHERE id=${uploadKey}`;
+        if (existing) {
+          if (
+            existing.knowledge_base_id !== kb.id ||
+            existing.workspace_id !== kb.workspace_id ||
+            existing.organization_id !== kb.organization_id ||
+            existing.metadata.uploadUserId !== u.id ||
+            existing.metadata.uploadDigest !== digest ||
+            existing.filename !== filename ||
+            existing.status === "deleted"
+          )
+            throw new HttpError(
+              409,
+              "Upload key is already used. Select the file again to start a new upload.",
+            );
+          return { id: existing.id, status: existing.status };
+        }
+        return addSource(
+          r,
+          kb,
+          u.id,
+          "upload",
+          filename,
+          bytes,
+          filename,
+          { uploadUserId: u.id, uploadDigest: digest },
+          null,
+          tx,
+          uploadKey,
         );
+      });
+      return reply.code(202).send(result);
     },
   );
   app.post(

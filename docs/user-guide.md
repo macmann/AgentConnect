@@ -47,6 +47,14 @@ A queued source needs the background worker. A failed source needs its error res
 
 For approval-required knowledge, review and publish a knowledge release. Reviewed content is a snapshot; changing a source does not silently replace an approved release. See [RAG](rag.md) and [banking AI](bank-core-ai.md) for review settings and limitations.
 
+### Upload multiple documents
+
+Choose **Upload document**, select up to **100 files**, and click **Start uploads**. Each file can be up to **10 MB**. The queue sends two files at a time by default; change **Simultaneous uploads** to 1–3 to control transfer load. Files are ingested asynchronously by the existing background worker after the server receives them.
+
+The queue shows each file’s transfer progress, errors and ingestion status when its knowledge base is selected. Pause stops new transfers while active transfers finish. Retry failed files individually or together; a retry uses the same upload key to avoid duplicate sources if a response was lost. Invalid or oversized files do not stop the other uploads. Cancel stops pending transfers; if the server already received a file, its source and ingestion job may still exist.
+
+You can close the upload form or switch knowledge bases while transfers continue. Each file keeps its original destination. Keep the Knowledge page open until transfers finish: unfinished browser uploads do not survive closing/reloading the page, signing out or leaving Knowledge. A warning appears before leaving. Files already received continue ingestion independently. **Clear finished files** removes queue entries, not uploaded sources. Resolve ingestion failures in **Sources**, separately from transfer retries.
+
 ## Create a RAG agent
 
 1. Open **Agents** and create an agent.
@@ -345,8 +353,18 @@ For **Tool test** or explicit workflow tool nodes that receive user-supplied num
 {
   "operation": "percentage_change",
   "operands": [
-    { "label": "Current revenue", "value": "1,250.00", "unit": "MMK", "scale": "1" },
-    { "label": "Previous revenue", "value": "1,000.00", "unit": "MMK", "scale": "1" }
+    {
+      "label": "Current revenue",
+      "value": "1,250.00",
+      "unit": "MMK",
+      "scale": "1"
+    },
+    {
+      "label": "Previous revenue",
+      "value": "1,000.00",
+      "unit": "MMK",
+      "scale": "1"
+    }
   ],
   "precision": 2
 }
