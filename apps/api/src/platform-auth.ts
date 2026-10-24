@@ -10,7 +10,9 @@ export type PlatformKey = {
   created_by: string;
   agent_id: string | null;
   knowledge_base_id: string | null;
-  scope: "agent:execute" | "agent:invoke" | "knowledge:search";
+  workflow_id?: string | null;
+  scope:
+    "agent:execute" | "agent:invoke" | "knowledge:search" | "workflow:execute";
   details_enabled: boolean;
 };
 const principals = new WeakMap<FastifyRequest, PlatformKey>();
@@ -37,16 +39,22 @@ export async function platformKey(r: FastifyRequest): Promise<PlatformKey> {
     throw new HttpError(401, "A scoped platform API key is required");
   const [key] = await sql<
     PlatformKey[]
-  >`SELECT k.id,k.workspace_id,k.organization_id,k.created_by,k.agent_id,k.knowledge_base_id,k.scope,k.details_enabled FROM workspace_api_keys k JOIN users u ON u.id=k.created_by WHERE k.token_hash=${digest(header.slice(7))} AND k.revoked_at IS NULL AND k.expires_at>now() AND (${!config.REQUIRE_EMAIL_VERIFICATION} OR u.verified_at IS NOT NULL)`;
+  >`SELECT k.id,k.workspace_id,k.organization_id,k.created_by,k.agent_id,k.knowledge_base_id,k.workflow_id,k.scope,k.details_enabled FROM workspace_api_keys k JOIN users u ON u.id=k.created_by WHERE k.token_hash=${digest(header.slice(7))} AND k.revoked_at IS NULL AND k.expires_at>now() AND (${!config.REQUIRE_EMAIL_VERIFICATION} OR u.verified_at IS NOT NULL)`;
   if (!key) throw new HttpError(401, "API key expired, revoked or unavailable");
   await workspaceAccess(
     key.created_by,
     key.workspace_id,
-    key.agent_id ? "agent:execute" : "knowledge:read",
+    key.workflow_id
+      ? "workflow:execute"
+      : key.agent_id
+        ? "agent:execute"
+        : "knowledge:read",
   );
-  const rows = key.agent_id
-    ? await sql`SELECT id FROM agents WHERE id=${key.agent_id} AND workspace_id=${key.workspace_id} AND organization_id=${key.organization_id} AND archived_at IS NULL`
-    : await sql`SELECT id FROM knowledge_bases WHERE id=${key.knowledge_base_id!} AND workspace_id=${key.workspace_id} AND organization_id=${key.organization_id} AND archived_at IS NULL`;
+  const rows = key.workflow_id
+    ? await sql`SELECT id FROM workflows WHERE id=${key.workflow_id} AND workspace_id=${key.workspace_id} AND organization_id=${key.organization_id} AND archived_at IS NULL`
+    : key.agent_id
+      ? await sql`SELECT id FROM agents WHERE id=${key.agent_id} AND workspace_id=${key.workspace_id} AND organization_id=${key.organization_id} AND archived_at IS NULL`
+      : await sql`SELECT id FROM knowledge_bases WHERE id=${key.knowledge_base_id!} AND workspace_id=${key.workspace_id} AND organization_id=${key.organization_id} AND archived_at IS NULL`;
   if (!rows.length) throw new HttpError(404, "Scoped resource unavailable");
   await sql`UPDATE workspace_api_keys SET last_used_at=now() WHERE id=${key.id}`;
   principals.set(r, key);
@@ -54,7 +62,7 @@ export async function platformKey(r: FastifyRequest): Promise<PlatformKey> {
 }
 export function requirePlatformScope(
   key: PlatformKey,
-  scope: "agent:execute" | "knowledge:search",
+  scope: "agent:execute" | "knowledge:search" | "workflow:execute",
   resourceId: string,
   details = false,
 ) {
@@ -63,8 +71,11 @@ export function requirePlatformScope(
       key.scope === scope ||
       (scope === "agent:execute" && key.scope === "agent:invoke")
     ) ||
-    (scope === "agent:execute" ? key.agent_id : key.knowledge_base_id) !==
-      resourceId
+    (scope === "workflow:execute"
+      ? key.workflow_id
+      : scope === "agent:execute"
+        ? key.agent_id
+        : key.knowledge_base_id) !== resourceId
   )
     throw new HttpError(403, "Resource is outside this API key’s scope");
   if (details && !key.details_enabled)

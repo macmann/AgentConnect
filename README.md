@@ -265,3 +265,5 @@ Knowledge bases can optionally enable advanced processing for documents with com
 Set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` in both API and worker environments, then restart both services. Agent turns and workflow executions export linked retrieval, tool and model observations with timings, usage and safe failures. Content is opt-in with `LANGFUSE_CAPTURE_CONTENT=true`. See [Langfuse setup and trace guide](docs/langfuse.md).
 
 Agents support automatic response language matching or a fixed language under **Configure → Overview → Locale**. New studio agents match the user by default; existing agents retain their fixed setting. See the [response-language guide](docs/user-guide.md#response-language).
+
+Workflows support typed inputs, server-side API invocation and timezone-aware scheduled execution. Use the canvas Input node to define fields and **Triggers** to configure automation. Apply migration **0041** and restart API, worker and web. See the [workflow trigger guide](docs/workflow-triggers.md).

@@ -17,8 +17,9 @@ export function PlatformKeyForm({
     label: string;
     agentId?: string;
     knowledgeBaseId?: string;
+    workflowId?: string;
     detailsEnabled: boolean;
-    scope: "agent:invoke" | "knowledge:search";
+    scope: "agent:invoke" | "knowledge:search" | "workflow:execute";
     expiresInDays: number;
   }) => void;
 }) {
@@ -31,12 +32,25 @@ export function PlatformKeyForm({
       ),
     enabled: resourceType === "knowledge",
   });
-  const resources = resourceType === "agent" ? agents : (bases.data ?? []);
+  const workflows = useQuery({
+    queryKey: ["platform-key-workflows", workspaceId],
+    queryFn: () =>
+      requestJson<{ id: string; name: string }[]>(
+        `/workspaces/${workspaceId}/workflows`,
+      ),
+    enabled: resourceType === "workflow",
+  });
+  const resources =
+    resourceType === "workflow"
+      ? (workflows.data ?? [])
+      : resourceType === "agent"
+        ? agents
+        : (bases.data ?? []);
   return (
     <>
       <h4>Platform API & MCP keys</h4>
       <p className="muted">
-        Connect an application to one agent or knowledge base.
+        Connect an application to one agent, knowledge base or workflow.
       </p>
       <form
         className="form-grid platform-key-form"
@@ -47,10 +61,16 @@ export function PlatformKeyForm({
             label: String(data.get("label")),
             ...(resourceType === "agent"
               ? { agentId: String(data.get("resource")) }
-              : { knowledgeBaseId: String(data.get("resource")) }),
+              : resourceType === "workflow"
+                ? { workflowId: String(data.get("resource")) }
+                : { knowledgeBaseId: String(data.get("resource")) }),
             detailsEnabled: data.get("details") === "on",
             scope:
-              resourceType === "agent" ? "agent:invoke" : "knowledge:search",
+              resourceType === "workflow"
+                ? "workflow:execute"
+                : resourceType === "agent"
+                  ? "agent:invoke"
+                  : "knowledge:search",
             expiresInDays: Number(data.get("days")),
           });
         }}
@@ -67,19 +87,34 @@ export function PlatformKeyForm({
           >
             <option value="agent">Agent invocation</option>
             <option value="knowledge">Knowledge search</option>
+            <option value="workflow">Workflow execution (REST)</option>
           </select>
         </label>
         <label>
-          {resourceType === "agent" ? "Agent" : "Knowledge base"}
+          {resourceType === "workflow"
+            ? "Workflow"
+            : resourceType === "agent"
+              ? "Agent"
+              : "Knowledge base"}
           <select
             name="resource"
-            aria-label={resourceType === "agent" ? "Agent" : "Knowledge base"}
+            aria-label={
+              resourceType === "workflow"
+                ? "Workflow"
+                : resourceType === "agent"
+                  ? "Agent"
+                  : "Knowledge base"
+            }
             required
             key={resourceType}
           >
             <option value="">
               Select{" "}
-              {resourceType === "agent" ? "an agent" : "a knowledge base"}
+              {resourceType === "workflow"
+                ? "a workflow"
+                : resourceType === "agent"
+                  ? "an agent"
+                  : "a knowledge base"}
             </option>
             {resources.map((r) => (
               <option key={r.id} value={r.id}>
@@ -112,12 +147,20 @@ export function PlatformKeyForm({
             and can be revoked.
           </HelpTooltip>
         </div>
+        {workflows.error && resourceType === "workflow" && (
+          <p className="error-text">{workflows.error.message}</p>
+        )}
         {bases.error && resourceType === "knowledge" && (
           <p className="error-text">{bases.error.message}</p>
         )}
         {!resources.length && !bases.isLoading && (
           <p className="muted">
-            Create {resourceType === "agent" ? "an agent" : "a knowledge base"}{" "}
+            Create{" "}
+            {resourceType === "workflow"
+              ? "a workflow"
+              : resourceType === "agent"
+                ? "an agent"
+                : "a knowledge base"}{" "}
             before issuing a key.
           </p>
         )}
@@ -133,10 +176,11 @@ export function PlatformKeyForm({
           REST: <code>{apiBase}/api/v1/resources</code>
         </p>
         <p>
-          MCP (Streamable HTTP): <code>{apiBase}/mcp</code>
+          Agents and knowledge MCP (Streamable HTTP): <code>{apiBase}/mcp</code>
         </p>
         <p>
-          Agents use published versions; publish a version before calling.
+          Agents and workflows use published versions; publish before calling.
+          Workflows use the REST run endpoints with an Idempotency-Key header.
           Conversation IDs are bound to the issuing key. Add{" "}
           <code>includeDetails: true</code> to requests when the key allows
           details. Existing streaming chat integrations continue to work.

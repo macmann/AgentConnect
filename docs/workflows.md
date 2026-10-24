@@ -49,3 +49,7 @@ Configure the Output node's **Result title**, **Result description** and **Resul
 Migration **0029** adds node attempt counters, retry history and scheduled retry time. Run `pnpm db:migrate` and restart API, web and worker. Published graph snapshots remain immutable; existing versions receive safe defaults when read.
 
 Nested branching within parallel paths, subworkflow nodes, collaborative editing and additional node types remain later extensions.
+
+## Typed inputs and automation triggers
+
+Select the Input node to define named text, number, boolean or JSON fields, with required flags and defaults. Manual tests generate a form from the selected version; workflows without fields retain text input. The **Triggers** activity configures timezone-aware daily/weekly/custom cron schedules with version pinning, overlap policies, downtime recovery, preview and pause/resume. Operations can issue workflow-scoped REST API keys for idempotent asynchronous invocation and key-bound results. See [workflow triggers](workflow-triggers.md) for API requests, limits, upgrade and troubleshooting.

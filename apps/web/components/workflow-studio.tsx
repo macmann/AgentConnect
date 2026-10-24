@@ -1,4 +1,7 @@
 "use client";
+import { WorkflowTriggers } from "./workflow-triggers";
+import { WorkflowInputEditor, WorkflowRunFields } from "./workflow-inputs";
+import { normalizeWorkflowInput } from "@agentconnect/schemas/workflows";
 import { WorkflowComponentLibrary } from "./workflow-component-library";
 import { WorkflowCanvasToolbar } from "./workflow-canvas-toolbar";
 import { workflowNodeTypes, type CanvasNode } from "./workflow-canvas-node";
@@ -122,6 +125,7 @@ const edge = (
 });
 const emptyGraph = (): WorkflowGraph => ({
   schemaVersion: 1,
+  inputFields: [],
   nodes: [
     makeNode("input", "input", 40, 150),
     makeNode("output", "output", 460, 150),
@@ -199,7 +203,9 @@ export function WorkflowStudio({
   const [testAttempted, setTestAttempted] = useState(false);
   const editor = useRef<HTMLDivElement>(null);
   const [wizard, setWizard] = useState(false);
-  const [stage, setStage] = useState<"build" | "test" | "publish">("build");
+  const [stage, setStage] = useState<"build" | "test" | "publish" | "triggers">(
+    "build",
+  );
   const [draft, setDraft] = useState<Draft | null>(null),
     [saved, setSaved] = useState(""),
     [selected, setSelected] = useState(""),
@@ -228,9 +234,15 @@ export function WorkflowStudio({
   const runs = useQuery({
     queryKey: ["workflow-runs", draft?.id],
     queryFn: () =>
-      requestJson<{ id: string; status: string; created_at: string }[]>(
-        `/workflows/${draft?.id}/runs`,
-      ),
+      requestJson<
+        {
+          id: string;
+          status: string;
+          created_at: string;
+          schedule_id?: string;
+          api_trigger?: boolean;
+        }[]
+      >(`/workflows/${draft?.id}/runs`),
     enabled: !!draft?.id,
     refetchInterval: (q) =>
       q.state.data?.some((r) =>
@@ -443,7 +455,7 @@ export function WorkflowStudio({
       skipFit.current = false;
       return;
     }
-    if (stage === "publish" || wizard) return;
+    if (stage === "publish" || stage === "triggers" || wizard) return;
     requestAnimationFrame(() => {
       const width =
         editor.current
@@ -667,6 +679,7 @@ export function WorkflowStudio({
     }
     const graph = layout({
       schemaVersion: 1,
+      inputFields: [],
       nodes: [
         makeNode("input", "input", 0, 0),
         makeNode("research", "agent", 0, 0, {
@@ -776,7 +789,21 @@ export function WorkflowStudio({
           ? ["Save your draft changes before testing."]
           : []),
         ...(!versionId ? validation : []),
-        ...(!runInput.trim() ? ["Enter workflow input before testing."] : []),
+        ...(() => {
+          try {
+            const graph = versionId
+              ? versions.data?.find((v) => v.id === versionId)?.graph
+              : draft.graph;
+            if (graph)
+              normalizeWorkflowInput(
+                graph,
+                runInput || (graph.inputFields?.length ? "{}" : ""),
+              );
+            return [];
+          } catch (e) {
+            return [(e as Error).message];
+          }
+        })(),
       ]
     : ["Create or select a workflow before testing."];
   useEffect(() => {
@@ -805,7 +832,14 @@ export function WorkflowStudio({
           `/workflows/${draft.id}/runs`,
           "POST",
           {
-            input: runInput,
+            input:
+              runInput ||
+              ((versionId
+                ? versions.data?.find((v) => v.id === versionId)?.graph
+                : draft.graph
+              )?.inputFields?.length
+                ? "{}"
+                : ""),
             ...(versionId ? { versionId } : { revision: draft.revision }),
           },
         );
@@ -975,23 +1009,27 @@ export function WorkflowStudio({
               role="group"
               aria-label="Workflow activities"
             >
-              {(["build", "test", "publish"] as const).map((item) => (
-                <button
-                  type="button"
-                  key={item}
-                  aria-pressed={stage === item}
-                  onClick={() => {
-                    setStage(item);
-                    if (item === "test") setTestOpen(true);
-                  }}
-                >
-                  {item === "build"
-                    ? "Build"
-                    : item === "test"
-                      ? "Test"
-                      : "Publish"}
-                </button>
-              ))}
+              {(["build", "test", "publish", "triggers"] as const).map(
+                (item) => (
+                  <button
+                    type="button"
+                    key={item}
+                    aria-pressed={stage === item}
+                    onClick={() => {
+                      setStage(item);
+                      if (item === "test") setTestOpen(true);
+                    }}
+                  >
+                    {item === "build"
+                      ? "Build"
+                      : item === "test"
+                        ? "Test"
+                        : item === "publish"
+                          ? "Publish"
+                          : "Triggers"}
+                  </button>
+                ),
+              )}
               <span role="status">
                 {dirty
                   ? "Unsaved changes"
@@ -1096,7 +1134,7 @@ export function WorkflowStudio({
                 </div>
               )}
             </div>
-            <div hidden={stage === "publish"}>
+            <div hidden={stage === "publish" || stage === "triggers"}>
               <div
                 ref={editor}
                 role={expanded ? "dialog" : undefined}
@@ -1397,7 +1435,10 @@ export function WorkflowStudio({
                               <select
                                 disabled={activeRun}
                                 value={versionId}
-                                onChange={(e) => setVersion(e.target.value)}
+                                onChange={(e) => {
+                                  setVersion(e.target.value);
+                                  setRunInput("");
+                                }}
                               >
                                 <option value="">Saved draft</option>
                                 {versions.data?.map((v) => (
@@ -1407,15 +1448,19 @@ export function WorkflowStudio({
                                 ))}
                               </select>
                             </label>
-                            <label>
-                              Workflow input
-                              <textarea
-                                required
-                                value={runInput}
-                                onChange={(e) => setRunInput(e.target.value)}
-                                maxLength={12000}
-                              />
-                            </label>
+                            <WorkflowRunFields
+                              key={`${draft.id}-${versionId}`}
+                              fields={
+                                (versionId
+                                  ? versions.data?.find(
+                                      (v) => v.id === versionId,
+                                    )?.graph
+                                  : draft.graph
+                                )?.inputFields ?? []
+                              }
+                              value={runInput}
+                              onChange={setRunInput}
+                            />
                             <Button type="submit" disabled={busy || activeRun}>
                               Run workflow
                             </Button>
@@ -1431,6 +1476,11 @@ export function WorkflowStudio({
                               onClick={() => setRun(r.id)}
                             >
                               Run {r.id.slice(0, 8)} · {r.status}
+                              {r.schedule_id
+                                ? " · Scheduled"
+                                : r.api_trigger
+                                  ? " · API"
+                                  : ""}
                             </Button>
                           ))}
                         </div>
@@ -1677,6 +1727,15 @@ export function WorkflowStudio({
                           node={current}
                           onChange={updateNode}
                         />
+                        {current.type === "input" && (
+                          <WorkflowInputEditor
+                            fields={draft.graph.inputFields}
+                            disabled={!build || !canvasEditable}
+                            onChange={(inputFields) =>
+                              change({ ...draft.graph, inputFields })
+                            }
+                          />
+                        )}
                         {current.type === "agent" && (
                           <>
                             <label>
@@ -1945,6 +2004,15 @@ export function WorkflowStudio({
                 </HelpTooltip>
               </div>
             </div>
+            {stage === "triggers" && draft.id && (
+              <WorkflowTriggers
+                key={draft.id}
+                workflowId={draft.id}
+                workspaceId={workspaceId}
+                versions={versions.data ?? []}
+                canManage={build}
+              />
+            )}
             <div hidden={stage !== "publish"}>
               <div className="publish-heading">
                 <div>

@@ -231,3 +231,10 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 - **Bulk metadata and optional AI tagging:** shared metadata on single/bulk uploads, retry-stable options, previews and atomic 100-source patches, optional workspace-model tagging jobs, and per-source reviewed application with stale-edit protection.
 
 See the [metadata tagging guide](metadata-tagging.md) for upload, bulk editing, AI review and filter examples.
+
+## Workflow automation
+
+- Typed named workflow inputs with defaults, required fields and generated test forms, preserving legacy text workflows.
+- Scoped workflow REST keys, published-version invocation, request idempotency, asynchronous results and opt-in execution details.
+- Durable daily, weekly and custom cron schedules with IANA timezones, next-run previews, pause/resume, overlap and missed-run policies, concurrency-safe occurrence deduplication and current-principal permission checks.
+- See [workflow triggers](workflow-triggers.md) for setup and limits.

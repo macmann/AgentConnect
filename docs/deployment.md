@@ -101,3 +101,7 @@ See [release packaging and rollout](releases.md) for digest-pinned images, valid
 Run `pnpm db:migrate` before starting the upgraded API and worker. Migration **0039** adds source-metadata indexes; **0040** adds the background AI metadata-suggestion queue. Restart both services, or deploy matching new images. No additional environment variable is required.
 
 AI tagging is optional and disabled by default. Its selected registered workspace model needs a valid workspace credential and an endpoint permitted by the worker’s existing model-host and outbound-network configuration. Check the `metadata_tagging` worker task when suggestions remain queued. Review is required before suggestions change retrieval metadata. See the [operations and troubleshooting guide](metadata-tagging.md).
+
+## Workflow automation upgrade
+
+Workflow API keys and schedules require migration **0041** and matching API, worker and web releases. Run `pnpm db:migrate` before restarting services. There is no additional cron service or environment key: the worker executes the `workflow_schedule` task and queues runs into the existing durable workflow runner. Include that task in worker-health checks. See [workflow trigger operation](workflow-triggers.md#operation-and-troubleshooting) for skip policies, access failures and deduplication behavior.

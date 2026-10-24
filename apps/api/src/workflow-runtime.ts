@@ -1,3 +1,4 @@
+import { workspaceAccess } from "./app.js";
 import { context } from "@opentelemetry/api";
 import {
   observe,
@@ -52,6 +53,8 @@ export type WorkflowRun = {
   user_id: string | null;
   conversation_id?: string | null;
   customer_action_id?: string | null;
+  api_key_id?: string | null;
+  schedule_id?: string | null;
   graph_snapshot: WorkflowGraph;
   input: string;
   status: string;
@@ -123,7 +126,8 @@ function nodeInput(
   graph: WorkflowGraph,
   state: GraphState,
 ) {
-  if (node.type === "input") return state.input;
+  if (node.type === "input")
+    return graph.inputFields.length ? JSON.parse(state.input) : state.input;
   if (node.data.inputFrom) {
     if (!(node.data.inputFrom in state.outputs))
       throw new WorkflowError("WORKFLOW_MAPPING_UNAVAILABLE");
@@ -172,6 +176,31 @@ export async function compileWorkflow(
         },
         async (span) => {
           signal.throwIfAborted();
+          if (run.api_key_id || run.schedule_id) {
+            if (!run.user_id)
+              throw new WorkflowError("WORKFLOW_ACCESS_REVOKED");
+            try {
+              await workspaceAccess(
+                run.user_id,
+                run.workspace_id,
+                "workflow:execute",
+              );
+            } catch {
+              throw new WorkflowError("WORKFLOW_ACCESS_REVOKED");
+            }
+            const [issuer] =
+              await sql`SELECT verified_at FROM users WHERE id=${run.user_id}`;
+            if (
+              !issuer ||
+              (config.REQUIRE_EMAIL_VERIFICATION && !issuer.verified_at)
+            )
+              throw new WorkflowError("WORKFLOW_ACCESS_REVOKED");
+            if (run.api_key_id) {
+              const [key] =
+                await sql`SELECT id FROM workspace_api_keys WHERE id=${run.api_key_id} AND created_by=${run.user_id} AND scope='workflow:execute' AND revoked_at IS NULL AND expires_at>now()`;
+              if (!key) throw new WorkflowError("WORKFLOW_KEY_REVOKED");
+            }
+          }
           const input = nodeInput(node, graph, state),
             started = performance.now();
           observationContent(span, "input", redact(input));
@@ -331,6 +360,13 @@ export async function processWorkflowRun(
         "organization.id": run.organization_id,
         "user.id": run.user_id ?? "anonymous",
         "workflow.attempt": run.attempts,
+        "workflow.trigger": run.schedule_id
+          ? "schedule"
+          : run.api_key_id
+            ? "api"
+            : run.customer_action_id
+              ? "customer"
+              : "manual",
       },
       async (span) => {
         observationContent(span, "input", redact(run.input), true);

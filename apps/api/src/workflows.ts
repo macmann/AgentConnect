@@ -1,3 +1,7 @@
+import {
+  registerWorkflowTriggers,
+  workflowInputText,
+} from "./workflow-triggers.js";
 import { registerWorkflowComponentRoutes } from "./workflow-components.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
@@ -40,6 +44,7 @@ async function ownedRun(
 }
 export async function registerWorkflowRoutes(app: FastifyInstance) {
   await registerWorkflowComponentRoutes(app);
+  await registerWorkflowTriggers(app);
   const schema = (body: z.ZodType) => ({
     schema: { body: z.toJSONSchema(body, { io: "input", target: "draft-7" }) },
     bodyLimit: 200000,
@@ -261,6 +266,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
         },
         true,
       );
+      const input = workflowInputText(graph, data.input);
       const runId = randomUUID();
       await sql.begin(async (tx) => {
         const [active] =
@@ -274,7 +280,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
             429,
             "Workspace has too many active workflow runs",
           );
-        await tx`INSERT INTO workflow_runs(id,workflow_id,version_id,workspace_id,organization_id,user_id,graph_snapshot,input,status) VALUES (${runId},${w.id},${data.versionId ?? null},${w.workspace_id},${w.organization_id},${u.id},${tx.json(graph)},${data.input},'queued')`;
+        await tx`INSERT INTO workflow_runs(id,workflow_id,version_id,workspace_id,organization_id,user_id,graph_snapshot,input,status) VALUES (${runId},${w.id},${data.versionId ?? null},${w.workspace_id},${w.organization_id},${u.id},${tx.json(graph)},${input},'queued')`;
         await audit(
           tx,
           r,
@@ -290,7 +296,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
   );
   app.get("/workflows/:workflowId/runs", async (r) => {
     const { w } = await owned(r, "workflow:read");
-    return sql`SELECT id,version_id,status,error_code,created_at,finished_at FROM workflow_runs WHERE workflow_id=${w.id} ORDER BY created_at DESC LIMIT 50`;
+    return sql`SELECT id,version_id,status,error_code,created_at,finished_at,schedule_id,scheduled_for,(api_key_id IS NOT NULL) AS api_trigger FROM workflow_runs WHERE workflow_id=${w.id} ORDER BY created_at DESC LIMIT 50`;
   });
   app.get("/workflow-runs/:runId", async (r) => {
     const { run } = await ownedRun(r, "workflow:read");

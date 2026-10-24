@@ -447,3 +447,7 @@ For existing files, expand **AI metadata tagging** on a source, or **AI suggesti
 When generation finishes, expand **Review AI metadata suggestions** on each source. Select the suggested tags/fields you want, then **Apply reviewed suggestions**, or reject them. No AI values are applied automatically. Applying adds selected tags and updates selected fields while retaining other values. Samples can miss details in large documents, so verify the suggestions. Changed source content or metadata blocks stale approval: reject and generate again. Published knowledge releases retain their original metadata until you publish a new release.
 
 For step-by-step metadata workflows, limits and troubleshooting, see the [metadata tagging guide](metadata-tagging.md).
+
+### Automate a workflow
+
+Define named inputs on the workflow's Input node, save and publish. Open **Triggers** to create daily/weekly/custom schedules, preview times and choose overlap/downtime behavior. For server integrations, issue a workflow-scoped key in **Operations → API keys**. See [workflow inputs, API and schedules](workflow-triggers.md) for examples and troubleshooting.
