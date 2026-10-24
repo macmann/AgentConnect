@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { ThemeController, ThemeSwitcher } from "../components/theme-switcher";
 export const metadata: Metadata = {
   title: "Agent Connex · Workspace",
   icons: {
@@ -22,13 +21,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           }}
         />
       </head>
-      <body>
-        <ThemeController />
-        <div className="global-theme-control">
-          <ThemeSwitcher />
-        </div>
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
