@@ -1,3 +1,8 @@
+import {
+  resolveWorkflowMapping,
+  workflowToolArguments,
+  WorkflowMappingError,
+} from "@agentconnect/schemas/workflow-mapping";
 import { workspaceAccess } from "./app.js";
 import { context } from "@opentelemetry/api";
 import {
@@ -128,17 +133,7 @@ function nodeInput(
 ) {
   if (node.type === "input")
     return graph.inputFields.length ? JSON.parse(state.input) : state.input;
-  if (node.data.inputFrom) {
-    if (!(node.data.inputFrom in state.outputs))
-      throw new WorkflowError("WORKFLOW_MAPPING_UNAVAILABLE");
-    return state.outputs[node.data.inputFrom];
-  }
-  const values = graph.edges
-    .filter((e) => e.target === node.id)
-    .filter((e) => e.source in state.outputs)
-    .map((e) => [e.source, state.outputs[e.source]] as const);
-  if (!values.length) throw new WorkflowError("WORKFLOW_MAPPING_UNAVAILABLE");
-  return node.type === "merge" ? Object.fromEntries(values) : values[0]![1];
+  return resolveWorkflowMapping(node, graph, state.outputs);
 }
 export async function compileWorkflow(
   run: WorkflowRun,
@@ -201,13 +196,14 @@ export async function compileWorkflow(
               if (!key) throw new WorkflowError("WORKFLOW_KEY_REVOKED");
             }
           }
-          const input = nodeInput(node, graph, state),
-            started = performance.now();
-          observationContent(span, "input", redact(input));
-          if (Buffer.byteLength(JSON.stringify(input)) > 128000)
-            throw new WorkflowError("WORKFLOW_INPUT_LIMIT");
-          await sql`INSERT INTO workflow_node_runs(run_id,node_id,workspace_id,organization_id,label,kind,status,input) VALUES (${run.id},${node.id},${run.workspace_id},${run.organization_id},${node.data.label},${node.type},'running',${sql.json(redact(input) as never)}) ON CONFLICT(run_id,node_id) DO UPDATE SET status='running',error_code=NULL,finished_at=NULL`;
+          const started = performance.now();
+          await sql`INSERT INTO workflow_node_runs(run_id,node_id,workspace_id,organization_id,label,kind,status,input) VALUES (${run.id},${node.id},${run.workspace_id},${run.organization_id},${node.data.label},${node.type},'running',NULL) ON CONFLICT(run_id,node_id) DO UPDATE SET status='running',input=NULL,error_code=NULL,finished_at=NULL`;
           try {
+            const input = nodeInput(node, graph, state);
+            observationContent(span, "input", redact(input));
+            if (Buffer.byteLength(JSON.stringify(input)) > 128000)
+              throw new WorkflowError("WORKFLOW_INPUT_LIMIT");
+            await sql`UPDATE workflow_node_runs SET input=${sql.json(redact(input) as never)} WHERE run_id=${run.id} AND node_id=${node.id}`;
             let output: unknown = input,
               inputTokens: number | null = null,
               outputTokens: number | null = null,
@@ -230,12 +226,7 @@ export async function compileWorkflow(
               citations = result.citations;
             }
             if (node.type === "tool") {
-              const args = {
-                ...node.data.toolArguments,
-                ...(node.data.inputArgument
-                  ? { [node.data.inputArgument]: stringify(input) }
-                  : {}),
-              };
+              const args = workflowToolArguments(node, input);
               output = (
                 await workflowRetry(run.id, node, signal, () =>
                   executeTool(node.data.toolId!, args, nodeCtx, signal),
@@ -320,7 +311,8 @@ export async function compileWorkflow(
   return builder.compile({ checkpointer: await workflowSaver() });
 }
 function errorCode(e: unknown) {
-  return e instanceof WorkflowError ||
+  return e instanceof WorkflowMappingError ||
+    e instanceof WorkflowError ||
     e instanceof ToolError ||
     e instanceof ProviderError ||
     e instanceof KnowledgeError

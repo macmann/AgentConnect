@@ -238,3 +238,5 @@ See the [metadata tagging guide](metadata-tagging.md) for upload, bulk editing, 
 - Scoped workflow REST keys, published-version invocation, request idempotency, asynchronous results and opt-in execution details.
 - Durable daily, weekly and custom cron schedules with IANA timezones, next-run previews, pause/resume, overlap and missed-run policies, concurrency-safe occurrence deduplication and current-principal permission checks.
 - See [workflow triggers](workflow-triggers.md) for setup and limits.
+
+- **Workflow field mapping and inspection:** select nested fields/array items, assemble named agent inputs or typed tool arguments, preview from recorded runs, preserve component/copy references, and inspect individual execution steps directly from the canvas. See [mapping guide](workflow-mapping.md).

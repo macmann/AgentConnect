@@ -415,3 +415,9 @@ Provider fixtures validate integration behavior; these checks do not establish l
 - Lint, all eight package type checks and production builds passed. API readiness verified PostgreSQL, Redis, storage and Temporal. No live hosted-model acceptance is claimed by the trigger tests; they exercise durable orchestration with deterministic inputs.
 - Run backend suites separately from browser suites and stop background workers against their shared development database. Concurrent consumers can claim fixture jobs, and unrelated browser-created runs can be selected by worker tests. The final backend run used isolated fixture execution.
 - Upgrade requires migration **0041** and restarting API, worker and web. No new environment variable or external cron service is needed. See [workflow trigger setup](workflow-triggers.md).
+
+## Workflow field mapping and canvas step inspection
+
+- `pnpm test` passed **526 tests**, without failures or skips. The new coverage checks nested/array/escaped paths, JSON-text outputs, exact scalar types, explicit missing/unsafe-field failures, legacy mappings, ancestor validation, typed tool arguments, reusable-component reference remapping and real persisted workflow execution/failure traces.
+- The browser scenario passed against built API/web services: pick recorded fields, preview values, assemble named fields, display a missing-field error, save, inspect an older run's snapshot by canvas click and keyboard-accessible selection, and check a 390px viewport. Its fixture uses completed run records and does not compete for queued backend-test jobs.
+- Lint, all eight package type checks, production builds, formatting and documentation-link checks passed. No migration or dependency change is required; API, worker and web must be rebuilt/restarted together for new mappings. These checks do not claim live hosted-model acceptance.

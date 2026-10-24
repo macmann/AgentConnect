@@ -12,7 +12,11 @@ export function componentBoundary(graph: WorkflowGraph) {
     throw new Error("Select processing nodes only; exclude Input and Output");
   if (
     graph.edges.some((e) => !ids.has(e.source) || !ids.has(e.target)) ||
-    graph.nodes.some((n) => n.data.inputFrom && !ids.has(n.data.inputFrom))
+    graph.nodes.some(
+      (n) =>
+        (n.data.inputFrom && !ids.has(n.data.inputFrom)) ||
+        n.data.inputBindings?.some((b) => !ids.has(b.source)),
+    )
   )
     throw new Error("Component references must stay inside the selected group");
   const entries = graph.nodes.filter(
@@ -121,6 +125,14 @@ export function insertComponent(
         },
         data: {
           ...n.data,
+          ...(n.data.inputBindings
+            ? {
+                inputBindings: n.data.inputBindings.map((b) => ({
+                  ...b,
+                  source: names.get(b.source)!,
+                })),
+              }
+            : {}),
           ...(n.data.inputFrom
             ? { inputFrom: names.get(n.data.inputFrom) }
             : {}),
