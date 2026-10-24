@@ -1,12 +1,8 @@
 "use client";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 const key = "agent-connex-theme";
 const event = "agent-connex-theme-change";
-function subscribe(listener: () => void) {
-  window.addEventListener(event, listener);
-  return () => window.removeEventListener(event, listener);
-}
 function apply(theme: "light" | "dark") {
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme;
@@ -41,11 +37,19 @@ export function ThemeController() {
   return null;
 }
 export function ThemeSwitcher() {
-  const theme = useSyncExternalStore(
-    subscribe,
-    () => document.documentElement.dataset.theme ?? "light",
-    () => "light",
-  );
+  // Keep the server and initial hydration render identical. The head script
+  // applies the page theme before paint; read it only after mounting.
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+  useEffect(() => {
+    function sync() {
+      setTheme(
+        document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+      );
+    }
+    window.addEventListener(event, sync);
+    sync();
+    return () => window.removeEventListener(event, sync);
+  }, []);
   const target = theme === "dark" ? "light" : "dark";
   return (
     <button
