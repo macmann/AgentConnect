@@ -1,7 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { agentConfig, type AgentConfig } from "@agentconnect/schemas/agents";
-import { workflowGraph } from "@agentconnect/schemas/workflows";
+import {
+  workflowGraph,
+  normalizeWorkflowInput,
+} from "@agentconnect/schemas/workflows";
 import { conversationAccess } from "./channels.js";
 import { actor, workspaceAccess, id, params } from "./app.js";
 import { sql } from "./db.js";
@@ -151,12 +154,22 @@ export async function registerCustomerWorkflows(app: FastifyInstance) {
         );
         const [v] =
           await sql`SELECT * FROM workflow_versions WHERE id=${action.workflowVersionId} AND workspace_id=${c.workspace_id} AND organization_id=${c.organization_id}`;
-        const input = JSON.stringify({
-          request: action.message,
-          ...Object.fromEntries(
-            Object.entries(data.values).sort(([a], [b]) => a.localeCompare(b)),
-          ),
-        });
+        const graph = workflowGraph.parse(v!.graph);
+        let input: string;
+        try {
+          input = graph.inputFields.length
+            ? normalizeWorkflowInput(graph, data.values)
+            : JSON.stringify({
+                request: action.message,
+                ...Object.fromEntries(
+                  Object.entries(data.values).sort(([a], [b]) =>
+                    a.localeCompare(b),
+                  ),
+                ),
+              });
+        } catch (error) {
+          throw new HttpError(400, (error as Error).message);
+        }
         const runStatus = await sql.begin(async (tx) => {
           const [locked] =
             await tx`SELECT conversation_mode FROM conversations WHERE id=${c.id} FOR UPDATE`;

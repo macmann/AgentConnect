@@ -1,3 +1,4 @@
+import { processWorkflowSchedules } from "@agentconnect/api/workflow-triggers";
 import { processMetadataTaggingJob } from "@agentconnect/api/metadata-tagging";
 import { shutdownTelemetry } from "@agentconnect/api/telemetry";
 import {
@@ -94,6 +95,15 @@ await Promise.all([
     "connector_sync",
   ),
   loop(processEvaluationRun, 1000, "Quality evaluation", "evaluation"),
+  loop(
+    async () => {
+      for (let n = 0; n < 20 && !stopping; n++)
+        if (!(await processWorkflowSchedules())) break;
+    },
+    1000,
+    "Workflow schedules",
+    "workflow_schedule",
+  ),
   loop(processWorkflowRun, 1000, "Workflow execution", "workflow"),
   loop(deliverMail, 3000, "Mail delivery", "mail"),
   loop(processWebhookDelivery, 1000, "Webhook delivery", "webhook"),

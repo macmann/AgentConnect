@@ -108,6 +108,7 @@ export const workerTaskNames = [
   "connector_sync",
   "evaluation",
   "workflow",
+  "workflow_schedule",
   "mail",
   "webhook",
   "knowledge",

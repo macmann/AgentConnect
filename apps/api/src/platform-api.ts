@@ -131,14 +131,26 @@ export async function registerPlatformApi(
     options("Describe the resource authorized by this API key"),
     async (r) => {
       const key = await platformKey(r);
-      const [resource] = key.agent_id
-        ? await sql`SELECT id,name,public_description AS description FROM agents WHERE id=${key.agent_id}`
-        : await sql`SELECT id,name,description FROM knowledge_bases WHERE id=${key.knowledge_base_id!}`;
+      const [resource] = key.workflow_id
+        ? await sql`SELECT id,name,description FROM workflows WHERE id=${key.workflow_id}`
+        : key.agent_id
+          ? await sql`SELECT id,name,public_description AS description FROM agents WHERE id=${key.agent_id}`
+          : await sql`SELECT id,name,description FROM knowledge_bases WHERE id=${key.knowledge_base_id!}`;
       return {
         scope: key.scope,
         detailsEnabled: key.details_enabled,
-        type: key.agent_id ? "agent" : "knowledge_base",
+        type: key.workflow_id
+          ? "workflow"
+          : key.agent_id
+            ? "agent"
+            : "knowledge_base",
         resource,
+        ...(key.workflow_id
+          ? {
+              versions:
+                await sql`SELECT id,version,published_at,COALESCE(graph->'inputFields','[]'::jsonb) AS inputs FROM workflow_versions WHERE workflow_id=${key.workflow_id} ORDER BY version DESC LIMIT 100`,
+            }
+          : {}),
       };
     },
   );
@@ -226,6 +238,11 @@ export async function registerPlatformApi(
     async (r, reply) => {
       const key = await platformKey(r);
       const server = new McpServer({ name: "agent-connex", version: "1.0.0" });
+      if (key.workflow_id)
+        throw new HttpError(
+          400,
+          "Workflow keys use the workflow REST run endpoints",
+        );
       if (key.agent_id)
         server.registerTool(
           "agent_invoke",

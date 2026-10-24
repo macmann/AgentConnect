@@ -187,12 +187,18 @@ export async function registerOperationsRoutes(
   });
   app.get("/workspaces/:workspaceId/operations/api-keys", async (r) => {
     const { w } = await context(r, "operations:manage");
-    return sql`SELECT id,label,agent_id,knowledge_base_id,details_enabled,prefix,scope,expires_at,last_used_at,revoked_at FROM workspace_api_keys WHERE workspace_id=${w.id} ORDER BY created_at DESC LIMIT 100`;
+    return sql`SELECT id,label,agent_id,knowledge_base_id,workflow_id,details_enabled,prefix,scope,expires_at,last_used_at,revoked_at FROM workspace_api_keys WHERE workspace_id=${w.id} ORDER BY created_at DESC LIMIT 100`;
   });
   app.post("/workspaces/:workspaceId/operations/api-keys", async (r, reply) => {
     const { u, w } = await context(r, "operations:manage"),
       d = apiKeyInput.parse(r.body);
-    if (d.agentId) {
+    if (d.workflowId) {
+      await workspaceAccess(u.id, w.id, "workflow:execute");
+      const [workflow] =
+        await sql`SELECT id FROM workflows WHERE id=${d.workflowId} AND workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL`;
+      if (!workflow)
+        throw new HttpError(400, "Select a workflow in this workspace");
+    } else if (d.agentId) {
       const [a] =
         await sql`SELECT id FROM agents WHERE id=${d.agentId} AND workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL`;
       if (!a) throw new HttpError(400, "Select an agent in this workspace");
@@ -208,7 +214,7 @@ export async function registerOperationsRoutes(
         Date.now() + d.expiresInDays * 86400000,
       ).toISOString();
     await sql.begin(async (tx) => {
-      await tx`INSERT INTO workspace_api_keys(id,workspace_id,organization_id,agent_id,knowledge_base_id,scope,details_enabled,label,token_hash,prefix,created_by,expires_at) VALUES (${keyId},${w.id},${w.organization_id},${d.agentId ?? null},${d.knowledgeBaseId ?? null},${d.scope ?? (d.agentId ? "agent:execute" : "knowledge:search")},${d.detailsEnabled},${d.label},${digest(raw)},${raw.slice(0, 11)},${u.id},${expiresAt})`;
+      await tx`INSERT INTO workspace_api_keys(id,workspace_id,organization_id,agent_id,knowledge_base_id,workflow_id,scope,details_enabled,label,token_hash,prefix,created_by,expires_at) VALUES (${keyId},${w.id},${w.organization_id},${d.agentId ?? null},${d.knowledgeBaseId ?? null},${d.workflowId ?? null},${d.scope ?? (d.workflowId ? "workflow:execute" : d.agentId ? "agent:execute" : "knowledge:search")},${d.detailsEnabled},${d.label},${digest(raw)},${raw.slice(0, 11)},${u.id},${expiresAt})`;
       await audit(
         tx,
         r,

@@ -42,22 +42,31 @@ export const apiKeyInput = z
     label: z.string().trim().min(1).max(100),
     agentId: z.uuid().optional(),
     knowledgeBaseId: z.uuid().optional(),
+    workflowId: z.uuid().optional(),
     detailsEnabled: z.boolean().default(false),
     scope: z
-      .enum(["agent:execute", "agent:invoke", "knowledge:search"])
+      .enum([
+        "agent:execute",
+        "agent:invoke",
+        "knowledge:search",
+        "workflow:execute",
+      ])
       .optional(),
     expiresInDays: z.number().int().min(1).max(365).default(30),
   })
   .refine(
-    (v) => !!v.agentId !== !!v.knowledgeBaseId,
-    "Select exactly one agent or knowledge base",
+    (v) =>
+      [v.agentId, v.knowledgeBaseId, v.workflowId].filter(Boolean).length === 1,
+    "Select exactly one agent, knowledge base or workflow",
   )
   .refine(
     (v) =>
       !v.scope ||
-      (v.knowledgeBaseId
-        ? v.scope === "knowledge:search"
-        : v.scope !== "knowledge:search"),
+      (v.workflowId
+        ? v.scope === "workflow:execute"
+        : v.knowledgeBaseId
+          ? v.scope === "knowledge:search"
+          : ["agent:execute", "agent:invoke"].includes(v.scope)),
     "Scope must match the selected resource",
   );
 export const webhookInput = z.object({

@@ -53,7 +53,21 @@ export const workflowEdge = z.object({
   target: nodeId,
   sourceHandle: z.enum(["true", "false"]).nullable().optional(),
 });
+export const workflowInputField = z.object({
+  name: z
+    .string()
+    .regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/)
+    .refine(
+      (v) => !["__proto__", "constructor", "prototype"].includes(v),
+      "Reserved field name",
+    ),
+  label: z.string().trim().min(1).max(100),
+  type: z.enum(["text", "number", "boolean", "json"]),
+  required: z.boolean().default(false),
+  defaultValue: z.json().optional(),
+});
 export const workflowGraph = z.object({
+  inputFields: z.array(workflowInputField).max(30).default([]),
   schemaVersion: z.literal(1).default(1),
   nodes: z.array(workflowNode).min(1).max(40),
   edges: z.array(workflowEdge).max(80),
@@ -67,7 +81,10 @@ export const workflowUpdate = workflowInput.extend({
   revision: z.number().int().min(1),
 });
 export const workflowRunInput = z.object({
-  input: z.string().trim().min(1).max(12000),
+  input: z.union([
+    z.string().trim().min(1).max(12000),
+    z.record(z.string(), z.json()),
+  ]),
   versionId: z.uuid().optional(),
   revision: z.number().int().min(1).optional(),
 });
@@ -80,6 +97,18 @@ export type WorkflowGraph = z.infer<typeof workflowGraph>;
 export type WorkflowNode = z.infer<typeof workflowNode>;
 export function analyzeWorkflow(graph: WorkflowGraph) {
   const errors: string[] = [];
+  if (
+    new Set(graph.inputFields?.map((f) => f.name)).size !==
+    (graph.inputFields?.length ?? 0)
+  )
+    errors.push("Input field names must be unique");
+  for (const field of graph.inputFields ?? []) {
+    if (
+      field.defaultValue !== undefined &&
+      !validWorkflowValue(field.type, field.defaultValue)
+    )
+      errors.push(`${field.label}: default value must match its type`);
+  }
   const joins: Record<string, string[]> = {};
   const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
   const incoming = new Map<string, string[]>(),
@@ -253,4 +282,60 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
       else joins[ends[0]!] = terminalSources;
     }
   return { errors: [...new Set(errors)], joins };
+}
+
+export function validWorkflowValue(type: string, value: unknown) {
+  return type === "json"
+    ? value !== undefined
+    : type === "text"
+      ? typeof value === "string"
+      : type === "number"
+        ? typeof value === "number" && Number.isFinite(value)
+        : typeof value === "boolean";
+}
+export function normalizeWorkflowInput(
+  graph: WorkflowGraph,
+  input: unknown,
+): string {
+  const fields = graph.inputFields ?? [];
+  if (!fields.length) {
+    if (typeof input !== "string" || !input.trim() || input.length > 12000)
+      throw new Error(
+        "Provide text input (1–12000 characters) for this workflow",
+      );
+    return input.trim();
+  }
+  let values = input;
+  if (typeof input === "string") {
+    try {
+      values = JSON.parse(input);
+    } catch {
+      throw new Error("Provide an object matching the workflow input fields");
+    }
+  }
+  if (!values || typeof values !== "object" || Array.isArray(values))
+    throw new Error("Workflow input must be an object");
+  const record = values as Record<string, unknown>;
+  if (Object.keys(record).some((k) => !fields.some((f) => f.name === k)))
+    throw new Error("Unknown workflow input field");
+  const result: Record<string, unknown> = Object.create(null);
+  for (const field of fields) {
+    const value = Object.hasOwn(record, field.name)
+      ? record[field.name]
+      : field.defaultValue;
+    if (value === undefined) {
+      if (field.required) throw new Error(`${field.label} is required`);
+      continue;
+    }
+    if (
+      !validWorkflowValue(field.type, value) ||
+      (field.required && field.type === "text" && !(value as string).trim())
+    )
+      throw new Error(`${field.label}: enter a valid ${field.type} value`);
+    result[field.name] = value;
+  }
+  const serialized = JSON.stringify(result);
+  if (serialized.length > 12000)
+    throw new Error("Workflow input exceeds 12000 characters");
+  return serialized;
 }

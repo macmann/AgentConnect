@@ -407,3 +407,11 @@ Validated on 2026-10-11 in the supplied cloud environment.
 The implementation merged in PR #50 passed **504 backend tests**, **3 browser scenarios**, lint, type checking and production builds. Coverage includes metadata filters, release snapshots, shared upload options and retries, atomic bulk changes, revision conflicts, background suggestion processing and explicit review. Browser scenarios cover source editing, bulk operations and reviewed suggestions.
 
 Provider fixtures validate integration behavior; these checks do not establish live model tagging accuracy or production throughput. The documentation follow-up checks Markdown formatting, relative links and whitespace without rerunning the unchanged application suite. See the [metadata tagging guide](metadata-tagging.md).
+
+## Workflow typed inputs, API keys and schedules
+
+- The isolated `pnpm test` run passed **517 tests**, with no failures or skips. Coverage includes typed/default/legacy inputs, scoped keys, request idempotency and conflicts, permission/expiry/revocation, immutable versions, concurrent schedulers, timezone/DST handling, overlap, missed occurrences, pause/resume and workspace quotas. Migration tests exercise fresh and existing databases through **0041**.
+- Both browser scenarios passed: defining/publishing inputs, generated test forms, schedule preview and pause/resume, a 390px viewport, and testing an older published workflow without an input-field definition.
+- Lint, all eight package type checks and production builds passed. API readiness verified PostgreSQL, Redis, storage and Temporal. No live hosted-model acceptance is claimed by the trigger tests; they exercise durable orchestration with deterministic inputs.
+- Run backend suites separately from browser suites and stop background workers against their shared development database. Concurrent consumers can claim fixture jobs, and unrelated browser-created runs can be selected by worker tests. The final backend run used isolated fixture execution.
+- Upgrade requires migration **0041** and restarting API, worker and web. No new environment variable or external cron service is needed. See [workflow trigger setup](workflow-triggers.md).
