@@ -1106,3 +1106,103 @@ test("workspace components version independently, enforce ownership and expand i
   );
   assert.deepEqual(analyzeWorkflow(inserted).errors, []);
 });
+
+test("field mappings execute against typed inputs and persist explicit missing-field failures", async () => {
+  const g = graph(
+    [
+      node("input", "input"),
+      node("mapped", "merge", {
+        inputBindings: [
+          { target: "name", source: "input", path: "/customer/name" },
+          { target: "amount", source: "input", path: "/items/0/amount" },
+        ],
+      }),
+      node("output", "output", { inputPath: "/amount" }),
+    ],
+    [
+      ["input", "mapped"],
+      ["mapped", "output"],
+    ],
+  );
+  g.inputFields = [
+    { name: "customer", label: "Customer", type: "json", required: true },
+    { name: "items", label: "Items", type: "json", required: true },
+  ];
+  const w = await create("Mapped input", g),
+    id = await run(w, {
+      input: { customer: { name: "A" }, items: [{ amount: 12 }] },
+    });
+  await processWorkflowRun();
+  const r = await inspect(id);
+  assert.equal(r.status, "completed", JSON.stringify(r));
+  assert.equal(r.output, 12);
+  assert.deepEqual(
+    r.nodes.find((n: { node_id: string }) => n.node_id === "mapped").input,
+    { name: "A", amount: 12 },
+  );
+  const missing = await run(w, {
+    input: { customer: { name: "A" }, items: [] },
+  });
+  await processWorkflowRun();
+  const failed = await inspect(missing);
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.error_code, "WORKFLOW_MAPPING_FIELD_MISSING");
+  assert.equal(
+    failed.nodes.find((n: { node_id: string }) => n.node_id === "mapped")
+      .status,
+    "failed",
+  );
+  assert(
+    !failed.nodes.some((n: { node_id: string }) => n.node_id === "output"),
+  );
+});
+test("field mappings reach agents as selected content and tool arguments keep declared types", async () => {
+  const t = await call("POST", `/workspaces/${workspace}/tools`, {
+    name: "Mapped lookup",
+    description: "Read references",
+    config: {
+      kind: "http",
+      url: `http://127.0.0.1:${toolPort}/reference`,
+      queryParameters: ["query"],
+    },
+    readOnlyAcknowledged: true,
+  });
+  assert.equal(t.statusCode, 201, t.body);
+  const g = graph(
+    [
+      node("input", "input"),
+      node("lookup", "tool", {
+        toolId: t.json().id,
+        inputBindings: [{ target: "query", source: "input", path: "/query" }],
+      }),
+      node("agent", "agent", {
+        agentVersionId: final,
+        inputFrom: "input",
+        inputPath: "/query",
+      }),
+      node("output", "output"),
+    ],
+    [
+      ["input", "lookup"],
+      ["lookup", "agent"],
+      ["agent", "output"],
+    ],
+  );
+  g.inputFields = [
+    { name: "query", label: "Query", type: "text", required: true },
+    { name: "private_notes", label: "Notes", type: "text", required: false },
+  ];
+  const w = await create("Mapped agent and tool", g),
+    id = await run(w, {
+      input: {
+        query: "Selected query",
+        private_notes: "Do not forward this field",
+      },
+    });
+  await processWorkflowRun({ providerFactory: provider });
+  const r = await inspect(id);
+  assert.equal(r.status, "completed", JSON.stringify(r));
+  assert(r.output.includes("Selected query"));
+  assert(!r.output.includes("Do not forward"));
+  assert.deepEqual(r.tools[0].arguments, { query: "Selected query" });
+});

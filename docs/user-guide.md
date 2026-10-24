@@ -451,3 +451,7 @@ For step-by-step metadata workflows, limits and troubleshooting, see the [metada
 ### Automate a workflow
 
 Define named inputs on the workflow's Input node, save and publish. Open **Triggers** to create daily/weekly/custom schedules, preview times and choose overlap/downtime behavior. For server integrations, issue a workflow-scoped key in **Operations → API keys**. See [workflow inputs, API and schedules](workflow-triggers.md) for examples and troubleshooting.
+
+### Map workflow fields and inspect steps
+
+Select a workflow node and use **Input mapping** to select one upstream field or assemble named fields. Expand **Preview mapped input** to use recorded run outputs without executing the workflow. During run inspection, click a canvas node or use **Inspect step** to see that step's recorded input/output, status, citations and tools. See the [field mapping guide](workflow-mapping.md) for paths, typed tool arguments and error handling.

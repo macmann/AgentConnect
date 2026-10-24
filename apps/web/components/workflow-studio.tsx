@@ -1,4 +1,6 @@
 "use client";
+import { WorkflowMappingEditor } from "./workflow-mapping-editor";
+import { WorkflowNodeInspector } from "./workflow-node-inspector";
 import { WorkflowTriggers } from "./workflow-triggers";
 import { WorkflowInputEditor, WorkflowRunFields } from "./workflow-inputs";
 import { normalizeWorkflowInput } from "@agentconnect/schemas/workflows";
@@ -85,7 +87,7 @@ type Run = {
   error_code: string | null;
   graph_snapshot: WorkflowGraph;
   nodes: NodeTrace[];
-  tools: ToolTrace[];
+  tools: (ToolTrace & { workflow_node_id?: string })[];
   approvals: {
     id: string;
     node_id: string;
@@ -391,6 +393,14 @@ export function WorkflowStudio({
           data: {
             ...n.data,
             label: n.data.label + " copy",
+            ...(n.data.inputBindings
+              ? {
+                  inputBindings: n.data.inputBindings.map((b) => ({
+                    ...b,
+                    source: mapping.get(b.source) ?? b.source,
+                  })),
+                }
+              : {}),
             inputFrom: n.data.inputFrom
               ? (mapping.get(n.data.inputFrom) ?? n.data.inputFrom)
               : undefined,
@@ -1221,6 +1231,7 @@ export function WorkflowStudio({
                     onNodeClick={(event, n) => {
                       if (!event.shiftKey) setSelection([n.id]);
                       setSelected(n.id);
+                      if (selectedRun) setTestOpen(true);
                       const data = draft.graph.nodes.find(
                         (item) => item.id === n.id,
                       )?.data;
@@ -1506,6 +1517,42 @@ export function WorkflowStudio({
                                 {run.data.status}
                               </span>
                             </h3>
+                            <label>
+                              Inspect step
+                              <select
+                                value={
+                                  run.data.graph_snapshot.nodes.some(
+                                    (n) => n.id === selected,
+                                  )
+                                    ? selected
+                                    : ""
+                                }
+                                onChange={(e) => {
+                                  setSelected(e.target.value);
+                                  setSelection([e.target.value]);
+                                }}
+                              >
+                                <option value="">Select a canvas step</option>
+                                {run.data.graph_snapshot.nodes.map((n) => (
+                                  <option key={n.id} value={n.id}>
+                                    {n.data.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            {run.data.graph_snapshot.nodes.find(
+                              (n) => n.id === selected,
+                            ) && (
+                              <WorkflowNodeInspector
+                                node={run.data.graph_snapshot.nodes.find(
+                                  (n) => n.id === selected,
+                                )!}
+                                trace={run.data.nodes.find(
+                                  (n) => n.node_id === selected,
+                                )}
+                                tools={run.data.tools}
+                              />
+                            )}
                             {run.data.error_code && (
                               <p className="error">{run.data.error_code}</p>
                             )}
@@ -1837,6 +1884,7 @@ export function WorkflowStudio({
                             <label>
                               Input argument name
                               <input
+                                disabled={!!current.data.inputBindings?.length}
                                 value={current.data.inputArgument ?? ""}
                                 onChange={(e) =>
                                   updateNode({
@@ -1897,32 +1945,13 @@ export function WorkflowStudio({
                           </label>
                         )}
                         {current.type !== "input" && (
-                          <details className="configure-group">
-                            <summary>Advanced input mapping</summary>
-                            <label>
-                              Input mapping
-                              <select
-                                disabled={!build}
-                                value={current.data.inputFrom ?? ""}
-                                onChange={(e) =>
-                                  updateNode({
-                                    inputFrom: e.target.value || undefined,
-                                  })
-                                }
-                              >
-                                <option value="">
-                                  Connected predecessor output
-                                </option>
-                                {draft.graph.nodes
-                                  .filter((n) => n.id !== current.id)
-                                  .map((n) => (
-                                    <option key={n.id} value={n.id}>
-                                      {n.data.label}
-                                    </option>
-                                  ))}
-                              </select>
-                            </label>
-                          </details>
+                          <WorkflowMappingEditor
+                            key={current.id}
+                            node={current}
+                            graph={draft.graph}
+                            runs={runs.data ?? []}
+                            onChange={updateNode}
+                          />
                         )}
                         {build && (
                           <Button

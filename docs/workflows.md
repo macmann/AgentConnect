@@ -53,3 +53,7 @@ Nested branching within parallel paths, subworkflow nodes, collaborative editing
 ## Typed inputs and automation triggers
 
 Select the Input node to define named text, number, boolean or JSON fields, with required flags and defaults. Manual tests generate a form from the selected version; workflows without fields retain text input. The **Triggers** activity configures timezone-aware daily/weekly/custom cron schedules with version pinning, overlap policies, downtime recovery, preview and pause/resume. Operations can issue workflow-scoped REST API keys for idempotent asynchronous invocation and key-bound results. See [workflow triggers](workflow-triggers.md) for API requests, limits, upgrade and troubleshooting.
+
+## Field-level handoffs and canvas inspection
+
+Input mapping can select a nested upstream field or assemble named fields from several ancestors. Tool mappings preserve argument types; legacy complete-output mappings remain compatible. Preview with recorded outputs without executing agents/tools, then test the saved draft. Clicking a run node opens its recorded inputs, outputs, citations, tool executions and status in the canvas panel; a step dropdown offers keyboard access. See [field mapping and inspection](workflow-mapping.md) for paths, snapshots and explicit failure behavior.

@@ -1,3 +1,7 @@
+import {
+  workflowBinding,
+  workflowFieldPath,
+} from "@agentconnect/schemas/workflow-mapping";
 import { z } from "zod";
 export const workflowKinds = [
   "input",
@@ -37,6 +41,8 @@ export const workflowNode = z.object({
       .regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/)
       .optional(),
     inputFrom: nodeId.optional(),
+    inputPath: workflowFieldPath.optional(),
+    inputBindings: z.array(workflowBinding).max(20).optional(),
     operator: z.enum(["contains", "equals", "not-empty"]).default("contains"),
     value: z.string().max(1000).default(""),
     prefix: z.string().max(2000).default(""),
@@ -217,6 +223,31 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
       errors.push(`${n.data.label}: select a published agent version`);
     if (n.type === "tool" && !n.data.toolId)
       errors.push(`${n.data.label}: select a registered tool`);
+    if (
+      n.type === "input" &&
+      (n.data.inputFrom || n.data.inputPath || n.data.inputBindings?.length)
+    )
+      errors.push(`${n.data.label}: Input nodes cannot map upstream values`);
+    if (n.data.inputBindings?.length) {
+      if (n.data.inputFrom || n.data.inputPath || n.data.inputArgument)
+        errors.push(
+          `${n.data.label}: named mappings cannot combine with whole-input or single tool-argument mapping`,
+        );
+      if (
+        new Set(n.data.inputBindings.map((b) => b.target)).size !==
+        n.data.inputBindings.length
+      )
+        errors.push(`${n.data.label}: mapped target fields must be unique`);
+      for (const binding of n.data.inputBindings)
+        if (
+          !nodes.has(binding.source) ||
+          binding.source === n.id ||
+          !reach(n.id, incoming).has(binding.source)
+        )
+          errors.push(
+            `${n.data.label}: mapped fields must reference ancestors`,
+          );
+    }
     if (n.data.inputFrom) {
       if (
         !nodes.has(n.data.inputFrom) ||
