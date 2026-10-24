@@ -1,6 +1,12 @@
 # Coolify generates SERVICE_PASSWORD_*, SERVICE_USER_* and SERVICE_HEX_* values.
 # Configure HTTPS domains for web:3000 and api:4000 in Coolify first.
-# Required settings supplied by you (URL-encode SMTP username/password):
+# Required public origins; match the domains configured in Coolify.
+WEB_ORIGIN=https://app.example.com
+API_PUBLIC_URL=https://api.example.com
+# Build-time setting: changing this requires rebuilding the web image.
+NEXT_PUBLIC_API_URL=https://api.example.com
+
+# Required mail settings supplied by you (URL-encode SMTP username/password):
 SMTP_URL=smtps://USERNAME:URL_ENCODED_PASSWORD@smtp.example.com:465
 MAIL_FROM=noreply@example.com
 

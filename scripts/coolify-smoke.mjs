@@ -46,8 +46,9 @@ const compose = (...args) =>
 const api = (code) => compose("exec", "-T", "api", "node", "-e", code);
 try {
   const fixture = {
-    SERVICE_URL_WEB_3000: "https://app.coolify.example",
-    SERVICE_URL_API_4000: apiOrigin,
+    WEB_ORIGIN: "https://app.coolify.example",
+    API_PUBLIC_URL: apiOrigin,
+    NEXT_PUBLIC_API_URL: apiOrigin,
     SERVICE_PASSWORD_POSTGRES: password(),
     SERVICE_PASSWORD_APPDB: password(),
     SERVICE_PASSWORD_TEMPORAL: password(),

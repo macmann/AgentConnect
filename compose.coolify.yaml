@@ -12,13 +12,13 @@ x-build: &build
   context: .
   dockerfile: Dockerfile
   args:
-    NEXT_PUBLIC_API_URL: ${SERVICE_URL_API_4000}
+    NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.agentconex.b-connect.site}
     ENABLE_AI_EXTRACTION: ${ENABLE_AI_EXTRACTION:-true}
     ENABLE_OCR: ${ENABLE_OCR:-false}
 x-runtime: &runtime
   NODE_ENV: production
   REQUIRE_EMAIL_VERIFICATION: "true"
-  WEB_ORIGIN: ${SERVICE_URL_WEB_3000}
+  WEB_ORIGIN: ${WEB_ORIGIN:-https://agentconex.b-connect.site}
   DATABASE_URL: postgres://agentconnex:${SERVICE_PASSWORD_APPDB}@postgres:5432/agentconnex
   REDIS_URL: redis://:${SERVICE_PASSWORD_REDIS}@redis:6379/0
   MASTER_KEY: ${SERVICE_HEX_64_MASTERKEY}
@@ -141,10 +141,9 @@ services:
     command: ["node", "apps/api/dist/bootstrap.js"]
     environment:
       <<: *runtime
-      SERVICE_URL_API_4000: ${SERVICE_URL_API_4000}
       PORT: "4000"
-      MESSAGING_PUBLIC_URL: ${SERVICE_URL_API_4000}
-      CONNECTOR_OAUTH_API_ORIGIN: ${SERVICE_URL_API_4000}
+      MESSAGING_PUBLIC_URL: ${API_PUBLIC_URL:-https://api.agentconex.b-connect.site}
+      CONNECTOR_OAUTH_API_ORIGIN: ${API_PUBLIC_URL:-https://api.agentconex.b-connect.site}
     expose: ["4000"]
     depends_on:
       postgres:
@@ -198,7 +197,6 @@ services:
       target: web
     environment:
       NODE_ENV: production
-      SERVICE_URL_WEB_3000: ${SERVICE_URL_WEB_3000}
       PORT: "3000"
       HOSTNAME: 0.0.0.0
     tmpfs:
