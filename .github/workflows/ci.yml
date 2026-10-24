@@ -37,7 +37,12 @@ jobs:
             (cd apps/api && pnpm exec tsx --env-file=../../.env --test "${file#apps/api/}")
           done
       - run: node --test tests/release/*.test.mjs
-      - run: pnpm build
+      # Exercise the dispatcher regression: build must normalize an inherited
+      # development environment before Next loads its external React runtime.
+      - name: Production build with inherited development environment
+        env:
+          NODE_ENV: development
+        run: pnpm build --force
       - name: Build and smoke release images
         run: |
           set -euo pipefail
