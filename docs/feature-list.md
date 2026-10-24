@@ -240,3 +240,9 @@ See the [metadata tagging guide](metadata-tagging.md) for upload, bulk editing, 
 - See [workflow triggers](workflow-triggers.md) for setup and limits.
 
 - **Workflow field mapping and inspection:** select nested fields/array items, assemble named agent inputs or typed tool arguments, preview from recorded runs, preserve component/copy references, and inspect individual execution steps directly from the canvas. See [mapping guide](workflow-mapping.md).
+
+## Coolify deployment
+
+- Git-backed single-stack deployment with private PostgreSQL/pgvector, Redis, object storage and SQL-backed Temporal.
+- Generated internal credentials, persistent volumes, HTTPS domain integration, automatic migrations/bucket initialization and readiness-gated application startup.
+- Reproducible disposable-container acceptance test covering packaged production preflight, registration/email delivery, restart persistence and browser API-origin configuration. See [Coolify setup](coolify.md).

@@ -1,6 +1,11 @@
 import { defineConfig } from "tsup";
 export default defineConfig({
-  entry: ["src/server.ts", "src/migrate.ts", "src/deployment-check.ts"],
+  entry: [
+    "src/server.ts",
+    "src/migrate.ts",
+    "src/deployment-check.ts",
+    "src/bootstrap.ts",
+  ],
   format: ["esm"],
   splitting: false,
   external: [

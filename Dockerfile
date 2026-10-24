@@ -14,7 +14,8 @@ RUN --mount=type=secret,id=proxy_ca \
     && pnpm install --frozen-lockfile --prod=false \
     && pnpm build \
     && pnpm --filter=@agentconnect/api deploy --legacy --prod --frozen-lockfile /out/api \
-    && pnpm --filter=@agentconnect/worker deploy --legacy --prod --frozen-lockfile /out/worker
+    && pnpm --filter=@agentconnect/worker deploy --legacy --prod --frozen-lockfile /out/worker \
+    && rm -rf /app/node_modules /app/apps/*/node_modules /app/packages/*/node_modules /root/.npm
 
 FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS service
 WORKDIR /app

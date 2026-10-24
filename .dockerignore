@@ -16,3 +16,8 @@ docs
 **/*.env
 *-metadata.json
 release.json
+# Runtime images/builds do not need fixture data or deployment helper scripts.
+scripts
+tests
+apps/*/test
+compose*.yaml
