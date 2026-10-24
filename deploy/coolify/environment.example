@@ -1,0 +1,26 @@
+# Coolify generates SERVICE_PASSWORD_*, SERVICE_USER_* and SERVICE_HEX_* values.
+# Configure HTTPS domains for web:3000 and api:4000 in Coolify first.
+# Required settings supplied by you (URL-encode SMTP username/password):
+SMTP_URL=smtps://USERNAME:URL_ENCODED_PASSWORD@smtp.example.com:465
+MAIL_FROM=noreply@example.com
+
+# Optional; preserve existing hosts when adding providers/websites/integrations.
+MODEL_ALLOWED_HOSTS=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.deepseek.com
+RERANK_ALLOWED_HOSTS=api.cohere.com
+KNOWLEDGE_ALLOWED_HOSTS=
+TOOL_ALLOWED_HOSTS=
+TOOL_DATABASE_HOSTS=
+CONNECTOR_ALLOWED_HOSTS=
+WEBHOOK_ALLOWED_HOSTS=
+
+# PDF rendering for workspace-configured multilingual AI extraction (build time).
+ENABLE_AI_EXTRACTION=true
+# Optional local English OCR; enable both build and runtime switches together.
+ENABLE_OCR=false
+OCR_ENABLED=false
+
+# Optional Langfuse; configure all three together. Empty values disable tracing.
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+LANGFUSE_BASE_URL=
+LANGFUSE_CAPTURE_CONTENT=false

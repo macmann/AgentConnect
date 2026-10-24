@@ -1,0 +1,226 @@
+# Git repository / Docker Compose build pack, Base Directory=/.
+# Public domains: web:3000 and api:4000, both HTTPS. All other services stay private.
+x-app: &app
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs: ["/tmp:size=256m,mode=1777"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  stop_grace_period: 120s
+x-build: &build
+  context: .
+  dockerfile: Dockerfile
+  args:
+    NEXT_PUBLIC_API_URL: ${SERVICE_URL_API_4000}
+    ENABLE_AI_EXTRACTION: ${ENABLE_AI_EXTRACTION:-true}
+    ENABLE_OCR: ${ENABLE_OCR:-false}
+x-runtime: &runtime
+  NODE_ENV: production
+  REQUIRE_EMAIL_VERIFICATION: "true"
+  WEB_ORIGIN: ${SERVICE_URL_WEB_3000}
+  DATABASE_URL: postgres://agentconnex:${SERVICE_PASSWORD_APPDB}@postgres:5432/agentconnex
+  REDIS_URL: redis://:${SERVICE_PASSWORD_REDIS}@redis:6379/0
+  MASTER_KEY: ${SERVICE_HEX_64_MASTERKEY}
+  S3_ENDPOINT: http://storage:9000
+  S3_ACCESS_KEY: ${SERVICE_USER_STORAGE}
+  S3_SECRET_KEY: ${SERVICE_PASSWORD_64_STORAGE}
+  S3_BUCKET: agentconnex
+  TEMPORAL_ADDRESS: temporal:7233
+  SMTP_URL: ${SMTP_URL:?Configure a real SMTP provider}
+  MAIL_FROM: ${MAIL_FROM:?Configure the verified sender email}
+  MODEL_ALLOWED_HOSTS: ${MODEL_ALLOWED_HOSTS:-api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.deepseek.com}
+  RERANK_ALLOWED_HOSTS: ${RERANK_ALLOWED_HOSTS:-api.cohere.com}
+  KNOWLEDGE_ALLOWED_HOSTS: ${KNOWLEDGE_ALLOWED_HOSTS:-}
+  TOOL_ALLOWED_HOSTS: ${TOOL_ALLOWED_HOSTS:-}
+  TOOL_DATABASE_HOSTS: ${TOOL_DATABASE_HOSTS:-}
+  CONNECTOR_ALLOWED_HOSTS: ${CONNECTOR_ALLOWED_HOSTS:-}
+  WEBHOOK_ALLOWED_HOSTS: ${WEBHOOK_ALLOWED_HOSTS:-}
+  MONITORING_TOKEN: ${SERVICE_PASSWORD_64_MONITORING}
+  OCR_ENABLED: ${OCR_ENABLED:-false}
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+  LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
+  LANGFUSE_CAPTURE_CONTENT: ${LANGFUSE_CAPTURE_CONTENT:-false}
+  # Preserve proxy routing for internet traffic; internal dependencies bypass it.
+  NO_PROXY: localhost,127.0.0.1,postgres,redis,storage,temporal
+  no_proxy: localhost,127.0.0.1,postgres,redis,storage,temporal
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: deploy/coolify/postgres.Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agentconnex_admin
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES}
+      APP_DATABASE_PASSWORD: ${SERVICE_PASSWORD_APPDB}
+      TEMPORAL_DATABASE_PASSWORD: ${SERVICE_PASSWORD_TEMPORAL}
+    volumes: ["postgres:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentconnex_admin -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  redis:
+    image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+    restart: unless-stopped
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--requirepass",
+        "${SERVICE_PASSWORD_REDIS}",
+      ]
+    environment:
+      REDISCLI_AUTH: ${SERVICE_PASSWORD_REDIS}
+    volumes: ["redis:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  storage:
+    image: rustfs/rustfs:latest@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${SERVICE_USER_STORAGE}
+      RUSTFS_SECRET_KEY: ${SERVICE_PASSWORD_64_STORAGE}
+      RUSTFS_VOLUMES: /data
+      RUSTFS_CONSOLE_ENABLE: "false"
+    volumes: ["storage:/data"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  temporal:
+    # SQL-backed server, not Temporal's development SQLite server.
+    image: temporalio/auto-setup:1.29.1@sha256:5b3502a3b685f9eff1b925af90c57c9e3dbeccbef367cc28a2a9712c63379312
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BIND_ON_IP: 0.0.0.0
+      PUBLIC_FRONTEND_ADDRESS: temporal:7233
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_SEEDS: postgres
+      POSTGRES_USER: agentconnex_temporal
+      POSTGRES_PWD: ${SERVICE_PASSWORD_TEMPORAL}
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      SKIP_DB_CREATE: "true"
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CLI_ADDRESS: temporal:7233
+      NO_PROXY: localhost,127.0.0.1,postgres,temporal
+      no_proxy: localhost,127.0.0.1,postgres,temporal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "temporal",
+          "operator",
+          "cluster",
+          "health",
+          "--address",
+          "127.0.0.1:7233",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 30
+  api:
+    <<: *app
+    build:
+      <<: *build
+      target: api
+    command: ["node", "apps/api/dist/bootstrap.js"]
+    environment:
+      <<: *runtime
+      SERVICE_URL_API_4000: ${SERVICE_URL_API_4000}
+      PORT: "4000"
+      MESSAGING_PUBLIC_URL: ${SERVICE_URL_API_4000}
+      CONNECTOR_OAUTH_API_ORIGIN: ${SERVICE_URL_API_4000}
+    expose: ["4000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 8s
+      start_period: 120s
+      retries: 8
+  worker:
+    <<: *app
+    build:
+      <<: *build
+      target: worker
+    environment:
+      <<: *runtime
+      WORKER_HEALTH_HOST: 0.0.0.0
+      WORKER_HEALTH_PORT: "4100"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4100/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 8
+  web:
+    <<: *app
+    build:
+      <<: *build
+      target: web
+    environment:
+      NODE_ENV: production
+      SERVICE_URL_WEB_3000: ${SERVICE_URL_WEB_3000}
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /app/apps/web/.next/cache:uid=1000,gid=1000,mode=0700,size=128m
+    expose: ["3000"]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 8
+volumes:
+  postgres:
+  redis:
+  storage:

@@ -1,5 +1,7 @@
 # Development deployment
 
+For a Git-backed deployment with bundled infrastructure and automatic initialization, see [Deploy Agent Connex on Coolify](coolify.md).
+
 Requires Node 24, pnpm 11.19.0 and Docker Compose. Run commands from the repository root. In the cloud machine, keep package-manager caches under /workspace using XDG_DATA_HOME=/workspace/.cache/data, XDG_CACHE_HOME=/workspace/.cache, PNPM_HOME=/workspace/.cache/pnpm.
 
 1. `pnpm install --frozen-lockfile`
@@ -20,7 +22,7 @@ Set SMTP_URL and MAIL_FROM in .env, then run `pnpm --filter @agentconnect/api ma
 
 `pnpm --filter @agentconnect/api mail:inspect you@example.com`
 
-The helper refuses production mode. Configure real SMTP before production. Production config fails fast without SMTP and HTTPS WEB_ORIGIN. Core services are development containers; production topology remains a later deployment task.
+The helper refuses production mode. Configure real SMTP before production. Production config fails fast without SMTP and HTTPS WEB_ORIGIN. For production, use the [self-contained Coolify stack](coolify.md) or the [reviewed release rollout](releases.md).
 
 ## Validation
 

@@ -2,6 +2,8 @@
 
 This release adds locked Docker images, GitHub validation/release workflows and a Compose rollout command for a single managed host. PostgreSQL, Redis, S3, Temporal, SMTP and TLS ingress remain externally provisioned services. No live registry publication or deployment occurs while developing this change.
 
+For Coolify with bundled PostgreSQL, Redis, object storage and Temporal, use the separate [Coolify deployment guide](coolify.md). Its opt-in API bootstrap automates initialization; this reviewed-release flow keeps migrations explicit.
+
 ## Build and review
 
 The `Validate` workflow runs lint, type checks, the API regression files against disposable infrastructure, rollout tests, the production build and real container smoke checks. Its isolated Redis instance is reset between API test files to preserve real rate limiting without cross-file fixture interference. No application worker competes with backend fixture leases.

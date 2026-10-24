@@ -14,6 +14,8 @@ An **agent** answers questions using its instructions, selected model and approv
 
 ## Start here
 
+**Deploy on Coolify:** use the [single-stack deployment guide](docs/coolify.md) for HTTPS domains, SMTP setup and automatic database/storage initialization.
+
 | Goal                             | Guide                                                    |
 | -------------------------------- | -------------------------------------------------------- |
 | Use the application              | [User guide](docs/user-guide.md)                         |

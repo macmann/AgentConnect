@@ -42,8 +42,19 @@ jobs:
         run: |
           set -euo pipefail
           for service in api worker web; do
-            docker build --target "$service" --build-arg NEXT_PUBLIC_API_URL=https://api.agentconnect.example --tag "agentconnect-release-$service:test" .
+            docker build --target "$service" --build-arg ENABLE_AI_EXTRACTION=true --build-arg NEXT_PUBLIC_API_URL=https://api.agentconnect.example --tag "agentconnect-release-$service:test" .
           done
           node --env-file=.env scripts/release-smoke.mjs
+      - name: Smoke the self-contained Coolify deployment
+        env:
+          COOLIFY_SMOKE_API_ORIGIN: https://api.agentconnect.example
+          COOLIFY_SMOKE_EXPECT_PDF_TOOLS: "true"
+        run: |
+          set -euo pipefail
+          for service in api worker web; do
+            docker tag "agentconnect-release-$service:test" "agentconnex-coolify-$service:check"
+          done
+          docker build -f deploy/coolify/postgres.Dockerfile -t agentconnex-coolify-postgres:check .
+          node scripts/coolify-smoke.mjs
       - run: pnpm infra:down
         if: always()
