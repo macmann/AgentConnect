@@ -399,9 +399,17 @@ export function Models({
                   maxLength={150}
                 />
               </label>
-              <label>
-                Workspace credential
+              <div className="settings-field">
+                <div className="settings-field-heading">
+                  <label htmlFor="model-credential">Workspace credential</label>
+                  <HelpTooltip label="About model credentials">
+                    Select the API-key secret for this provider. Saving a secret
+                    does not select it automatically; values are never returned
+                    here.
+                  </HelpTooltip>
+                </div>
                 <select
+                  id="model-credential"
                   name="secretId"
                   value={credential}
                   onChange={(e) => setCredential(e.target.value)}
@@ -418,33 +426,30 @@ export function Models({
                     </option>
                   ))}
                 </select>
-                <small>
-                  For hosted providers such as DeepSeek, select the API-key
-                  secret saved in this workspace. Saving a secret does not
-                  select it automatically. Values are never returned here.
-                </small>
-              </label>
+              </div>
               {secrets.error && (
                 <p className="error-banner" role="alert">
                   Cannot load workspace credentials: {secrets.error.message}
                 </p>
               )}
               {provider === "openai-compatible" && (
-                <label>
-                  Base URL
+                <div className="settings-field">
+                  <div className="settings-field-heading">
+                    <label htmlFor="model-base-url">Base URL</label>
+                    <HelpTooltip label="About model endpoint approval">
+                      Approve custom hosts in MODEL_ALLOWED_HOSTS and restart
+                      the API and worker after changing it.
+                    </HelpTooltip>
+                  </div>
                   <input
+                    id="model-base-url"
                     name="baseUrl"
                     defaultValue={editing?.base_url ?? ""}
                     type="url"
                     required
                     placeholder="https://approved-host.example/v1"
                   />
-                  <small>
-                    Custom hosts require server approval through
-                    MODEL_ALLOWED_HOSTS. Restart the API and worker after
-                    changing that setting.
-                  </small>
-                </label>
+                </div>
               )}
             </div>
             <details className="workspace-advanced-settings">

@@ -1,4 +1,5 @@
 "use client";
+import { SettingsHint, SetupGuide } from "./settings-help";
 import { HelpTooltip } from "./help-tooltip";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -210,10 +211,7 @@ export function ConnectorsStudio({
         <div className="panel-header">
           <div>
             <h3>Enterprise sources</h3>
-            <p>
-              Sync approved document sources and Teams or Slack channels into a
-              knowledge base.
-            </p>
+            <p>Import folders and channels into your knowledge base.</p>
           </div>
           {canManage && (
             <Button disabled={busy} onClick={() => edit()}>
@@ -280,472 +278,494 @@ export function ConnectorsStudio({
             </button>
           ))}
           {editing && canManage && (
-            <>
+            <div className="connector-editor">
               <h4>
                 {connector ? "Edit connector" : "Connect a knowledge source"}
               </h4>
-              <label>
-                Provider
-                <select
-                  aria-label="Connector provider"
-                  disabled={!!connector || busy}
-                  value={kind}
-                  onChange={(e) => {
-                    resetDiscovery();
-                    setDriveId("");
-                    setFolderId("");
-                    setTeamId("");
-                    setChannelId("");
-                    setKind(e.target.value as Connector["kind"]);
-                  }}
-                >
-                  <option value="s3">S3 / S3-compatible</option>
-                  <option value="google-drive">Google Drive</option>
-                  <option value="onedrive">OneDrive for Business</option>
-                  <option value="sharepoint">SharePoint</option>
-                  <option value="teams">Microsoft Teams</option>
-                  <option value="slack">Slack</option>
-                </select>
-              </label>
-              <label>
-                Name
-                <input
-                  aria-label="Connector name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  maxLength={100}
-                />
-              </label>
-              <label>
-                Knowledge base
-                <select
-                  aria-label="Connector knowledge base"
-                  disabled={!!connector}
-                  value={kb}
-                  onChange={(e) => setKb(e.target.value)}
-                >
-                  <option value="">Select knowledge base</option>
-                  {knowledge.data?.map((k) => (
-                    <option key={k.id} value={k.id}>
-                      {k.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {knowledge.data?.length === 0 && (
-                <Button onClick={() => onNavigate("Knowledge")}>
-                  Create a knowledge base
-                </Button>
-              )}
-              {kind !== "s3" && (
-                <ConnectorSignIn
-                  key={kind + selected}
-                  workspaceId={workspaceId}
-                  provider={kind}
-                  onConnected={setSecret}
-                />
-              )}
-              <label>
-                Workspace credential
-                <select
-                  aria-label="Source workspace credential"
-                  value={secret}
-                  disabled={busy}
-                  onChange={(e) => {
-                    setSecret(e.target.value);
-                    if (!connector && kind === "sharepoint") resetDiscovery();
-                  }}
-                >
-                  <option value="">
-                    Select signed-in account or JSON credential
-                  </option>
-                  {secrets.data?.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p>
-                {kind === "s3"
-                  ? "Save a JSON secret with accessKeyId, secretAccessKey and optional sessionToken. Grant only ListBucket and GetObject for the selected prefix."
-                  : kind === "onedrive" ||
-                      kind === "sharepoint" ||
-                      kind === "teams"
-                    ? "Register a Microsoft Entra application with read-only Microsoft Graph application permissions and administrator consent. Save a JSON secret with tenantId, clientId and clientSecret. Access tokens renew automatically. Personal OneDrive accounts need a future delegated sign-in flow."
-                    : kind === "slack"
-                      ? "Save a JSON secret with token set to your Slack app user OAuth token (xoxp-...). Grant channels:read, channels:history, groups:read and groups:history for the selected channel. The authorizing user must be a channel member. Bot tokens do not support this channel-replies flow."
-                      : "Enable Google Drive API in your Google Cloud project. Save the service-account JSON key in Secrets, then share this folder with its client_email as Viewer. Tokens refresh automatically; no user impersonation is used."}{" "}
-                Values remain encrypted on the server.
-              </p>
-              <Button onClick={() => onNavigate("Secrets")}>
-                Open Secrets
-              </Button>
-              {!connector &&
-                secret &&
-                ["google-drive", "onedrive", "teams", "slack"].includes(
-                  kind,
-                ) && (
-                  <ConnectorSourceBrowser
-                    key={kind + secret}
+              <fieldset className="settings-group">
+                <legend>1. Destination</legend>
+                <label>
+                  Provider
+                  <select
+                    aria-label="Connector provider"
+                    disabled={!!connector || busy}
+                    value={kind}
+                    onChange={(e) => {
+                      resetDiscovery();
+                      setDriveId("");
+                      setFolderId("");
+                      setTeamId("");
+                      setChannelId("");
+                      setKind(e.target.value as Connector["kind"]);
+                    }}
+                  >
+                    <option value="s3">S3 / S3-compatible</option>
+                    <option value="google-drive">Google Drive</option>
+                    <option value="onedrive">OneDrive for Business</option>
+                    <option value="sharepoint">SharePoint</option>
+                    <option value="teams">Microsoft Teams</option>
+                    <option value="slack">Slack</option>
+                  </select>
+                </label>
+                <label>
+                  Name
+                  <input
+                    aria-label="Connector name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    maxLength={100}
+                  />
+                </label>
+                <label>
+                  Knowledge base
+                  <select
+                    aria-label="Connector knowledge base"
+                    disabled={!!connector}
+                    value={kb}
+                    onChange={(e) => setKb(e.target.value)}
+                  >
+                    <option value="">Select knowledge base</option>
+                    {knowledge.data?.map((k) => (
+                      <option key={k.id} value={k.id}>
+                        {k.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {knowledge.data?.length === 0 && (
+                  <Button onClick={() => onNavigate("Knowledge")}>
+                    Create a knowledge base
+                  </Button>
+                )}
+              </fieldset>
+              <fieldset className="settings-group">
+                <legend>2. Account</legend>
+                {kind !== "s3" && (
+                  <ConnectorSignIn
+                    key={kind + selected}
                     workspaceId={workspaceId}
                     provider={kind}
-                    secretId={secret}
-                    onSelect={(v) => {
-                      if (v.folderId) setFolderId(v.folderId);
-                      if (v.driveId) setDriveId(v.driveId);
-                      if (v.teamId) setTeamId(v.teamId);
-                      if (v.channelId) setChannelId(v.channelId);
-                      setNotice(
-                        "Source selected. Review the target knowledge base and save.",
-                      );
-                    }}
+                    onConnected={setSecret}
                   />
                 )}
-              {kind === "s3" ? (
-                <>
-                  <label>
-                    S3 endpoint
-                    <input
-                      aria-label="S3 endpoint"
-                      disabled={!!connector}
-                      value={endpoint}
-                      onChange={(e) => setEndpoint(e.target.value)}
-                    />
-                  </label>
-                  <p>
-                    The exact host must be approved in CONNECTOR_ALLOWED_HOSTS
-                    on the API and worker. Trusted private servers require an
-                    explicit CONNECTOR_PRIVATE_HOSTS exception.
-                  </p>
-                  <label>
-                    Region
-                    <input
-                      aria-label="S3 region"
-                      disabled={!!connector}
-                      value={region}
-                      onChange={(e) => setRegion(e.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Bucket
-                    <input
-                      aria-label="S3 bucket"
-                      disabled={!!connector}
-                      value={bucket}
-                      onChange={(e) => setBucket(e.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Folder prefix
-                    <input
-                      aria-label="S3 prefix"
-                      disabled={!!connector}
-                      value={prefix}
-                      onChange={(e) => setPrefix(e.target.value)}
-                      placeholder="documents/"
-                    />
-                  </label>
-                  <div className="setting-label-row">
-                    <span>Use a trailing slash to select a folder.</span>
-                    <HelpTooltip>
-                      An empty prefix selects the whole bucket. Source location
-                      and knowledge base are fixed after creation; create
-                      another connector to change them.
-                    </HelpTooltip>
-                  </div>
-                </>
-              ) : kind === "teams" || kind === "slack" ? (
-                <>
-                  <label>
-                    {kind === "teams" ? "Teams team ID" : "Slack workspace ID"}
-                    <input
-                      aria-label={
+                <label>
+                  Workspace credential
+                  <select
+                    aria-label="Source workspace credential"
+                    value={secret}
+                    disabled={busy}
+                    onChange={(e) => {
+                      setSecret(e.target.value);
+                      if (!connector && kind === "sharepoint") resetDiscovery();
+                    }}
+                  >
+                    <option value="">
+                      Select signed-in account or JSON credential
+                    </option>
+                    {secrets.data?.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <SetupGuide title="Set up a workspace credential">
+                  {kind === "s3"
+                    ? "Save a JSON secret with accessKeyId, secretAccessKey and optional sessionToken. Grant only ListBucket and GetObject for the selected prefix."
+                    : kind === "onedrive" ||
+                        kind === "sharepoint" ||
                         kind === "teams"
-                          ? "Teams team ID"
-                          : "Slack workspace ID"
-                      }
-                      disabled={!!connector || busy}
-                      value={teamId}
-                      onChange={(e) => setTeamId(e.target.value)}
-                      placeholder={
-                        kind === "teams" ? "Microsoft Graph team UUID" : "T…"
-                      }
+                      ? "Register a Microsoft Entra application with read-only Microsoft Graph application permissions and administrator consent. Save a JSON secret with tenantId, clientId and clientSecret. Access tokens renew automatically. Personal OneDrive accounts need a future delegated sign-in flow."
+                      : kind === "slack"
+                        ? "Save a JSON secret with token set to your Slack app user OAuth token (xoxp-...). Grant channels:read, channels:history, groups:read and groups:history for the selected channel. The authorizing user must be a channel member. Bot tokens do not support this channel-replies flow."
+                        : "Enable Google Drive API in your Google Cloud project. Save the service-account JSON key in Secrets, then share this folder with its client_email as Viewer. Tokens refresh automatically; no user impersonation is used."}{" "}
+                  Values remain encrypted on the server.
+                </SetupGuide>
+                <div className="button-row">
+                  <Button
+                    className="secondary"
+                    onClick={() => onNavigate("Secrets")}
+                  >
+                    Open Secrets
+                  </Button>
+                </div>
+              </fieldset>
+              <fieldset className="settings-group">
+                <legend>3. Source</legend>
+                {!connector &&
+                  secret &&
+                  ["google-drive", "onedrive", "teams", "slack"].includes(
+                    kind,
+                  ) && (
+                    <ConnectorSourceBrowser
+                      key={kind + secret}
+                      workspaceId={workspaceId}
+                      provider={kind}
+                      secretId={secret}
+                      onSelect={(v) => {
+                        if (v.folderId) setFolderId(v.folderId);
+                        if (v.driveId) setDriveId(v.driveId);
+                        if (v.teamId) setTeamId(v.teamId);
+                        if (v.channelId) setChannelId(v.channelId);
+                        setNotice(
+                          "Source selected. Review the target knowledge base and save.",
+                        );
+                      }}
                     />
-                  </label>
-                  <label>
-                    Channel ID
-                    <input
-                      aria-label="Channel ID"
-                      disabled={!!connector || busy}
-                      value={channelId}
-                      onChange={(e) => setChannelId(e.target.value)}
-                      placeholder={
-                        kind === "teams" ? "19:…@thread.tacv2" : "C… or G…"
-                      }
-                    />
-                  </label>
-                  <p>
-                    {kind === "teams"
-                      ? "Use IDs from Microsoft Graph or decode the channel link. Grant ChannelMessage.Read.All and Channel.ReadBasic.All application permissions with administrator consent. Approve graph.microsoft.com and login.microsoftonline.com in CONNECTOR_ALLOWED_HOSTS on API and worker. This release supports standard channels."
-                      : "Use the workspace ID from your Slack web URL and Channel ID from channel details. Approve slack.com in CONNECTOR_ALLOWED_HOSTS on API and worker. Direct messages and externally shared channels are excluded."}
-                  </p>
-                  <div className="setting-label-row">
-                    <span>
-                      Messages and replies become searchable text sources.
-                    </span>
-                    <HelpTooltip>
-                      Files are excluded. Set the scan limit high enough for the
-                      whole channel; an incomplete scan fails without removing
-                      sources. Imported content inherits knowledge base access,
-                      so select a base approved for this channel’s audience.
-                      Workspace and channel stay fixed after creation.
-                    </HelpTooltip>
-                  </div>
-                </>
-              ) : kind === "sharepoint" ? (
-                <>
-                  {connector ? (
-                    <>
-                      <label>
-                        SharePoint site ID
-                        <input
-                          aria-label="SharePoint site ID"
-                          value={siteId}
-                          disabled
-                        />
-                      </label>
-                      <label>
-                        SharePoint library ID
-                        <input
-                          aria-label="SharePoint library ID"
-                          value={driveId}
-                          disabled
-                        />
-                      </label>
-                      <label>
-                        SharePoint folder ID
-                        <input
-                          aria-label="SharePoint folder ID"
-                          value={folderId}
-                          disabled
-                        />
-                      </label>
-                    </>
-                  ) : (
-                    <>
-                      <label>
-                        SharePoint site URL
-                        <input
-                          aria-label="SharePoint site URL"
-                          value={siteUrl}
-                          disabled={busy}
-                          placeholder="https://yourtenant.sharepoint.com/sites/Support"
-                          onChange={(e) => {
-                            setSiteUrl(e.target.value);
-                            resetDiscovery();
-                          }}
-                        />
-                      </label>
-                      <Button
-                        disabled={busy || !secret || !siteUrl.trim()}
-                        onClick={() =>
-                          void action(async () => {
-                            const result = await requestJson<{
-                              site: Site;
-                              libraries: Library[];
-                            }>(
-                              base + "/connectors/sharepoint/discover",
-                              "POST",
-                              { action: "site", secretId: secret, siteUrl },
-                            );
-                            setSite(result.site);
-                            setSiteId(result.site.id);
-                            setLibraries(result.libraries);
-                            setDriveId("");
-                            setFolderId("");
-                            setFolders([]);
-                            setBreadcrumbs([]);
-                            setFolderConfirmed(false);
-                            setNotice(
-                              result.libraries.length
-                                ? "Choose a document library."
-                                : "No document libraries are visible. Ask your Microsoft administrator to check application access to this site.",
-                            );
-                          })
-                        }
-                      >
-                        Find site
-                      </Button>
-                      {site && (
-                        <>
-                          <p>Site: {site.displayName}</p>
-                          <label>
-                            Document library
-                            <select
-                              aria-label="SharePoint document library"
-                              value={driveId}
-                              disabled={busy}
-                              onChange={(e) => {
-                                const value = e.target.value;
-                                setDriveId(value);
-                                setFolderId("");
-                                setFolders([]);
-                                setBreadcrumbs([]);
-                                setFolderConfirmed(false);
-                                if (value) void browseFolder(value);
-                              }}
-                            >
-                              <option value="">
-                                Choose a document library
-                              </option>
-                              {libraries.map((library) => (
-                                <option key={library.id} value={library.id}>
-                                  {library.name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        </>
-                      )}
-                      {breadcrumbs.length > 0 && (
-                        <>
-                          <nav
-                            aria-label="SharePoint folder path"
-                            className="button-row"
-                          >
-                            {breadcrumbs.map((folder, index) => (
-                              <Button
-                                key={folder.id}
-                                disabled={busy}
-                                onClick={() =>
-                                  void browseFolder(
-                                    driveId,
-                                    folder,
-                                    breadcrumbs.slice(0, index + 1),
-                                  )
-                                }
-                              >
-                                {folder.name}
-                              </Button>
-                            ))}
-                          </nav>
-                          <p>Current folder: {breadcrumbs.at(-1)?.name}</p>
-                          <div className="button-row">
-                            {folders.map((folder) => (
-                              <Button
-                                key={folder.id}
-                                disabled={busy}
-                                onClick={() =>
-                                  void browseFolder(driveId, folder, [
-                                    ...breadcrumbs,
-                                    folder,
-                                  ])
-                                }
-                              >
-                                Open {folder.name}
-                              </Button>
-                            ))}
-                          </div>
-                          {folders.length === 0 && (
-                            <p>
-                              No subfolders. You can select this folder to sync
-                              its supported files.
-                            </p>
-                          )}
-                          <Button
-                            disabled={busy || folderConfirmed}
-                            onClick={() => {
-                              setFolderConfirmed(true);
-                              setNotice(
-                                `Selected folder: ${breadcrumbs.at(-1)?.name}. Save the connector to enable sync.`,
-                              );
-                            }}
-                          >
-                            Use this folder
-                          </Button>
-                        </>
-                      )}
-                    </>
                   )}
-                  <label>
-                    <input
-                      type="checkbox"
-                      aria-label="Include subfolders"
-                      checked={recursive}
-                      disabled={!!connector || busy}
-                      onChange={(e) => setRecursive(e.target.checked)}
-                    />{" "}
-                    Include subfolders
-                  </label>
-                  <div className="setting-label-row">
-                    <span>
-                      Use a SharePoint site URL, not a file sharing URL.
-                    </span>
-                    <HelpTooltip>
-                      Grant the Entra application read access to that site;
-                      Sites.Selected requires a separate site read grant.
-                      Approve graph.microsoft.com, login.microsoftonline.com and
-                      your exact SharePoint download host in
-                      CONNECTOR_ALLOWED_HOSTS on API and worker. Imported
-                      content inherits knowledge base access. Site, library and
-                      folder stay fixed after creation.
-                    </HelpTooltip>
-                  </div>
-                </>
-              ) : (
-                <>
-                  {kind === "onedrive" && (
+                {kind === "s3" ? (
+                  <>
                     <label>
-                      OneDrive drive ID
+                      S3 endpoint
                       <input
-                        aria-label="OneDrive drive ID"
-                        value={driveId}
+                        aria-label="S3 endpoint"
                         disabled={!!connector}
-                        onChange={(e) => setDriveId(e.target.value)}
-                        placeholder="Microsoft Graph drive ID"
+                        value={endpoint}
+                        onChange={(e) => setEndpoint(e.target.value)}
                       />
                     </label>
-                  )}
-                  <label>
-                    {kind === "onedrive"
-                      ? "OneDrive folder item ID"
-                      : "Google Drive folder ID"}
-                    <input
-                      aria-label={
-                        kind === "onedrive"
-                          ? "OneDrive folder item ID"
-                          : "Google Drive folder ID"
-                      }
-                      value={folderId}
-                      disabled={!!connector}
-                      onChange={(e) => setFolderId(e.target.value)}
-                      placeholder={
-                        kind === "onedrive"
-                          ? "Microsoft Graph folder item ID"
-                          : "ID from drive.google.com/drive/folders/…"
-                      }
-                    />
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      aria-label="Include subfolders"
-                      checked={recursive}
-                      disabled={!!connector}
-                      onChange={(e) => setRecursive(e.target.checked)}
-                    />{" "}
-                    Include subfolders
-                  </label>
-                  <p>
-                    {kind === "onedrive"
-                      ? "Approve graph.microsoft.com, login.microsoftonline.com and the exact tenant download host (for example yourtenant-my.sharepoint.com) in CONNECTOR_ALLOWED_HOSTS on API and worker. Use IDs returned by Microsoft Graph, rather than a sharing URL. OneDrive shortcuts are skipped; drive, folder and target knowledge base are fixed after creation."
-                      : "Approve www.googleapis.com and oauth2.googleapis.com in CONNECTOR_ALLOWED_HOSTS on both API and worker. Folder and target knowledge base are fixed after creation. Google Docs, Sheets and Slides are exported; shortcuts are skipped."}{" "}
-                    Imported files inherit knowledge base access, so choose a
-                    folder whose documents can be shared with that audience.
-                  </p>
-                </>
-              )}
+                    <p>
+                      The exact host must be approved in CONNECTOR_ALLOWED_HOSTS
+                      on the API and worker. Trusted private servers require an
+                      explicit CONNECTOR_PRIVATE_HOSTS exception.
+                    </p>
+                    <label>
+                      Region
+                      <input
+                        aria-label="S3 region"
+                        disabled={!!connector}
+                        value={region}
+                        onChange={(e) => setRegion(e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Bucket
+                      <input
+                        aria-label="S3 bucket"
+                        disabled={!!connector}
+                        value={bucket}
+                        onChange={(e) => setBucket(e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Folder prefix
+                      <input
+                        aria-label="S3 prefix"
+                        disabled={!!connector}
+                        value={prefix}
+                        onChange={(e) => setPrefix(e.target.value)}
+                        placeholder="documents/"
+                      />
+                    </label>
+                    <div className="setting-label-row">
+                      <span>Use a trailing slash to select a folder.</span>
+                      <HelpTooltip>
+                        An empty prefix selects the whole bucket. Source
+                        location and knowledge base are fixed after creation;
+                        create another connector to change them.
+                      </HelpTooltip>
+                    </div>
+                  </>
+                ) : kind === "teams" || kind === "slack" ? (
+                  <>
+                    <label>
+                      {kind === "teams"
+                        ? "Teams team ID"
+                        : "Slack workspace ID"}
+                      <input
+                        aria-label={
+                          kind === "teams"
+                            ? "Teams team ID"
+                            : "Slack workspace ID"
+                        }
+                        disabled={!!connector || busy}
+                        value={teamId}
+                        onChange={(e) => setTeamId(e.target.value)}
+                        placeholder={
+                          kind === "teams" ? "Microsoft Graph team UUID" : "T…"
+                        }
+                      />
+                    </label>
+                    <label>
+                      Channel ID
+                      <input
+                        aria-label="Channel ID"
+                        disabled={!!connector || busy}
+                        value={channelId}
+                        onChange={(e) => setChannelId(e.target.value)}
+                        placeholder={
+                          kind === "teams" ? "19:…@thread.tacv2" : "C… or G…"
+                        }
+                      />
+                    </label>
+                    <SetupGuide title="Channel requirements & permissions">
+                      {kind === "teams"
+                        ? "Use IDs from Microsoft Graph or decode the channel link. Grant ChannelMessage.Read.All and Channel.ReadBasic.All application permissions with administrator consent. Approve graph.microsoft.com and login.microsoftonline.com in CONNECTOR_ALLOWED_HOSTS on API and worker. This release supports standard channels."
+                        : "Use the workspace ID from your Slack web URL and Channel ID from channel details. Approve slack.com in CONNECTOR_ALLOWED_HOSTS on API and worker. Direct messages and externally shared channels are excluded."}
+                    </SetupGuide>
+                    <div className="setting-label-row">
+                      <span>
+                        Messages and replies become searchable text sources.
+                      </span>
+                      <HelpTooltip>
+                        Files are excluded. Set the scan limit high enough for
+                        the whole channel; an incomplete scan fails without
+                        removing sources. Imported content inherits knowledge
+                        base access, so select a base approved for this
+                        channel’s audience. Workspace and channel stay fixed
+                        after creation.
+                      </HelpTooltip>
+                    </div>
+                  </>
+                ) : kind === "sharepoint" ? (
+                  <>
+                    {connector ? (
+                      <>
+                        <label>
+                          SharePoint site ID
+                          <input
+                            aria-label="SharePoint site ID"
+                            value={siteId}
+                            disabled
+                          />
+                        </label>
+                        <label>
+                          SharePoint library ID
+                          <input
+                            aria-label="SharePoint library ID"
+                            value={driveId}
+                            disabled
+                          />
+                        </label>
+                        <label>
+                          SharePoint folder ID
+                          <input
+                            aria-label="SharePoint folder ID"
+                            value={folderId}
+                            disabled
+                          />
+                        </label>
+                      </>
+                    ) : (
+                      <>
+                        <label>
+                          SharePoint site URL
+                          <input
+                            aria-label="SharePoint site URL"
+                            value={siteUrl}
+                            disabled={busy}
+                            placeholder="https://yourtenant.sharepoint.com/sites/Support"
+                            onChange={(e) => {
+                              setSiteUrl(e.target.value);
+                              resetDiscovery();
+                            }}
+                          />
+                        </label>
+                        <Button
+                          disabled={busy || !secret || !siteUrl.trim()}
+                          onClick={() =>
+                            void action(async () => {
+                              const result = await requestJson<{
+                                site: Site;
+                                libraries: Library[];
+                              }>(
+                                base + "/connectors/sharepoint/discover",
+                                "POST",
+                                { action: "site", secretId: secret, siteUrl },
+                              );
+                              setSite(result.site);
+                              setSiteId(result.site.id);
+                              setLibraries(result.libraries);
+                              setDriveId("");
+                              setFolderId("");
+                              setFolders([]);
+                              setBreadcrumbs([]);
+                              setFolderConfirmed(false);
+                              setNotice(
+                                result.libraries.length
+                                  ? "Choose a document library."
+                                  : "No document libraries are visible. Ask your Microsoft administrator to check application access to this site.",
+                              );
+                            })
+                          }
+                        >
+                          Find site
+                        </Button>
+                        {site && (
+                          <>
+                            <p>Site: {site.displayName}</p>
+                            <label>
+                              Document library
+                              <select
+                                aria-label="SharePoint document library"
+                                value={driveId}
+                                disabled={busy}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setDriveId(value);
+                                  setFolderId("");
+                                  setFolders([]);
+                                  setBreadcrumbs([]);
+                                  setFolderConfirmed(false);
+                                  if (value) void browseFolder(value);
+                                }}
+                              >
+                                <option value="">
+                                  Choose a document library
+                                </option>
+                                {libraries.map((library) => (
+                                  <option key={library.id} value={library.id}>
+                                    {library.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </>
+                        )}
+                        {breadcrumbs.length > 0 && (
+                          <>
+                            <nav
+                              aria-label="SharePoint folder path"
+                              className="button-row"
+                            >
+                              {breadcrumbs.map((folder, index) => (
+                                <Button
+                                  key={folder.id}
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void browseFolder(
+                                      driveId,
+                                      folder,
+                                      breadcrumbs.slice(0, index + 1),
+                                    )
+                                  }
+                                >
+                                  {folder.name}
+                                </Button>
+                              ))}
+                            </nav>
+                            <p>Current folder: {breadcrumbs.at(-1)?.name}</p>
+                            <div className="button-row">
+                              {folders.map((folder) => (
+                                <Button
+                                  key={folder.id}
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void browseFolder(driveId, folder, [
+                                      ...breadcrumbs,
+                                      folder,
+                                    ])
+                                  }
+                                >
+                                  Open {folder.name}
+                                </Button>
+                              ))}
+                            </div>
+                            {folders.length === 0 && (
+                              <p>
+                                No subfolders. You can select this folder to
+                                sync its supported files.
+                              </p>
+                            )}
+                            <Button
+                              disabled={busy || folderConfirmed}
+                              onClick={() => {
+                                setFolderConfirmed(true);
+                                setNotice(
+                                  `Selected folder: ${breadcrumbs.at(-1)?.name}. Save the connector to enable sync.`,
+                                );
+                              }}
+                            >
+                              Use this folder
+                            </Button>
+                          </>
+                        )}
+                      </>
+                    )}
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        aria-label="Include subfolders"
+                        checked={recursive}
+                        disabled={!!connector || busy}
+                        onChange={(e) => setRecursive(e.target.checked)}
+                      />{" "}
+                      Include subfolders
+                    </label>
+                    <div className="setting-label-row">
+                      <span>
+                        Use a SharePoint site URL, not a file sharing URL.
+                      </span>
+                      <HelpTooltip>
+                        Grant the Entra application read access to that site;
+                        Sites.Selected requires a separate site read grant.
+                        Approve graph.microsoft.com, login.microsoftonline.com
+                        and your exact SharePoint download host in
+                        CONNECTOR_ALLOWED_HOSTS on API and worker. Imported
+                        content inherits knowledge base access. Site, library
+                        and folder stay fixed after creation.
+                      </HelpTooltip>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {kind === "onedrive" && (
+                      <label>
+                        OneDrive drive ID
+                        <input
+                          aria-label="OneDrive drive ID"
+                          value={driveId}
+                          disabled={!!connector}
+                          onChange={(e) => setDriveId(e.target.value)}
+                          placeholder="Microsoft Graph drive ID"
+                        />
+                      </label>
+                    )}
+                    <label>
+                      {kind === "onedrive"
+                        ? "OneDrive folder item ID"
+                        : "Google Drive folder ID"}
+                      <input
+                        aria-label={
+                          kind === "onedrive"
+                            ? "OneDrive folder item ID"
+                            : "Google Drive folder ID"
+                        }
+                        value={folderId}
+                        disabled={!!connector}
+                        onChange={(e) => setFolderId(e.target.value)}
+                        placeholder={
+                          kind === "onedrive"
+                            ? "Microsoft Graph folder item ID"
+                            : "ID from drive.google.com/drive/folders/…"
+                        }
+                      />
+                    </label>
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        aria-label="Include subfolders"
+                        checked={recursive}
+                        disabled={!!connector}
+                        onChange={(e) => setRecursive(e.target.checked)}
+                      />{" "}
+                      Include subfolders
+                    </label>
+                    <SetupGuide title="Source requirements & permissions">
+                      {kind === "onedrive"
+                        ? "Approve graph.microsoft.com, login.microsoftonline.com and the exact tenant download host (for example yourtenant-my.sharepoint.com) in CONNECTOR_ALLOWED_HOSTS on API and worker. Use IDs returned by Microsoft Graph, rather than a sharing URL. OneDrive shortcuts are skipped; drive, folder and target knowledge base are fixed after creation."
+                        : "Approve www.googleapis.com and oauth2.googleapis.com in CONNECTOR_ALLOWED_HOSTS on both API and worker. Folder and target knowledge base are fixed after creation. Google Docs, Sheets and Slides are exported; shortcuts are skipped."}{" "}
+                      Imported files inherit knowledge base access, so choose a
+                      folder whose documents can be shared with that audience.
+                    </SetupGuide>
+                  </>
+                )}
+                <SettingsHint label="Imported content uses knowledge base access">
+                  Choose a source whose documents can be shared with the
+                  knowledge base’s audience. Source and destination are fixed
+                  after creation.
+                </SettingsHint>
+              </fieldset>
               <details className="workspace-advanced-settings">
                 <summary>Sync limits & schedule</summary>
                 <p className="muted">
@@ -782,91 +802,100 @@ export function ConnectorsStudio({
                   </select>
                 </label>
               </details>
-              <Button
-                disabled={
-                  busy ||
-                  !name.trim() ||
-                  !kb ||
-                  !secret ||
-                  (kind === "s3"
-                    ? !bucket
-                    : kind === "teams" || kind === "slack"
-                      ? !teamId || !channelId
-                      : !folderId ||
-                        ((kind === "onedrive" || kind === "sharepoint") &&
-                          !driveId)) ||
-                  (kind === "sharepoint" && (!siteId || !folderConfirmed))
-                }
-                onClick={() =>
-                  void action(async () => {
-                    if (connector) {
-                      await requestJson(
-                        base + "/connectors/" + connector.id,
-                        "PUT",
-                        {
-                          revision: connector.revision,
-                          maxObjects: limit,
-                          name,
-                          secretId: secret,
-                          enabled: connector.enabled,
-                          scheduleMinutes: schedule ? Number(schedule) : null,
-                        },
-                      );
-                    } else {
-                      const created = await requestJson<{ id: string }>(
-                        base + "/connectors",
-                        "POST",
-                        {
-                          name,
-                          kind,
-                          knowledgeBaseId: kb,
-                          secretId: secret,
-                          selection:
-                            kind === "s3"
-                              ? {
-                                  endpoint,
-                                  region,
-                                  bucket,
-                                  prefix,
-                                  maxObjects: limit,
-                                }
-                              : kind === "teams" || kind === "slack"
-                                ? { teamId, channelId, maxObjects: limit }
-                                : kind === "sharepoint"
-                                  ? {
-                                      siteId,
-                                      driveId,
-                                      folderId,
-                                      recursive,
-                                      maxObjects: limit,
-                                    }
-                                  : kind === "onedrive"
+              <div className="connector-save-actions">
+                <Button
+                  disabled={
+                    busy ||
+                    !name.trim() ||
+                    !kb ||
+                    !secret ||
+                    (kind === "s3"
+                      ? !bucket
+                      : kind === "teams" || kind === "slack"
+                        ? !teamId || !channelId
+                        : !folderId ||
+                          ((kind === "onedrive" || kind === "sharepoint") &&
+                            !driveId)) ||
+                    (kind === "sharepoint" && (!siteId || !folderConfirmed))
+                  }
+                  onClick={() =>
+                    void action(async () => {
+                      if (connector) {
+                        await requestJson(
+                          base + "/connectors/" + connector.id,
+                          "PUT",
+                          {
+                            revision: connector.revision,
+                            maxObjects: limit,
+                            name,
+                            secretId: secret,
+                            enabled: connector.enabled,
+                            scheduleMinutes: schedule ? Number(schedule) : null,
+                          },
+                        );
+                      } else {
+                        const created = await requestJson<{ id: string }>(
+                          base + "/connectors",
+                          "POST",
+                          {
+                            name,
+                            kind,
+                            knowledgeBaseId: kb,
+                            secretId: secret,
+                            selection:
+                              kind === "s3"
+                                ? {
+                                    endpoint,
+                                    region,
+                                    bucket,
+                                    prefix,
+                                    maxObjects: limit,
+                                  }
+                                : kind === "teams" || kind === "slack"
+                                  ? { teamId, channelId, maxObjects: limit }
+                                  : kind === "sharepoint"
                                     ? {
+                                        siteId,
                                         driveId,
                                         folderId,
                                         recursive,
                                         maxObjects: limit,
                                       }
-                                    : {
-                                        folderId,
-                                        recursive,
-                                        maxObjects: limit,
-                                      },
-                          scheduleMinutes: schedule ? Number(schedule) : null,
-                        },
+                                    : kind === "onedrive"
+                                      ? {
+                                          driveId,
+                                          folderId,
+                                          recursive,
+                                          maxObjects: limit,
+                                        }
+                                      : {
+                                          folderId,
+                                          recursive,
+                                          maxObjects: limit,
+                                        },
+                            scheduleMinutes: schedule ? Number(schedule) : null,
+                          },
+                        );
+                        setSelected(created.id);
+                      }
+                      setEditing(false);
+                      setNotice(
+                        "Connector saved. Run Sync now to verify access and import sources.",
                       );
-                      setSelected(created.id);
-                    }
-                    setEditing(false);
-                    setNotice(
-                      "Connector saved. Run Sync now to verify access and import sources.",
-                    );
-                  })
-                }
-              >
-                Save connector
-              </Button>
-            </>
+                    })
+                  }
+                >
+                  Save connector
+                </Button>
+                <Button
+                  className="secondary"
+                  disabled={busy}
+                  onClick={() => setEditing(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
           )}
           {connector && !editing && (
             <>
@@ -880,16 +909,12 @@ export function ConnectorsStudio({
                   ? `Next refresh: ${new Date(connector.next_sync_at).toLocaleString()}.`
                   : ""}
               </p>
-              <p>
-                Incremental sync downloads and reindexes only new, changed or
-                previously failed content. A complete metadata scan checks
-                removals; provider delta feeds are not used.
-              </p>
-              <p>
-                Sync imports sources and queues document parsing/embedding
-                separately. Open Knowledge to check source readiness before
-                attaching it to an agent.
-              </p>
+              <SettingsHint label="Only changed content is reindexed">
+                Incremental sync downloads new, changed or failed content. A
+                metadata scan checks removals; provider delta feeds are not
+                used. Parsing and embedding run separately: check source
+                readiness in Knowledge.
+              </SettingsHint>
               <div className="button-row">
                 {canSync && (
                   <Button

@@ -1,4 +1,5 @@
 "use client";
+import { SettingsHint } from "./settings-help";
 import { HelpTooltip } from "./help-tooltip";
 import type { WorkflowNode } from "@agentconnect/schemas/workflows";
 export function WorkflowNodeDepth({
@@ -55,10 +56,10 @@ export function WorkflowNodeDepth({
               }
             />
           </label>
-          <small>
-            One attempt disables retries. Delays double between attempts, up to
-            10 seconds. Retries repeat this step only.
-          </small>
+          <SettingsHint label="One attempt disables retries">
+            Delays double between attempts, up to 10 seconds. Retries repeat
+            only this step.
+          </SettingsHint>
         </details>
       )}
       {node.type === "output" && (
@@ -96,10 +97,10 @@ export function WorkflowNodeDepth({
               <option value="json">Technical JSON</option>
             </select>
           </label>
-          <p>
-            Controls how the existing output is displayed. No new model call or
-            change to the returned data.
-          </p>
+          <SettingsHint label="Display format only">
+            Formats the existing output without a new model call or changing the
+            returned data.
+          </SettingsHint>
         </>
       )}
     </>

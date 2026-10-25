@@ -1,4 +1,5 @@
 "use client";
+import { SettingsHint, SetupGuide } from "./settings-help";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -489,18 +490,18 @@ export function ToolStudio({
                       onChange={(e) => setParameters(e.target.value)}
                     />
                   </label>
-                  <p className="muted">
-                    Credential must contain a PostgreSQL connection URL for a
-                    restricted read-only role. Results are limited to 20 rows.
-                    Queries are constructed from this configuration.
-                  </p>
+                  <SettingsHint label="Read-only database access · up to 20 rows">
+                    Use a PostgreSQL connection URL for a restricted read-only
+                    role. Queries are constructed from the allowed schema,
+                    table, columns and filters above.
+                  </SettingsHint>
                 </>
               )}
               {kind === "search" && (
-                <p className="muted">
-                  Requires a Brave Search API key. Returns up to five results
-                  with strict safe search. The agent supplies a query.
-                </p>
+                <SettingsHint label="Requires a Brave Search API key">
+                  Returns up to five results with strict safe search. The agent
+                  supplies the search query.
+                </SettingsHint>
               )}
               {kind === "mcp" && (
                 <>
@@ -580,12 +581,14 @@ export function ToolStudio({
                 )}
               </div>
             </WorkspaceSaveBar>
-            <p className="muted">
-              HTTP/MCP destinations require server-approved TOOL_ALLOWED_HOSTS.
-              Private endpoints require TOOL_PRIVATE_HOSTS; PostgreSQL uses
-              TOOL_DATABASE_HOSTS. Changing these settings requires restarting
-              the API.
-            </p>
+            <SetupGuide title="Administrator endpoint setup">
+              <p>
+                Approve HTTP/MCP destinations in TOOL_ALLOWED_HOSTS, private
+                endpoints in TOOL_PRIVATE_HOSTS, and PostgreSQL hosts in
+                TOOL_DATABASE_HOSTS. Restart the API after changing these
+                settings.
+              </p>
+            </SetupGuide>
           </form>
         )}
       </div>
