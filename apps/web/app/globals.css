@@ -6345,3 +6345,127 @@ input[type="range"] {
     flex: 1;
   }
 }
+
+/* Keep the studio conversation spacious without nesting padded cards. */
+.agent-studio-playground > .panel-header {
+  padding: 16px 24px;
+}
+.agent-studio-playground .playground-chat {
+  margin: 0;
+  border: 0;
+  border-radius: 0 0 12px 12px;
+  box-shadow: none;
+}
+.playground-chat > .panel-header {
+  padding: 14px 24px;
+}
+.playground-chat .chat-messages {
+  height: clamp(320px, 52dvh, 740px);
+  padding: 20px 24px;
+  scroll-padding-bottom: 20px;
+}
+.playground-chat .chat-message {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  line-height: 1.6;
+}
+.playground-chat .chat-message.user {
+  width: fit-content;
+  max-width: 88%;
+  margin-left: auto;
+}
+.playground-chat .chat-welcome {
+  padding: 32px 12px;
+}
+.playground-chat .chat-composer {
+  padding: 14px 24px;
+}
+.playground-chat > .playground-voice,
+.playground-chat > details {
+  padding: 10px 24px;
+  font-size: 0.875rem;
+}
+.playground-voice .voice-controls {
+  padding: 12px 0 0;
+  border: 0;
+}
+.deployment-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.deployment-card .version-row {
+  border: 0;
+}
+.deployment-embed {
+  padding: 16px 20px;
+  border-top: 1px solid var(--line);
+}
+.deployment-embed > summary {
+  cursor: pointer;
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.deployment-embed-body {
+  display: grid;
+  gap: 20px;
+  padding-top: 20px;
+}
+.embed-snippet {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.embed-snippet-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.embed-snippet p {
+  margin: 0;
+  font-size: 0.875rem;
+}
+.embed-snippet textarea {
+  width: 100%;
+  min-height: 88px;
+  padding: 12px;
+  font-family: monospace;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+  resize: vertical;
+}
+@media (max-width: 640px) {
+  .agent-studio-playground > .panel-header,
+  .playground-chat > .panel-header,
+  .playground-chat .chat-messages,
+  .playground-chat .chat-composer,
+  .playground-chat > details {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .playground-chat .chat-message.user {
+    max-width: 95%;
+  }
+}
+/* Override generic panel gutters for the edge-to-edge playground shell. */
+.agent-studio-playground,
+.agent-studio-playground .playground-chat {
+  padding: 0;
+}
+.agent-studio-playground > .panel-header,
+.agent-studio-playground > .studio-tabs,
+.playground-chat > .panel-header {
+  margin: 0;
+}
+.agent-studio-playground > .notice {
+  margin: 0;
+  padding: 10px 24px;
+}
+.agent-studio-playground > .studio-tabs {
+  padding-block: 10px;
+}
+.deployment-card .version-row {
+  padding: 16px 20px;
+}

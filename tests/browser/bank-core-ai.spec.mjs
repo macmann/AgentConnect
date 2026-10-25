@@ -307,6 +307,60 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
     "put",
   );
   await sql`UPDATE deployments SET widget_settings=${sql.json({ enabled: true, access: "restricted", allowedOrigins: ["http://localhost:4567"], theme: "light", position: "right", launcher: "Chat", greeting: "Bank support", width: 380, height: 560, language: "en" })} WHERE id=${deployment}`;
+  await page.goto(url("Agents", `&agent=${agent}&stage=playground`));
+  await expect(page.locator(".playground-chat")).toBeVisible();
+  await expect(
+    page.getByLabel("Enable browser voice", { exact: true }),
+  ).not.toBeVisible();
+  await page.getByText("Voice options", { exact: true }).click();
+  await expect(
+    page.getByLabel("Enable browser voice", { exact: true }),
+  ).toBeVisible();
+  await page.getByText("Voice options", { exact: true }).click();
+  await page
+    .getByLabel("Message", { exact: true })
+    .fill("Where can I find approved recovery guidance?");
+  await page.getByLabel("Message", { exact: true }).press("Enter");
+  await expect(
+    page.getByText("Follow the approved recovery screen [1].", { exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    fullPage: true,
+    path: test.info().outputPath("playground-desktop.png"),
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    )
+    .toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("playground-mobile.png"),
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(url("Agents", `&agent=${agent}&stage=publish`));
+  await page.reload();
+  await page.getByText("Embed on your website", { exact: true }).click();
+  await expect(
+    page.getByLabel("Inline iframe embed code", { exact: true }),
+  ).toHaveValue(new RegExp(`/chat/${deployment}`));
+  await expect(
+    page.getByLabel("Floating chat widget embed code", { exact: true }),
+  ).toHaveValue(new RegExp(`data-deployment="${deployment}"`));
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page
+    .getByRole("button", { name: "Copy iframe code", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Inline iframe code copied." }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
+    `<iframe src="http://localhost:3000/chat/${deployment}"`,
+  );
+  await page.screenshot({ path: test.info().outputPath("publish-embed.png") });
   await page.goto(url("Channels"));
   await page
     .getByText("Bank support · Bank support draft", { exact: true })
@@ -350,6 +404,17 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
   ).toBeEnabled();
   const guest = await browser.newContext();
   try {
+    const embedded = await guest.newPage();
+    await embedded.setContent(
+      `<iframe title="Embedded assistant" src="http://localhost:3000/chat/${deployment}" style="width:100%;height:720px;border:0"></iframe>`,
+    );
+    await expect(
+      embedded
+        .frameLocator("iframe")
+        .getByRole("heading", { name: "Bank Care", exact: true })
+        .first(),
+    ).toBeVisible();
+    await embedded.close();
     const chat = await guest.newPage();
     await chat.goto(`/chat/${deployment}`);
     await expect(

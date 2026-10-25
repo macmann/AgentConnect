@@ -406,18 +406,22 @@ export function ChatPanel({
     setTraceId("");
   }
   return (
-    <section className="panel chat-panel">
+    <section
+      className={`panel chat-panel${diagnostics ? " playground-chat" : ""}`}
+    >
       <div className="panel-header">
         <div>
           <h3>
             <Sparkles size={17} />
-            {name}
+            {diagnostics ? "Conversation" : name}
           </h3>
-          <p>
-            {endpoint.startsWith("/public")
-              ? "Published agent · hosted chat"
-              : "Draft playground · each new chat snapshots the saved draft"}
-          </p>
+          {!diagnostics && (
+            <p>
+              {endpoint.startsWith("/public")
+                ? "Published agent · hosted chat"
+                : "Test your saved draft"}
+            </p>
+          )}
         </div>
         <button
           className="text-button"
@@ -716,20 +720,40 @@ export function ChatPanel({
           {error}
         </p>
       )}
-      <VoiceControls
-        text={
-          [...messages].reverse().find((m) => m.role === "assistant")
-            ?.content ?? ""
-        }
-        onTranscript={setInput}
-        disabled={
-          busy ||
-          support.sending ||
-          supportPaused ||
-          supportLoading ||
-          restoring
-        }
-      />
+      {diagnostics ? (
+        <details className="playground-voice">
+          <summary>Voice options</summary>
+          <VoiceControls
+            text={
+              [...messages].reverse().find((m) => m.role === "assistant")
+                ?.content ?? ""
+            }
+            onTranscript={setInput}
+            disabled={
+              busy ||
+              support.sending ||
+              supportPaused ||
+              supportLoading ||
+              restoring
+            }
+          />
+        </details>
+      ) : (
+        <VoiceControls
+          text={
+            [...messages].reverse().find((m) => m.role === "assistant")
+              ?.content ?? ""
+          }
+          onTranscript={setInput}
+          disabled={
+            busy ||
+            support.sending ||
+            supportPaused ||
+            supportLoading ||
+            restoring
+          }
+        />
+      )}
       {support.state &&
         (support.state.access.canRequest ||
           support.state.access.offer ||
