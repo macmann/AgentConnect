@@ -1,4 +1,5 @@
 "use client";
+import { SettingsHint } from "./settings-help";
 import { MultilingualBenchmarkBuilder } from "./multilingual-benchmark-builder";
 import {
   MultilingualReport,
@@ -601,8 +602,11 @@ export function QualityStudio({
               {gate?.settings.enabled
                 ? `Enabled · requires ${Math.round(gate.settings.minPassRate * 100)}% passing cases`
                 : "No publication gate enabled for the selected agent."}{" "}
-              Provider failures always block a gated publication.
             </p>
+            <SettingsHint label="Provider errors block publication">
+              When a publication gate is enabled, a provider failure blocks
+              publishing regardless of the required pass rate.
+            </SettingsHint>
             {permitted(role, "operations:manage") && (
               <>
                 <label>
@@ -670,11 +674,10 @@ export function QualityStudio({
         <div className="panel-header">
           <div>
             <h3>Evaluation history</h3>
-            <p>
-              Failed cases highlight prompts and knowledge coverage that need
-              attention. LLM scores are advisory; review outputs before
-              publication.
-            </p>
+            <SettingsHint label="Review failed cases before publishing">
+              Failed cases highlight prompts and knowledge gaps. LLM scores are
+              advisory; review the actual outputs before publication.
+            </SettingsHint>
           </div>
         </div>
         <div className="studio-form">

@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { requestJson } from "./agent-client";
+import { SettingsHint, SetupGuide } from "./settings-help";
 import { Button } from "./button";
 export function ConnectorSignIn({
   workspaceId,
@@ -63,31 +64,32 @@ export function ConnectorSignIn({
         ? "Slack"
         : "Microsoft";
   return (
-    <section
-      className="workspace-advanced-settings"
-      aria-label="Guided source sign-in"
-    >
-      <h4>1. Sign in to {name}</h4>
-      <p>
-        Authorize read access to the account that can access your selected
-        folder or channel. Credentials stay encrypted on the server. Imported
-        content inherits the knowledge base’s audience.
-      </p>
+    <section className="connector-sign-in" aria-label="Guided source sign-in">
+      <h4>Connect your {name} account</h4>
+      <SettingsHint label="Read-only access">
+        Sign in with an account that can access your folder or channel.
+        Credentials are encrypted on the server. Imported content uses the
+        knowledge base’s audience.
+      </SettingsHint>
       {providers.isPending ? (
         <p>Checking sign-in availability…</p>
       ) : !ready ? (
-        <p>
-          Administrator setup required. Configure the provider OAuth app and
-          redirect URL in{" "}
-          <a
-            href="https://github.com/macmann/AgentConnect/blob/main/docs/connectors.md"
-            target="_blank"
-            rel="noreferrer"
-          >
-            the connector setup guide
-          </a>
-          , or select an existing workspace credential below.
-        </p>
+        <>
+          <p className="muted">
+            Sign-in isn’t configured. Select a credential below.
+          </p>
+          <SetupGuide title="Administrator sign-in setup">
+            Configure the provider OAuth app and redirect URL in{" "}
+            <a
+              href="https://github.com/macmann/AgentConnect/blob/main/docs/connectors.md"
+              target="_blank"
+              rel="noreferrer"
+            >
+              the connector setup guide
+            </a>
+            . You can also use an existing workspace credential.
+          </SetupGuide>
+        </>
       ) : (
         <Button
           disabled={busy || !!attempt}

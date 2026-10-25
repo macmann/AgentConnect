@@ -1,4 +1,5 @@
 "use client";
+import { HelpTooltip } from "./help-tooltip";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
@@ -212,10 +213,17 @@ export function RetentionStudio({
           >
             <div className="retention-fields">
               {fields.map(([, key, label, description]) => (
-                <label key={key}>
-                  <strong>{label}</strong>
-                  <span>{description}</span>
+                <div className="retention-field" key={key}>
+                  <div className="settings-field-heading">
+                    <label htmlFor={`retention-${key}`}>{label}</label>
+                    <HelpTooltip
+                      label={`About ${label.toLowerCase()} retention`}
+                    >
+                      {description}
+                    </HelpTooltip>
+                  </div>
                   <input
+                    id={`retention-${key}`}
                     aria-label={`${label} retention days`}
                     type="number"
                     min="1"
@@ -234,8 +242,8 @@ export function RetentionStudio({
                       setConfirmed(false);
                     }}
                   />
-                  <small>Leave blank to keep indefinitely.</small>
-                </label>
+                  <small>Days · blank keeps indefinitely</small>
+                </div>
               ))}
             </div>
             <label className="retention-toggle">

@@ -1833,19 +1833,21 @@ export function KnowledgeStudio({
                     models={processingModels.data ?? []}
                   />
                   {canModel && (
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        name="approvalRequired"
-                        defaultChecked={base.approval_required}
-                      />
-                      Require reviewed releases for retrieval
-                    </label>
+                    <div className="setting-label-row">
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          name="approvalRequired"
+                          defaultChecked={base.approval_required}
+                        />
+                        Require reviewed releases for retrieval
+                      </label>
+                      <HelpTooltip label="About reviewed releases">
+                        Source edits stay out of agent answers until a release
+                        is reviewed and published.
+                      </HelpTooltip>
+                    </div>
                   )}
-                  <p className="muted">
-                    When review is required, source edits stay out of agent
-                    answers until a release is reviewed and published.
-                  </p>
                   <Button type="submit" disabled={busy}>
                     Save knowledge settings
                   </Button>

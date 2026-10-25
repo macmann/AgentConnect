@@ -1,4 +1,5 @@
 "use client";
+import { SettingsHint, SetupGuide } from "./settings-help";
 import { MessagingChannels } from "./messaging-channels";
 import { CustomerBranding } from "./customer-branding";
 import { useState } from "react";
@@ -265,12 +266,12 @@ function WidgetEditor({
                 setSaved(false);
               }}
             />
-            <small>
-              Exact origins, one per line. Include port when needed. HTTP is
-              only supported on localhost.
-            </small>
+            <small>One website origin per line.</small>
           </label>
         )}
+        <SettingsHint label="Website access uses exact origins">
+          Include a port when needed. HTTPS is required except on localhost.
+        </SettingsHint>
         <div className="form-grid">
           <label>
             Theme
@@ -363,11 +364,13 @@ function WidgetEditor({
         Website embed code
         <textarea readOnly value={`<script async ${attributes}></script>`} />
       </label>
-      <p className="muted">
-        Add this script before your website’s closing body tag. The widget
-        displays text summaries; full generated components are available in
-        hosted chat. No API key belongs in this snippet.
-      </p>
+      <SetupGuide title="Install the website widget">
+        <p>
+          Add the script before your website’s closing body tag. No API key
+          belongs in this snippet. The widget displays text summaries; full
+          generated components are available in hosted chat.
+        </p>
+      </SetupGuide>
     </div>
   );
 }
