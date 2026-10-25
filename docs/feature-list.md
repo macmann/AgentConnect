@@ -31,7 +31,8 @@ This inventory describes implemented product capabilities, not every requirement
 - Text/vector/hybrid retrieval, minimum relevance, retrieved passage limits and citations.
 - Automatic, always and never-retrieve knowledge-use policies with usage instructions.
 - Strict structured knowledge decisions, portable JSON parsing, one repair attempt and logged raw-query retrieval fallback.
-- Optional follow-up query rewriting and model-based reranking.
+- Contextual follow-up search rewriting with safe fallback; optional standalone rewriting and model-based reranking.
+- Bounded document-neighbor context, chronological citations, overlap deduplication and tokenizer-aware context selection. See [conversational retrieval](conversational-rag.md).
 - Table-aware retrieval and provenance; complex PDF tables still need review.
 - Optional scanned-PDF OCR with required worker utilities.
 - Knowledge review and approved releases for agents requiring reviewed content.

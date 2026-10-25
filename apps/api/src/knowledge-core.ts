@@ -1,4 +1,6 @@
 import { metadataFilter } from "@agentconnect/schemas/knowledge-metadata";
+import { expandKnowledgeNeighbors } from "./knowledge-neighbors.js";
+import { lexicalSearchQuery } from "@agentconnect/rag/context-selection";
 import {
   selectEvidence,
   DEFAULT_QA_MIN_SCORE,
@@ -104,6 +106,7 @@ function vectorLiteral(vector: number[], dimensions: number) {
   return "[" + vector.join(",") + "]";
 }
 export class PostgresRagTool implements RagTool {
+  expandNeighbors = expandKnowledgeNeighbors;
   constructor(private factory: EmbeddingFactory = defaultEmbeddingFactory) {}
   async execute(
     query: string,
@@ -129,6 +132,7 @@ export class PostgresRagTool implements RagTool {
           ? metadataFilter.parse(options.metadataFilter)
           : { tagsAll: [], attributes: {} };
         observationContent(span, "input", query);
+        const lexicalQuery = lexicalSearchQuery(query);
         await validateKnowledgeIds(
           ids,
           context.workspaceId,
@@ -184,8 +188,8 @@ export class PostgresRagTool implements RagTool {
           const dim = sql.unsafe(String(kb.dimensions));
           const filters = options.sourceIds ?? [];
           const preferQa = options.answerSourcePolicy === "prefer_approved_qa";
-          const releaseSelect = sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,c.title,c.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,c.metadata->'sourceTags' AS source_tags,c.metadata->'sourceAttributes' AS source_attributes,c.kind,true AS reviewed,c.release_id,c.source_revision FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=${releaseId ?? null} AND c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status<>'deleted' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[])) AND COALESCE(c.metadata->'sourceTags','[]'::jsonb) @> ${sql.json(metadata.tagsAll)}::jsonb AND COALESCE(c.metadata->'sourceAttributes','{}'::jsonb) @> ${sql.json(metadata.attributes)}::jsonb`;
-          const currentSelect = sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,d.title,d.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${query})) AS lexical_score,s.metadata->'tags' AS source_tags,s.metadata->'attributes' AS source_attributes,s.kind,false AS reviewed,NULL::uuid AS release_id,s.revision AS source_revision FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id JOIN knowledge_documents d ON d.id=c.document_id WHERE c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status='ready' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[])) AND COALESCE(s.metadata->'tags','[]'::jsonb) @> ${sql.json(metadata.tagsAll)}::jsonb AND COALESCE(s.metadata->'attributes','{}'::jsonb) @> ${sql.json(metadata.attributes)}::jsonb`;
+          const releaseSelect = sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.ordinal,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,c.title,c.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${lexicalQuery})) AS lexical_score,c.metadata->'sourceTags' AS source_tags,c.metadata->'sourceAttributes' AS source_attributes,c.kind,true AS reviewed,c.release_id,c.source_revision FROM knowledge_release_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.release_id=${releaseId ?? null} AND c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status<>'deleted' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[])) AND COALESCE(c.metadata->'sourceTags','[]'::jsonb) @> ${sql.json(metadata.tagsAll)}::jsonb AND COALESCE(c.metadata->'sourceAttributes','{}'::jsonb) @> ${sql.json(metadata.attributes)}::jsonb`;
+          const currentSelect = sql`SELECT c.id,c.document_id,c.source_id,c.knowledge_base_id,c.ordinal,c.content,c.page,c.heading,${kb.parent_context ? sql`c.metadata->>'parentContent'` : sql`NULL::text`} AS parent_content,d.title,d.source_url,1-(c.embedding::vector(${dim}) <=> ${literal}::vector(${dim})) AS vector_score,ts_rank_cd(c.search_vector,websearch_to_tsquery('simple',${lexicalQuery})) AS lexical_score,s.metadata->'tags' AS source_tags,s.metadata->'attributes' AS source_attributes,s.kind,false AS reviewed,NULL::uuid AS release_id,s.revision AS source_revision FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id JOIN knowledge_documents d ON d.id=c.document_id WHERE c.knowledge_base_id=${kb.id} AND c.workspace_id=${context.workspaceId} AND c.organization_id=${context.organizationId} AND s.status='ready' AND (cardinality(${filters}::uuid[])=0 OR c.source_id=ANY(${filters}::uuid[])) AND COALESCE(s.metadata->'tags','[]'::jsonb) @> ${sql.json(metadata.tagsAll)}::jsonb AND COALESCE(s.metadata->'attributes','{}'::jsonb) @> ${sql.json(metadata.attributes)}::jsonb`;
           const select = approved ? releaseSelect : currentSelect;
           let qaReleaseAvailable = approved;
           if (preferQa && !approved && releaseId) {
@@ -282,7 +286,7 @@ export class PostgresRagTool implements RagTool {
                       await Promise.all(
                         selections.map(
                           (selection) =>
-                            sql`${selection} AND c.search_vector @@ websearch_to_tsquery('simple',${query}) ORDER BY lexical_score DESC LIMIT 30`,
+                            sql`${selection} AND c.search_vector @@ websearch_to_tsquery('simple',${lexicalQuery}) ORDER BY lexical_score DESC LIMIT 30`,
                         ),
                       )
                     ).flat();
@@ -365,6 +369,8 @@ export class PostgresRagTool implements RagTool {
             .map(({ row, fusion }) => ({
               chunkId: String(row.id),
               sourceId: String(row.source_id),
+              vectorScore: Number(row.vector_score),
+              lexicalScore: Number(row.lexical_score),
               vectorRank:
                 semantic.findIndex((r) => r.id === row.id) + 1 || null,
               lexicalRank:
@@ -411,6 +417,8 @@ export class PostgresRagTool implements RagTool {
               knowledgeBaseId: kb.id,
               mode: options.mode,
               rrfConstant: 60,
+              minimumScore: options.minScore,
+              minimumScoreMetric: "semantic_similarity",
               results: fused,
             }),
           );
@@ -437,6 +445,9 @@ export class PostgresRagTool implements RagTool {
               reviewStatus: row.reviewed ? "approved" : "current",
               ...(row.release_id ? { releaseId: String(row.release_id) } : {}),
               sourceRevision: Number(row.source_revision),
+              ...(row.ordinal === null
+                ? {}
+                : { chunkIndex: Number(row.ordinal) }),
               chunkId: String(row.id),
               documentId: String(row.document_id),
               sourceId: String(row.source_id),

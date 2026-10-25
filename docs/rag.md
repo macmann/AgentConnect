@@ -126,3 +126,7 @@ Migration **0040** adds the durable tagging queue. A separate `metadata_tagging`
 Run `pnpm db:migrate` and restart API and worker. No metadata generation occurs with the upload switch off and no explicit request.
 
 For step-by-step metadata workflows, limits and troubleshooting, see the [metadata tagging guide](metadata-tagging.md).
+
+## Conversational context and adjacent chunks
+
+See [conversational retrieval](conversational-rag.md) for the contextual-query flow, bounded neighbor expansion, unchanged score eligibility, token budgets, Langfuse diagnostics, configuration and migration 0042.

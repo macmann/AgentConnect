@@ -20,10 +20,13 @@ Private Playground **Token and context breakdown** shows selected model, attempt
 
 In **Agent → Configure → Knowledge → Advanced retrieval settings**:
 
-- **Rewrite follow-up questions for search:** recent conversation turns help turn references such as “And its rate?” into standalone search queries. Both the rewrite and original query are searched and their bounded candidate pools are merged. The answer still uses the original question.
-- **Rerank retrieved passages:** the configured chat model scores a candidate pool of 5–30 passages against the original question. The best candidates become the final configured number of retrieved passages. This is model-based reranking, not a dedicated cross-encoder service.
+- **Rewrite follow-up questions for search:** recent conversation turns help turn references such as “And its rate?” into standalone search queries. Successful rewrites are used by both retrieval lanes. Failed rewrites search the original query. Conversational rewriting is enabled by default; standalone rewriting remains opt-in. The answer still uses the original question.
+- **Rewrite standalone queries too:** opt into rewriting questions even when they do not need recent conversation context. The global rewrite switch gates both rewrite options.
+- **Rerank retrieved passages:** score the candidate pool against the effective search query (the contextual rewrite when available). Use the existing configured LLM or dedicated reranker, including approved Cohere models. The selected evidence remains bounded by passage and context budgets.
 
-Each option adds a bounded model call and its usage is counted. Rewrite/ranking JSON is validated strictly. A malformed result or an enhancement-call failure falls back to the original query or existing retrieval order. Cancellation and access/retrieval errors propagate. Rankings cannot invent sources, expand access or bypass minimum similarity, approved-release, public-access or citation rules. Token budgets apply to enhancement calls even when general context optimization is disabled; oversized rerank inputs retain retrieval order. Auxiliary output limits are capped by the agent output limit.
+Rewriting and reranking add bounded provider calls when used, and their usage is counted. Rewrite/ranking JSON is validated strictly. A malformed result or an enhancement-call failure falls back to the original query or existing retrieval order. Cancellation and access/retrieval errors propagate. Rankings cannot invent sources, expand access or bypass minimum similarity, approved-release, public-access or citation rules. Token budgets apply to enhancement calls even when general context optimization is disabled; oversized rerank inputs retain retrieval order. Auxiliary output limits are capped by the agent output limit.
+
+Comprehensive requests can then expand bounded same-document neighbors before final deduplication, document ordering and token-budget selection. Specific numbered-week requests stay narrow. Existing minimum-score values are unchanged. See [conversational retrieval](conversational-rag.md) for the full flow, environment switches, trace example and migration 0042.
 
 ## Table retrieval
 
@@ -41,6 +44,8 @@ Reindex to apply changed OCR settings. Review recognition accuracy, numbers and 
 
 ## Validation
 
-Regression coverage includes exact routing and workspace-scoped immutable snapshots, cross-provider transient fallback, blocked errors/partial output/cancellation, lightweight context checks, per-model cost calculations, retained original search evidence, strict reranking identities, sparse spreadsheet columns and scanned-PDF provenance/limits. A local OCR integration test runs when Poppler and Tesseract are installed. Browser coverage exercises the configuration controls alongside reviewed knowledge, grounded hosted chat and widget support handoff.
+Regression coverage includes exact routing and workspace-scoped immutable snapshots, cross-provider transient fallback, blocked errors/partial output/cancellation, lightweight context checks, per-model cost calculations, contextual search with original-query fallback, strict reranking identities, sparse spreadsheet columns and scanned-PDF provenance/limits. A local OCR integration test runs when Poppler and Tesseract are installed. Browser coverage exercises the configuration controls alongside reviewed knowledge, grounded hosted chat and widget support handoff.
 
 Verified in this implementation: 362 API tests passed, followed by 77 targeted regressions for routing, quotas, customer insights, quality, workflows and support triage. All 12 feature tests passed again after the OCR temporary-directory refinement, including actual Poppler/Tesseract recognition. The browser scenario verified persisted routing/OCR settings, successful rewriting/reranking diagnostics, grounded hosted responses and widget handoff. Production build, type checks, lint and repeat migrations passed.
+
+See [conversational retrieval](conversational-rag.md) for neighbor expansion, context budgets, runtime settings, and migration 0042.

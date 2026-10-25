@@ -19,6 +19,38 @@ export function tokenCount(
     ? Buffer.byteLength(text)
     : encodings[tokenizer].encode(text).length;
 }
+
+/** Reserve remaining model space without re-enabling disabled user budgets. */
+export function knowledgeContextBudget(
+  c: AgentConfig,
+  model: ModelSnapshot,
+  messages: ChatMessage[],
+  summary = "",
+) {
+  const preview = componentPreview(
+    {
+      ...c,
+      contextControls: {
+        ...c.contextControls,
+        inputBudget: c.contextControls.enabled
+          ? c.contextControls.inputBudget
+          : null,
+      },
+    },
+    model,
+    messages,
+    "",
+    "",
+    summary,
+  );
+  return Math.max(
+    0,
+    Math.min(
+      c.contextControls.enabled ? c.contextControls.knowledgeBudget : Infinity,
+      preview.remaining - 256,
+    ),
+  );
+}
 export function componentPreview(
   c: AgentConfig,
   model: ModelSnapshot,

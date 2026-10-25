@@ -7,6 +7,7 @@ export interface Citation {
   sourceUrl: string | null;
   content: string;
   score: number;
+  neighborOf?: string;
 }
 export function Citations({
   sources,
@@ -34,7 +35,11 @@ export function Citations({
           {s.sourceUrl?.startsWith("s3://") && (
             <small>Source: {s.sourceUrl}</small>
           )}
-          <small>Similarity {s.score.toFixed(3)}</small>
+          <small>
+            {s.neighborOf
+              ? "Adjacent document context"
+              : `Similarity ${s.score.toFixed(3)}`}
+          </small>
         </details>
       ))}
     </div>

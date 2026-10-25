@@ -79,6 +79,16 @@ You can close the upload form or switch knowledge bases while transfers continue
 
 Subsection navigation preserves unsaved form edits. The save bar shows actual dirty state. If someone updates the draft elsewhere, reload the latest revision rather than overwriting it. New Playground chats snapshot the saved draft, so start a new chat after changing settings.
 
+### Follow-up questions and multi-passage answers
+
+Under **Configure → Knowledge → Advanced retrieval settings**, **Rewrite follow-up questions for search** is enabled by default. It uses recent conversation context to turn “How about Waing?” into a standalone search for the previous topic and the new subject, without inventing a full name or unsupported scope. Both vector and lexical search use the rewritten query; the original message remains in chat. Disable this setting if follow-up rewriting is unsuitable. **Rewrite standalone queries too** is a separate opt-in setting.
+
+After retrieval and optional reranking, comprehensive questions can include adjacent passages from the same document, within access, release, chunk and token limits. This helps when a task list or timeline spans multiple chunks. A specific numbered-week question stays narrow. Adjacent context is labelled separately from independently scored search hits. Existing minimum-relevance settings are unchanged; this feature does not make missing content available or guarantee a complete answer.
+
+Save and start a new Playground chat after changing these settings. Test a standalone question, a follow-up that changes its subject, a request covering multiple weeks, and a question about one week. Inspect citations for supporting passages. If an answer misses information, compare the original/rewrite, both search lanes, fusion, expansion and selected context in Langfuse. Query and passage text is visible only when the operator enables content capture.
+
+Installation-wide switches, budgets, migration 0042 and an example trace are documented in [conversational retrieval](conversational-rag.md).
+
 ### Test grounding
 
 Ask a question whose answer is in your uploaded document. Check that the answer is supported and its citations identify the relevant source. Then ask an unsupported question and verify that it does not invent an answer.

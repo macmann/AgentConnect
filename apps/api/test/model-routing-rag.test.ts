@@ -468,7 +468,7 @@ function citation(id: number, content: string): Citation {
     lexicalScore: 0.2,
   };
 }
-test("Rewrite retains original search evidence; rerank can only reorder authorized candidates and preserves citation identity", async () => {
+test("Rewrite searches the contextual query; rerank can only reorder authorized candidates and preserves citation identity", async () => {
   const options = settings().rag;
   options.queryRewrite = true;
   options.rerank = true;
@@ -508,7 +508,7 @@ test("Rewrite retains original search evidence; rerank can only reorder authoriz
     { workspaceId: workspace, organizationId: org, publicAccess: true },
     signal(),
   );
-  assert.deepEqual(queries, ["Business savings rates", "And the rate?"]);
+  assert.deepEqual(queries, ["Business savings rates"]);
   assert.equal(result.sources[0]!.chunkId, b.chunkId);
   assert.equal(result.sources[0]!.id, 1);
   assert.equal(result.sources[0]!.page, 2);

@@ -11,6 +11,7 @@ import { enhancedRetrieval } from "./rag-enhancements.js";
 import { advanceJourney, generateGroundedAnswer } from "./bank-runtime.js";
 import {
   componentPreview,
+  knowledgeContextBudget,
   fitHistory,
   summarizeHistory,
   reserveTokens,
@@ -428,7 +429,7 @@ async function streamChat(
       let sources: Citation[] = [];
       let citations: Citation[] = [];
       let retrievalMs: number | null = null;
-      let retrievalDiagnostics: Record<string, string | number> = {};
+      let retrievalDiagnostics: Record<string, string | number | boolean> = {};
       let answerKind:
         "answer" | "clarify" | "no_answer" | "journey" | "handoff" | null =
         null;
@@ -539,6 +540,15 @@ async function streamChat(
                 workspaceId: conversation.workspace_id,
                 organizationId: conversation.organization_id,
                 publicAccess: !!conversation.deployment_id,
+                rewriteModel: model.modelId,
+                countTokens: (text) =>
+                  tokenCount(text, c.contextControls.tokenizer),
+                maxContextTokens: knowledgeContextBudget(
+                  c,
+                  model,
+                  messages,
+                  continuation.grounding,
+                ),
                 ...(integration?.includeDetails
                   ? { onStage: (stage: RetrievalStage) => stages.push(stage) }
                   : {}),
@@ -848,6 +858,7 @@ async function streamChat(
               c.modelRouting.enabled ||
               c.modelRouting.fallbackModelIds.length ||
               c.rag.queryRewrite ||
+              config.QUERY_REWRITE_ENABLED ||
               c.rag.rerank
             ) {
               inputTokens = metered.usage().inputTokens;
