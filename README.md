@@ -235,7 +235,7 @@ See [validation](docs/validation.md) and scenario source files for prerequisites
 
 ## Documentation index
 
-- **Building agents:** [Agent configuration](docs/agent-configure.md), [runtime](docs/agent-runtime.md), [RAG](docs/rag.md), [tools](docs/tools.md), [model routing and retrieval](docs/model-routing-rag.md).
+- **Building agents:** [Agent configuration](docs/agent-configure.md), [runtime](docs/agent-runtime.md), [RAG](docs/rag.md), [conversational retrieval and context selection](docs/conversational-rag.md), [tools](docs/tools.md), [model routing and retrieval](docs/model-routing-rag.md).
 - **Knowledge and integrations:** [connectors](docs/connectors.md), [integration scope](docs/integrations.md), [quality](docs/quality.md).
 - **Customer experience:** [channels and voice](docs/channels-voice.md), [customer engagement](docs/customer-engagement.md), [rich responses](docs/generative-experience.md), [human support](docs/human-support.md), [core banking AI](docs/bank-core-ai.md).
 - **Workflows and operations:** [workflows](docs/workflows.md), [operations](docs/operations.md), [customer insights and token controls](docs/customer-insights-context.md).
@@ -261,6 +261,40 @@ Approve website hosts in API/worker `KNOWLEDGE_ALLOWED_HOSTS`; Firecrawl also ne
 ### Advanced knowledge processing
 
 Knowledge bases can optionally enable advanced processing for documents with complex tables. It keeps original values, separates tables, combines grouped headers and creates token-aware chunks. Optional LLM assistance selects validated boundaries during ingestion; standard processing remains the default and makes no assistance calls. Sources provide an extraction preview with review warnings. Parent-context expansion is a separate retrieval switch and can increase chat context usage. Existing sources require manual Reingest to apply processing changes; approved releases preserve their indexed context. See [the user guide](docs/user-guide.md#advanced-document-processing-and-financial-tables) for setup and financial-document limitations. Migration **0031** adds these settings and release metadata.
+
+### Conversational RAG and context selection
+
+Agent chat and workflow agent steps use this retrieval flow:
+
+```text
+Knowledge usage policy / planner
+  → contextual query rewrite
+  → vector + lexical search and reciprocal rank fusion (RRF)
+  → optional reranking
+  → bounded same-document neighbor expansion
+  → deduplication, document ordering and token-budget selection
+  → grounded response with citations
+```
+
+Follow-up questions such as “How about Waing?” retain the previous topic when supported by the recent conversation. Rewriting uses up to six recent messages, strict JSON, deterministic sampling and a five-second deadline; failures search the original query. Stored conversation messages are unchanged. Under **Agent → Configure → Knowledge**, advanced retrieval settings let builders disable follow-up rewriting or opt into rewriting standalone questions too.
+
+Comprehensive requests can include nearby passages from the same document so an answer can cover information split across chunks. Specific numbered-week questions stay narrow. Expansion respects tenant, source, revision, release, public-access and metadata restrictions; final context stays within chunk and tokenizer budgets. **Existing minimum-relevance and approved-Q&A thresholds are unchanged.** Raw API/MCP knowledge search remains a search operation; the conversational pipeline runs in agent execution.
+
+API and worker configuration defaults:
+
+```dotenv
+QUERY_REWRITE_ENABLED=true
+RAG_NEIGHBOR_EXPANSION_ENABLED=true
+RAG_NEIGHBOR_PREVIOUS=1
+RAG_NEIGHBOR_NEXT=1
+RAG_MAX_CONTEXT_CHUNKS=6
+```
+
+Restart both services after changing these values. Existing per-agent retrieval mode, passage/candidate limits, reranker and context budgets still apply. Expansion adds no LLM call; rewriting and optional reranking add latency and may consume model usage.
+
+Apply **migration 0042** with `pnpm db:migrate` before starting the updated API/worker; Coolify bootstrap applies migrations automatically. It preserves chunk ordering in reviewed releases without changing ingestion or score thresholds. Historical release chunks whose order cannot be safely recovered remain searchable but are skipped for neighbor expansion; publish a new reviewed release to capture their order.
+
+Langfuse exposes rewrite outcomes, vector/lexical scores, fusion eligibility, expanded chunk IDs and final context selection. Query/passage text follows the existing content-capture opt-in. See the [complete process, configuration and trace example](docs/conversational-rag.md).
 
 ### Langfuse AI traces
 

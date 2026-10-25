@@ -152,6 +152,7 @@ export const ragConfig = z
       .default("balanced"),
     qaMinScore: z.number().min(0).max(1).default(0.75),
     queryRewrite: z.boolean().default(false),
+    contextualRewrite: z.boolean().optional(),
     rerank: z.boolean().default(false),
     rerankerId: z.uuid().nullable().default(null),
     rerankMaxOutputTokens: z.number().int().min(128).max(2000000).default(1024),

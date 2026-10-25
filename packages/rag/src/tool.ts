@@ -10,6 +10,8 @@ export interface Citation {
   reviewStatus?: "approved" | "current";
   releaseId?: string;
   sourceRevision?: number;
+  chunkIndex?: number;
+  neighborOf?: string;
   contextExpanded?: boolean;
   id: number;
   chunkId: string;
@@ -38,6 +40,8 @@ export interface RetrievalStage {
     sourceId: string;
     rank: number;
     score: number;
+    vectorScore?: number;
+    lexicalScore?: number;
     vectorRank?: number | null;
     lexicalRank?: number | null;
     rrfScore?: number;
@@ -46,6 +50,9 @@ export interface RetrievalStage {
   }[];
 }
 export interface RetrievalContext {
+  rewriteModel?: string;
+  maxContextTokens?: number;
+  countTokens?: (text: string) => number;
   onStage?: (stage: RetrievalStage) => void;
   workspaceId: string;
   organizationId: string;
@@ -54,6 +61,15 @@ export interface RetrievalContext {
   candidateReleaseId?: string;
 }
 export interface RagTool {
+  expandNeighbors?(
+    seeds: Citation[],
+    options: Parameters<RagTool["execute"]>[2] & {
+      previous: number;
+      next: number;
+    },
+    context: RetrievalContext,
+    signal: AbortSignal,
+  ): Promise<Citation[]>;
   execute(
     query: string,
     knowledgeBaseIds: string[],

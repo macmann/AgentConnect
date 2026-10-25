@@ -1,5 +1,16 @@
 import { z } from "zod";
 const schema = z.object({
+  QUERY_REWRITE_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+  RAG_NEIGHBOR_EXPANSION_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+  RAG_NEIGHBOR_PREVIOUS: z.coerce.number().int().min(0).max(3).default(1),
+  RAG_NEIGHBOR_NEXT: z.coerce.number().int().min(0).max(3).default(1),
+  RAG_MAX_CONTEXT_CHUNKS: z.coerce.number().int().min(1).max(20).default(6),
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),

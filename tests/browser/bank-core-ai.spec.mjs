@@ -216,14 +216,24 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
     .getByLabel("Bank recovery — knowledge release", { exact: true })
     .selectOption({ label: "Version 1 · Approved recovery v1" });
   await page.getByText("Advanced retrieval settings", { exact: true }).click();
+  const followUpRewrite = page.getByLabel(
+    "Rewrite follow-up questions for search",
+    { exact: true },
+  );
+  await followUpRewrite.uncheck();
+  await followUpRewrite.check();
   await page
-    .getByLabel("Rewrite follow-up questions for search", { exact: true })
+    .getByLabel("Rewrite standalone queries too", { exact: true })
     .check();
   await page.getByLabel("Rerank retrieved passages", { exact: true }).check();
   await page.getByLabel("Reranking candidates", { exact: true }).fill("10");
   await page
     .getByRole("navigation", { name: "Configure sections" })
     .getByRole("button", { name: "Advanced", exact: true })
+    .click();
+  await page
+    .locator("summary")
+    .filter({ hasText: /^Model routing and failover$/ })
     .click();
   await page
     .getByLabel("Route matching queries to a lighter model", { exact: true })
@@ -239,6 +249,10 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
     .getByLabel("Fallback model 1", { exact: true })
     .selectOption(fallbackModel);
 
+  await page
+    .locator("summary")
+    .filter({ hasText: /^Token budgets and context optimization$/ })
+    .click();
   await page
     .getByLabel("Enable tokenizer-aware context budgeting", { exact: true })
     .check();
@@ -270,6 +284,7 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
   expect(saved.draft_config.modelRouting.fallbackModelIds).toEqual([
     fallbackModel,
   ]);
+  expect(saved.draft_config.rag.contextualRewrite).toBe(true);
   expect(saved.draft_config.rag.queryRewrite).toBe(true);
   expect(saved.draft_config.rag.rerank).toBe(true);
   const v = await post(context, `/agents/${agent}/publish`, {

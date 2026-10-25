@@ -756,17 +756,37 @@ export function KnowledgeSection(p: SectionProps) {
           <label className="checkbox-label">
             <input
               type="checkbox"
-              checked={c.rag.queryRewrite ?? false}
+              checked={c.rag.contextualRewrite ?? true}
               onChange={(e) =>
-                config(p, "rag", { ...c.rag, queryRewrite: e.target.checked })
+                config(p, "rag", {
+                  ...c.rag,
+                  contextualRewrite: e.target.checked,
+                })
               }
             />
             Rewrite follow-up questions for search
           </label>
           <HelpTooltip>
             Uses recent conversation context to form a standalone search query.
-            The original query is also searched. Adds a model call; malformed
-            rewrites use the original query.
+            Enabled by default for follow-ups. Adds a bounded model call; a
+            failed rewrite uses the original query. Can be disabled server-wide
+            with QUERY_REWRITE_ENABLED.
+          </HelpTooltip>
+        </div>
+        <div className="setting-label-row">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={c.rag.queryRewrite ?? false}
+              onChange={(e) =>
+                config(p, "rag", { ...c.rag, queryRewrite: e.target.checked })
+              }
+            />
+            Rewrite standalone queries too
+          </label>
+          <HelpTooltip>
+            Also rewrite questions that do not reference the conversation. Uses
+            the same failure fallback as follow-up rewriting.
           </HelpTooltip>
         </div>
         <div className="setting-label-row">

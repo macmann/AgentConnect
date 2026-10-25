@@ -83,6 +83,7 @@ export type Config = {
     answerSourcePolicy?: "balanced" | "prefer_approved_qa";
     qaMinScore?: number;
     queryRewrite?: boolean;
+    contextualRewrite?: boolean;
     rerank?: boolean;
     rerankerId?: string | null;
     rerankMaxOutputTokens?: number;

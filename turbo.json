@@ -1,22 +1,12 @@
 {
   "tasks": {
     "build": {
-      "dependsOn": [
-        "^build"
-      ],
-      "outputs": [
-        "dist/**",
-        ".next/**",
-        "!.next/cache/**"
-      ],
-      "env": [
-        "NEXT_PUBLIC_API_URL"
-      ]
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "env": ["NEXT_PUBLIC_API_URL"]
     },
     "typecheck": {
-      "dependsOn": [
-        "^typecheck"
-      ]
+      "dependsOn": ["^typecheck"]
     },
     "dev": {
       "cache": false,
@@ -59,6 +49,11 @@
     "MODEL_PRIVATE_HOSTS",
     "KNOWLEDGE_ALLOWED_HOSTS",
     "KNOWLEDGE_PRIVATE_HOSTS",
+    "QUERY_REWRITE_ENABLED",
+    "RAG_NEIGHBOR_EXPANSION_ENABLED",
+    "RAG_NEIGHBOR_PREVIOUS",
+    "RAG_NEIGHBOR_NEXT",
+    "RAG_MAX_CONTEXT_CHUNKS",
     "CONNECTOR_ALLOWED_HOSTS",
     "CONNECTOR_PRIVATE_HOSTS",
     "MONITORING_TOKEN",

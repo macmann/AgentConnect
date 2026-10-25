@@ -2,7 +2,7 @@ import { observe, observationContent } from "./ai-tracing.js";
 import { routedProvider } from "./model-routing.js";
 import { agentReranker } from "./agent-reranking.js";
 import { enhancedRetrieval } from "./rag-enhancements.js";
-import { tokenCount } from "./context-control.js";
+import { knowledgeContextBudget, tokenCount } from "./context-control.js";
 import { generateGroundedAnswer } from "./bank-runtime.js";
 import { planKnowledgeUsage } from "./knowledge-usage.js";
 import { agentConfig } from "@agentconnect/schemas/agents";
@@ -138,6 +138,7 @@ export async function executeAgentSnapshot(
         c.modelRouting.enabled ||
         c.modelRouting.fallbackModelIds.length ||
         c.rag.queryRewrite ||
+        config.QUERY_REWRITE_ENABLED ||
         c.rag.rerank;
       const contextBudget = c.contextControls.enabled
         ? Infinity
@@ -168,6 +169,12 @@ export async function executeAgentSnapshot(
                 organizationId: ctx.organizationId,
                 publicAccess: !!ctx.publicAccess,
                 candidateReleaseId,
+                rewriteModel: model.modelId,
+                countTokens: (text) =>
+                  tokenCount(text, c.contextControls.tokenizer),
+                maxContextTokens: knowledgeContextBudget(c, model, [
+                  { role: "user", content: input },
+                ]),
               },
               signal,
               c.maxOutputTokens,
