@@ -146,6 +146,12 @@ Choose source content suitable for the knowledge base’s audience: source permi
 
 A saved draft does not update an existing published version. To release changes, publish another version and explicitly update the deployment. Optional knowledge/tools are not mandatory, but attached resources must meet readiness and access requirements.
 
+### Embed a published agent
+
+In **Agents → Publish → Hosted deployments**, expand **Embed on your website** on an active deployment. Copy **Inline iframe** to place the hosted chat inside a page, or **Floating chat widget** for a launcher that opens over the website. Copy buttons use the current installation’s web and API URLs; snippets contain a public deployment ID, never a secret or API key. Iframe dimensions are editable in your website HTML.
+
+The iframe shows the existing public hosted chat. Widget access settings apply to the floating widget, so enable it and approve your website origin in **Channels** before installing its script. The **Widget settings** shortcut opens Channels. Disabling a deployment stops its published chat as well as the widget.
+
 ## Put the widget on a website
 
 1. Open **Channels** for the deployment.

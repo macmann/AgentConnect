@@ -89,6 +89,8 @@ Compose versioned agent workflows and manage customer handoffs from the support 
 - Human support operations with an inbox, routing, operator presence, private AI copilot, approvals, supervision and reporting.
 - Quality and improvement processes with evaluation datasets, regression comparisons, publication gates, knowledge review and knowledge-gap drafts.
 
+Published deployments expose copyable **iframe** and **floating widget** HTML under **Agents → Publish → Embed on your website**. Use iframe code for an inline chat or enable and configure the floating widget in **Channels**. See [website embedding](docs/user-guide.md#embed-a-published-agent).
+
 Applications can access published agents and raw semantic/hybrid knowledge search through the [Platform REST API and MCP server](docs/platform-api.md), with resource-scoped keys and optional tool/RAG execution details.
 
 Knowledge supports [multi-file uploads](docs/user-guide.md#upload-multiple-documents) of up to 100 documents per queue, with bounded concurrent transfers, per-file progress and duplicate-safe retries. Received files are ingested in the background.

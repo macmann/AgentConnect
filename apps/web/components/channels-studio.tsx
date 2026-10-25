@@ -9,7 +9,8 @@ import {
   type WidgetSettings,
 } from "@agentconnect/schemas/channels";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
-import { apiBase, requestJson } from "./agent-client";
+import { DeploymentEmbed } from "./deployment-embed";
+import { requestJson } from "./agent-client";
 import {
   WorkspaceSections,
   useWorkspaceSection,
@@ -231,7 +232,6 @@ function WidgetEditor({
       setBusy(false);
     }
   }
-  const attributes = `src="${apiBase}/widget.js" data-deployment="${deployment.id}" data-chat-url="${typeof window !== "undefined" ? window.location.origin : ""}/chat/${deployment.id}"`;
   return (
     <div className="studio-form">
       <fieldset disabled={!manage || busy}>
@@ -360,10 +360,7 @@ function WidgetEditor({
         value={deployment.branding}
         manage={manage}
       />
-      <label>
-        Website embed code
-        <textarea readOnly value={`<script async ${attributes}></script>`} />
-      </label>
+      <DeploymentEmbed deploymentId={deployment.id} />
       <SetupGuide title="Install the website widget">
         <p>
           Add the script before your website’s closing body tag. No API key

@@ -1,4 +1,5 @@
 "use client";
+import { DeploymentEmbed } from "./deployment-embed";
 import { HelpTooltip } from "./help-tooltip";
 import { RerankerRegistry } from "./reranker-registry";
 import { WorkspaceSaveBar } from "./workspace-sections";
@@ -622,7 +623,9 @@ export function AgentStudio({
 }: {
   workspaceId: string;
   role: string;
-  onNavigate: (destination: "Knowledge" | "Tools" | "Models") => void;
+  onNavigate: (
+    destination: "Knowledge" | "Tools" | "Models" | "Channels",
+  ) => void;
 }) {
   const cache = useQueryClient();
   const canBuild = [
@@ -878,11 +881,13 @@ export function AgentStudio({
   );
   return (
     <>
-      <section className={`panel${draft ? " agent-studio-panel" : ""}`}>
+      <section
+        className={`panel${draft ? " agent-studio-panel" : ""}${draft && tab === "playground" ? " agent-studio-playground" : ""}`}
+      >
         <div className="panel-header">
           <div>
             <h3>{draft ? draft.name || "New agent" : "Your agents"}</h3>
-            {draft && (
+            {draft && tab !== "playground" && (
               <p>
                 Agent Studio ·{" "}
                 {draft.config.rag.knowledgeBaseIds.length
@@ -892,7 +897,7 @@ export function AgentStudio({
             )}
             <p>
               {draft
-                ? `Draft revision ${draft.revision}${dirty ? " · Unsaved changes" : ""} · save before chat or publication`
+                ? `Draft revision ${draft.revision}${dirty ? " · Unsaved changes" : tab === "playground" ? " · Playground" : " · Save before testing or publishing"}`
                 : "Create, test, version, and deploy your AI agents."}
             </p>
           </div>
@@ -1224,46 +1229,58 @@ export function AgentStudio({
                     Publish the saved draft to create its first version.
                   </p>
                 )}
-                <h3 className="section-gap">Hosted deployments</h3>
+                <div className="publish-heading section-gap">
+                  <h3>Hosted deployments</h3>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => onNavigate("Channels")}
+                  >
+                    Widget settings
+                  </button>
+                </div>
                 {deployments.data?.map((d) => (
-                  <div className="version-row" key={d.id}>
-                    <div>
-                      <strong>{d.name}</strong>
-                      <small>
-                        Version {d.version} ·{" "}
-                        {d.enabled ? "Active" : "Disabled"}
-                      </small>
-                    </div>
-                    {d.enabled && (
-                      <div className="studio-actions">
-                        <a
-                          href={`/chat/${d.id}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="button secondary"
-                        >
-                          Open hosted chat
-                          <ArrowUpRight size={14} />
-                        </a>
-                        {canBuild && (
-                          <button
-                            className="text-button"
-                            disabled={busy}
-                            onClick={() =>
-                              action(async () => {
-                                await requestJson(
-                                  `/agents/${draft.id}/deployments/${d.id}`,
-                                  "DELETE",
-                                );
-                                setNotice("Deployment disabled");
-                              })
-                            }
-                          >
-                            Disable
-                          </button>
-                        )}
+                  <div className="deployment-card" key={d.id}>
+                    <div className="version-row">
+                      <div>
+                        <strong>{d.name}</strong>
+                        <small>
+                          Version {d.version} ·{" "}
+                          {d.enabled ? "Active" : "Disabled"}
+                        </small>
                       </div>
-                    )}
+                      {d.enabled && (
+                        <div className="studio-actions">
+                          <a
+                            href={`/chat/${d.id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="button secondary"
+                          >
+                            Open hosted chat
+                            <ArrowUpRight size={14} />
+                          </a>
+                          {canBuild && (
+                            <button
+                              className="text-button"
+                              disabled={busy}
+                              onClick={() =>
+                                action(async () => {
+                                  await requestJson(
+                                    `/agents/${draft.id}/deployments/${d.id}`,
+                                    "DELETE",
+                                  );
+                                  setNotice("Deployment disabled");
+                                })
+                              }
+                            >
+                              Disable
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {d.enabled && <DeploymentEmbed deploymentId={d.id} />}
                   </div>
                 ))}
                 {!deployments.data?.length && (
