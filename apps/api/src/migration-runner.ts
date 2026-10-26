@@ -48,6 +48,7 @@ export const migrationFiles: Record<string, string> = {
   "0040": "0040_metadata_tagging_jobs.sql",
   "0041": "0041_workflow_triggers.sql",
   "0042": "0042_release_chunk_order.sql",
+  "0043": "0043_creation_assistant.sql",
 };
 
 export class MigrationFailure extends Error {

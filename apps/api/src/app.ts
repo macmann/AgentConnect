@@ -1,3 +1,4 @@
+import { registerCreationAssistant } from "./creation-assistant.js";
 import { registerPlatformApi } from "./platform-api.js";
 import { platformRequest, platformKey } from "./platform-auth.js";
 import { qualityFailure } from "./quality-errors.js";
@@ -802,6 +803,7 @@ export async function buildApp(
     options.providerFactory,
     options.embeddingFactory,
   );
+  await registerCreationAssistant(app, options.providerFactory);
   await registerPlatformApi(
     app,
     options.providerFactory,

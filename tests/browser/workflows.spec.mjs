@@ -146,6 +146,7 @@ test("Visual workflow publishes, pauses for review and resumes two agent handoff
   expect(await favicon.text()).not.toContain("<text");
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
   await page.getByRole("button", { name: "Create workflow" }).click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
   await page.getByRole("button", { name: "Open canvas directly" }).click();
   await page.getByLabel("Workflow name", { exact: true }).fill("Launch review");
   await page.getByRole("button", { name: "Two-agent review template" }).click();
@@ -274,6 +275,7 @@ test("guided creation preserves choices, saves a real draft and keeps edits acro
   await page
     .getByRole("button", { name: "Create workflow", exact: true })
     .click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
   await page
     .getByLabel("Workflow name", { exact: true })
     .fill("Guided customer answer");
@@ -357,6 +359,7 @@ test("node types use distinct shapes and Test mode cannot edit the graph", async
   await page
     .getByRole("button", { name: "Create workflow", exact: true })
     .click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
   await page
     .getByRole("button", { name: "Open canvas directly", exact: true })
     .click();
@@ -436,6 +439,7 @@ test("canvas palette drops at transformed coordinates and expanded testing stays
   await page
     .getByRole("button", { name: "Create workflow", exact: true })
     .click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
   await page
     .getByRole("button", { name: "Open canvas directly", exact: true })
     .click();
@@ -571,6 +575,7 @@ test("Reusable components save selected nodes, insert versioned copies, and pres
   await page
     .getByRole("button", { name: "Create workflow", exact: true })
     .click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
   await page
     .getByRole("button", { name: "Open canvas directly", exact: true })
     .click();

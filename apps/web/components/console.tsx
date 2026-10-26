@@ -1,4 +1,5 @@
 "use client";
+import { CreationAssistantSettings } from "./creation-assistant-settings";
 import { ProductBrand } from "./product-brand";
 import { SupportStudio } from "./support-studio";
 import { RetentionStudio } from "./retention-studio";
@@ -23,6 +24,7 @@ import {
   ChevronRight,
   Check,
   FolderKanban,
+  SlidersHorizontal,
   KeyRound,
   Layers,
   LayoutDashboard,
@@ -86,6 +88,7 @@ const pageDescriptions: Record<string, string> = {
   Knowledge: "Add sources and build knowledge bases for grounded answers.",
   Tools: "Register approved tools your agents can use.",
   Workflows: "Build and test workflows that coordinate your agents.",
+  Settings: "Configure workspace AI creation assistance.",
   Connectors: "Connect external services and manage synchronized sources.",
   Conversations: "Review conversations, answers and execution details.",
   Operations: "Monitor activity, usage and workspace health.",
@@ -592,6 +595,7 @@ function Studio() {
           { label: "Quality", icon: ListChecks },
           { label: "Members", icon: Users },
           { label: "Secrets", icon: KeyRound },
+          { label: "Settings", icon: SlidersHorizontal },
           { label: "Retention", icon: ShieldCheck },
           { label: "Audit log", icon: ClipboardList },
         ].map(({ label, icon: Icon }) => (
@@ -782,6 +786,7 @@ function Studio() {
           {[
             "Human Support",
             "Retention",
+            "Settings",
             "Agents",
             "Models",
             "Conversations",
@@ -801,6 +806,12 @@ function Studio() {
                 key={wid}
                 workspaceId={wid}
                 userId={user.data.id}
+                role={currentWorkspace?.role ?? "viewer"}
+              />
+            ) : view === "Settings" ? (
+              <CreationAssistantSettings
+                key={wid}
+                workspaceId={wid}
                 role={currentWorkspace?.role ?? "viewer"}
               />
             ) : view === "Retention" ? (
@@ -847,6 +858,7 @@ function Studio() {
               />
             ) : view === "Workflows" ? (
               <WorkflowStudio
+                onSettings={() => setView("Settings")}
                 key={wid}
                 workspaceId={wid}
                 role={currentWorkspace?.role ?? "viewer"}

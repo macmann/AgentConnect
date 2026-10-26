@@ -347,6 +347,7 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   ).toBeVisible();
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await page.getByRole("button", { name: "Create agent", exact: true }).click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
   await page.getByLabel("Agent name").fill("Refund assistant");
   await page
     .getByRole("navigation", { name: "Configure sections" })

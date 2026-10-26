@@ -6469,3 +6469,256 @@ input[type="range"] {
 .deployment-card .version-row {
   padding: 16px 20px;
 }
+
+/* Shared assisted creation: conversation first, review alongside it. */
+.creation-assistant {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+  min-width: 0;
+}
+.creation-header,
+.creation-chat-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.creation-header h3 {
+  margin: 0;
+}
+.creation-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+.creation-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  padding: 24px;
+}
+.creation-mode-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  min-height: 150px;
+}
+.creation-mode-card strong {
+  font-size: 1rem;
+}
+.creation-mode-card span {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.creation-mode-card:hover:not(:disabled) {
+  border-color: var(--accent-text);
+  background: var(--surface-subtle);
+}
+.creation-mode-card:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.creation-assistant > .settings-hint,
+.creation-assistant > p {
+  margin: 0 24px 24px;
+}
+.creation-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+}
+.creation-chat {
+  min-width: 0;
+}
+.creation-chat-heading {
+  padding: 12px 20px;
+  justify-content: flex-start;
+}
+.creation-chat-heading > button:last-child {
+  margin-left: auto;
+}
+.creation-transcript {
+  height: clamp(280px, 45dvh, 560px);
+  overflow: auto;
+  padding: 20px;
+  overscroll-behavior: contain;
+}
+.creation-turn {
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border-radius: 12px;
+  background: var(--surface-subtle);
+  overflow-wrap: anywhere;
+}
+.creation-turn.user {
+  max-width: 90%;
+  margin-left: auto;
+}
+.creation-turn small {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.creation-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding: 16px 20px;
+}
+.creation-composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  padding: 12px;
+}
+.creation-assistant input,
+.creation-assistant textarea,
+.creation-settings-form select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.creation-assistant input {
+  padding: 10px 12px;
+}
+.creation-assistant textarea {
+  padding: 12px;
+}
+.creation-suggestions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 0 20px 16px;
+}
+.creation-suggestions .button {
+  white-space: normal;
+  text-align: left;
+}
+.creation-chat > .text-button {
+  margin: 0 20px 16px;
+}
+.creation-chat > .error-banner,
+.creation-chat > .muted {
+  margin: 12px 20px;
+}
+.creation-review {
+  padding: 24px;
+  border-left: 1px solid var(--line);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.creation-review h4,
+.creation-review p {
+  margin: 0;
+}
+.creation-review label {
+  display: grid;
+  gap: 8px;
+  font-size: 0.875rem;
+}
+.creation-review details {
+  padding: 12px 0;
+}
+.creation-review details p {
+  margin-top: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.creation-review dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.creation-review dt {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.creation-review dd {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.creation-step-list {
+  margin: 0;
+  padding-left: 20px;
+}
+.creation-step-list li {
+  padding: 8px 0;
+}
+.creation-step-list li > span {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+}
+.creation-settings-form {
+  max-width: 720px;
+}
+.creation-settings-form fieldset {
+  display: grid;
+  gap: 20px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.creation-settings-form label:not(.checkbox-label) {
+  display: grid;
+  gap: 8px;
+}
+.creation-settings-form select {
+  padding: 12px;
+}
+.creation-settings-form > p {
+  margin-top: 20px;
+}
+.creation-assistant :is(button, input, textarea):focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 3px;
+}
+@media (max-width: 900px) {
+  .creation-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .creation-review {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .creation-mode-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .creation-mode-card {
+    min-height: auto;
+  }
+}
+@media (max-width: 480px) {
+  .creation-header,
+  .creation-review,
+  .creation-mode-grid {
+    padding: 16px;
+  }
+  .creation-composer {
+    padding: 12px;
+    flex-wrap: wrap;
+  }
+  .creation-composer textarea {
+    flex-basis: 100%;
+  }
+  .creation-composer > button {
+    margin-left: auto;
+  }
+}

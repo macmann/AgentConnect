@@ -188,6 +188,7 @@ test("generated response, confirmation, download, collection and public defaults
   await page.goto("/");
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await page.getByRole("button", { name: "Create agent", exact: true }).click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
   await page.getByLabel("Agent name").fill("Report assistant");
   await page
     .getByRole("navigation", { name: "Configure sections" })

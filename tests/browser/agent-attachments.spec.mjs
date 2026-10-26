@@ -40,23 +40,30 @@ async function editor(page, context) {
   await page.goto("/");
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await page.getByRole("button", { name: "Create agent", exact: true }).click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
 }
 test("empty attachment actions navigate within the workspace and protect unsaved changes", async ({
   page,
   context,
 }) => {
+  page.setDefaultTimeout(15000);
   await editor(page, context);
+  await configure(page, "Knowledge");
   await expect(
     page.getByText("No knowledge bases in this workspace"),
   ).toBeVisible();
+  await configure(page, "Tools");
   await expect(
     page.getByText("No enabled tools in this workspace"),
   ).toBeVisible();
+  await configure(page, "Knowledge");
   page.once("dialog", (dialog) => dialog.dismiss());
   await page
     .getByRole("button", { name: "Create knowledge base", exact: true })
     .click();
-  await expect(page.getByLabel("Agent name")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Attached knowledge" }),
+  ).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page
     .getByRole("button", { name: "Create knowledge base", exact: true })
@@ -65,10 +72,12 @@ test("empty attachment actions navigate within the workspace and protect unsaved
     page.getByRole("heading", { name: "Your knowledge starts here" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("combobox", { name: "Organization" }),
-  ).toHaveValue(org);
+    page.getByRole("combobox", { name: "Current workspace", exact: true }),
+  ).toHaveValue(workspace);
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await page.getByRole("button", { name: "Create agent", exact: true }).click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
+  await configure(page, "Tools");
   page.once("dialog", (dialog) => dialog.accept());
   await page
     .getByRole("button", { name: "Register or enable tools", exact: true })
@@ -77,7 +86,7 @@ test("empty attachment actions navigate within the workspace and protect unsaved
     page.getByRole("heading", { name: "Tools & MCP" }),
   ).toBeVisible();
 });
-test("attachment cards select items, exclude disabled tools, and distinguish load failures", async ({
+test("attachment sections select items, show disabled tools, and distinguish load failures", async ({
   page,
   context,
 }) => {
@@ -106,20 +115,25 @@ test("attachment cards select items, exclude disabled tools, and distinguish loa
       ],
     }),
   );
+  page.setDefaultTimeout(15000);
   await editor(page, context);
+  await configure(page, "Tools");
   await page.getByRole("checkbox", { name: /Approved search/ }).check();
-  await page.getByRole("checkbox", { name: /Support handbook/ }).check();
+  await expect(
+    page.getByRole("checkbox", { name: /Disabled search/ }),
+  ).toBeDisabled();
   await expect(
     page
       .getByRole("region", { name: "Attached tools" })
       .getByText(/1 selected/),
   ).toBeVisible();
+  await configure(page, "Knowledge");
+  await page.getByRole("checkbox", { name: /Support handbook/ }).check();
   await expect(
     page
       .getByRole("region", { name: "Attached knowledge" })
       .getByText(/1 selected/),
   ).toBeVisible();
-  await expect(page.getByText("Disabled search")).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await page
     .getByRole("region", { name: "Attached knowledge" })
@@ -135,6 +149,8 @@ test("attachment cards select items, exclude disabled tools, and distinguish loa
   await page.reload();
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await page.getByRole("button", { name: "Create agent", exact: true }).click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
+  await configure(page, "Knowledge");
   await expect(page.getByText("Could not load knowledge bases.")).toBeVisible({
     timeout: 15000,
   });
@@ -145,3 +161,10 @@ test("attachment cards select items, exclude disabled tools, and distinguish loa
     page.getByRole("button", { name: "Try again", exact: true }),
   ).toBeVisible();
 });
+
+async function configure(page, section) {
+  await page
+    .getByRole("navigation", { name: "Configure sections" })
+    .getByRole("button", { name: section, exact: true })
+    .click();
+}
