@@ -7,6 +7,7 @@ import { normalizeWorkflowInput } from "@agentconnect/schemas/workflows";
 import { WorkflowComponentLibrary } from "./workflow-component-library";
 import { WorkflowCanvasToolbar } from "./workflow-canvas-toolbar";
 import { workflowNodeTypes, type CanvasNode } from "./workflow-canvas-node";
+import { CreationAssistant } from "./creation-assistant";
 import { WorkflowCreateWizard } from "./workflow-create-wizard";
 
 import { HelpTooltip } from "./help-tooltip";
@@ -165,9 +166,11 @@ function layout(graph: WorkflowGraph) {
 export function WorkflowStudio({
   workspaceId,
   role,
+  onSettings,
 }: {
   workspaceId: string;
   role: string;
+  onSettings: () => void;
 }) {
   const cache = useQueryClient(),
     build = ["owner", "org_admin", "workspace_admin", "builder"].includes(role),
@@ -205,6 +208,7 @@ export function WorkflowStudio({
   const [testAttempted, setTestAttempted] = useState(false);
   const editor = useRef<HTMLDivElement>(null);
   const [wizard, setWizard] = useState(false);
+  const [manualWizard, setManualWizard] = useState(false);
   const [stage, setStage] = useState<"build" | "test" | "publish" | "triggers">(
     "build",
   );
@@ -902,6 +906,34 @@ export function WorkflowStudio({
       }));
     });
   }, [displayGraph, traceNodes, run.data?.status, selection, setCanvasNodes]);
+  async function acceptSetup(setup: {
+    name: string;
+    description: string;
+    graph: WorkflowGraph;
+  }) {
+    const result = await requestJson<{ id: string; revision: number }>(
+      `/workspaces/${workspaceId}/workflows`,
+      "POST",
+      setup,
+    );
+    const next = { ...setup, ...result };
+    setDraft(next);
+    setSaved(JSON.stringify(next));
+    setSelected("input");
+    setUndo([]);
+    setRedo([]);
+    setRun("");
+    setVersion("");
+    setError("");
+    setNotice("Workflow draft saved. Test it before publishing.");
+    setStage("build");
+    setWizard(false);
+    await cache.invalidateQueries({
+      queryKey: ["workflows", workspaceId],
+    });
+
+    setManualWizard(false);
+  }
   return (
     <section className="panel workflow-studio">
       <div className="panel-header">
@@ -920,8 +952,10 @@ export function WorkflowStudio({
                 window.confirm(
                   "Start setup for a new workflow? Unsaved changes will be replaced only when you create it.",
                 )
-              )
+              ) {
+                setManualWizard(false);
                 setWizard(true);
+              }
             }}
           >
             Create workflow
@@ -935,38 +969,38 @@ export function WorkflowStudio({
       )}
       {notice && <p role="status">{notice}</p>}
       {workflows.error && <p className="error">{workflows.error.message}</p>}
-      {wizard && (
+      {wizard && !manualWizard && (
+        <CreationAssistant
+          workspaceId={workspaceId}
+          kind="workflow"
+          onSettings={() => {
+            if (
+              !dirty ||
+              window.confirm(
+                "Leave this workflow? Unsaved changes will be lost.",
+              )
+            )
+              onSettings();
+          }}
+          onCancel={() => setWizard(false)}
+          onManual={() => setManualWizard(true)}
+          onWorkflow={acceptSetup}
+        />
+      )}
+      {wizard && manualWizard && (
         <WorkflowCreateWizard
           agents={agents.data ?? []}
           loading={agents.isPending}
           error={agents.error?.message}
-          onCancel={() => setWizard(false)}
+          onCancel={() => {
+            setWizard(false);
+            setManualWizard(false);
+          }}
           onBlank={() => {
             create();
             setWizard(false);
           }}
-          onCreate={async (setup) => {
-            const result = await requestJson<{ id: string; revision: number }>(
-              `/workspaces/${workspaceId}/workflows`,
-              "POST",
-              setup,
-            );
-            const next = { ...setup, ...result };
-            setDraft(next);
-            setSaved(JSON.stringify(next));
-            setSelected("input");
-            setUndo([]);
-            setRedo([]);
-            setRun("");
-            setVersion("");
-            setError("");
-            setNotice("Workflow draft saved. Test it before publishing.");
-            setStage("build");
-            setWizard(false);
-            await cache.invalidateQueries({
-              queryKey: ["workflows", workspaceId],
-            });
-          }}
+          onCreate={acceptSetup}
         />
       )}
       <div hidden={wizard}>

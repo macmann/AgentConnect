@@ -247,3 +247,12 @@ See the [metadata tagging guide](metadata-tagging.md) for upload, bulk editing, 
 - Git-backed single-stack deployment with private PostgreSQL/pgvector, Redis, object storage and SQL-backed Temporal.
 - Generated internal credentials, persistent volumes, HTTPS domain integration, automatic migrations/bucket initialization and readiness-gated application startup.
 - Reproducible disposable-container acceptance test covering packaged production preflight, registration/email delivery, restart persistence and browser API-origin configuration. See [Coolify setup](coolify.md).
+
+## AI-guided creation
+
+- Shared chat-based AI guide and description-to-draft assistance for agents and sequential workflows, alongside manual setup.
+- Workspace assistant model settings, administrator-only updates and optimistic revisions (migration 0043).
+- Review agent prompts/resources before opening Configure; review workflow steps before saving a chain of published agent versions.
+- Validated workspace catalogs, bounded provider calls, audit events and Langfuse observations. No automatic publication or creation of specialist agents inside workflows.
+
+See [the creation guide](ai-creation.md).

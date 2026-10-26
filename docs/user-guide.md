@@ -55,9 +55,13 @@ The queue shows each file’s transfer progress, errors and ingestion status whe
 
 You can close the upload form or switch knowledge bases while transfers continue. Each file keeps its original destination. Keep the Knowledge page open until transfers finish: unfinished browser uploads do not survive closing/reloading the page, signing out or leaving Knowledge. A warning appears before leaving. Files already received continue ingestion independently. **Clear finished files** removes queue entries, not uploaded sources. Resolve ingestion failures in **Sources**, separately from transfer retries.
 
+## Choose a creation mode
+
+**Create agent** and **Create workflow** offer three paths: **AI guide** asks one question at a time, **AI-assisted draft** starts from your description, and **Manual setup** opens the existing configuration/template tools. An administrator first enables AI creation and selects its model under **Settings → Creation assistant**. Review a proposed agent before using it in Configure; workflow proposals use published agents and save only when you confirm **Create workflow draft**. Test drafts before publishing. See [AI-assisted creation](ai-creation.md) for examples, privacy, limits and prerequisites.
+
 ## Create a RAG agent
 
-1. Open **Agents** and create an agent.
+1. Open **Agents**, create an agent, and choose **Manual setup** (or use an AI creation path).
 2. In **Configure → Overview**, set the name, descriptions, category, model and locale. Choose the content classification that fits your use case; attachments and retrieval policy control actual grounding.
 3. In **Prompt**, describe its role, objective, instructions and boundaries. For example:
 

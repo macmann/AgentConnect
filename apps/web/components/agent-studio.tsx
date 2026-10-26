@@ -1,4 +1,5 @@
 "use client";
+import { CreationAssistant } from "./creation-assistant";
 import { DeploymentEmbed } from "./deployment-embed";
 import { HelpTooltip } from "./help-tooltip";
 import { RerankerRegistry } from "./reranker-registry";
@@ -624,7 +625,7 @@ export function AgentStudio({
   workspaceId: string;
   role: string;
   onNavigate: (
-    destination: "Knowledge" | "Tools" | "Models" | "Channels",
+    destination: "Knowledge" | "Tools" | "Models" | "Channels" | "Settings",
   ) => void;
 }) {
   const cache = useQueryClient();
@@ -718,6 +719,7 @@ export function AgentStudio({
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [chatKey, setChatKey] = useState(0);
+  const [creationOpen, setCreationOpen] = useState(false);
   const versions = useQuery({
     queryKey: ["versions", draft?.id],
     queryFn: () => requestJson<Version[]>(`/agents/${draft?.id}/versions`),
@@ -879,6 +881,45 @@ export function AgentStudio({
   const ready = readiness.every(
     (i) => i.state === "ready" || i.state === "optional",
   );
+  if (creationOpen)
+    return (
+      <CreationAssistant
+        workspaceId={workspaceId}
+        kind="agent"
+        onCancel={() => setCreationOpen(false)}
+        onSettings={() => onNavigate("Settings")}
+        onManual={() => {
+          const next = emptyDraft(models.data![0]!.id);
+          setDraft(next);
+          setSavedDraft(JSON.stringify(next));
+          setSection("overview");
+          setConflict(false);
+          studioURL(undefined, "configure", "overview");
+          setTab("configure");
+          setError("");
+          setNotice("");
+          setCreationOpen(false);
+        }}
+        onAgent={(proposal) => {
+          const next: Draft = {
+            name: proposal.name,
+            description: proposal.description,
+            publicDescription: proposal.publicDescription,
+            config: proposal.config,
+            revision: 1,
+          };
+          setDraft(next);
+          setSavedDraft("");
+          setSection("overview");
+          setConflict(false);
+          setTab("configure");
+          studioURL(undefined, "configure", "overview");
+          setError("");
+          setNotice("AI draft ready. Review the settings, then save and test.");
+          setCreationOpen(false);
+        }}
+      />
+    );
   return (
     <>
       <section
@@ -928,17 +969,7 @@ export function AgentStudio({
                     ? "Register a model in Models before creating an agent."
                     : undefined
                 }
-                onClick={() => {
-                  const next = emptyDraft(models.data![0]!.id);
-                  setDraft(next);
-                  setSavedDraft(JSON.stringify(next));
-                  setSection("overview");
-                  setConflict(false);
-                  studioURL(undefined, "configure", "overview");
-                  setTab("configure");
-                  setError("");
-                  setNotice("");
-                }}
+                onClick={() => setCreationOpen(true)}
               >
                 <Plus size={15} />
                 Create agent

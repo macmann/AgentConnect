@@ -91,6 +91,8 @@ Compose versioned agent workflows and manage customer handoffs from the support 
 
 Published deployments expose copyable **iframe** and **floating widget** HTML under **Agents → Publish → Embed on your website**. Use iframe code for an inline chat or enable and configure the floating widget in **Channels**. See [website embedding](docs/user-guide.md#embed-a-published-agent).
 
+Agents and workflows offer **AI guide**, **AI-assisted draft**, and **Manual setup** creation paths. An administrator selects the assistant’s workspace model in **Settings**. Review generated settings before saving or publishing; workflow proposals chain existing published agents. Apply migration **0043**. See [AI-assisted creation](docs/ai-creation.md).
+
 Applications can access published agents and raw semantic/hybrid knowledge search through the [Platform REST API and MCP server](docs/platform-api.md), with resource-scoped keys and optional tool/RAG execution details.
 
 Knowledge supports [multi-file uploads](docs/user-guide.md#upload-multiple-documents) of up to 100 documents per queue, with bounded concurrent transfers, per-file progress and duplicate-safe retries. Received files are ingested in the background.
@@ -237,7 +239,7 @@ See [validation](docs/validation.md) and scenario source files for prerequisites
 
 ## Documentation index
 
-- **Building agents:** [Agent configuration](docs/agent-configure.md), [runtime](docs/agent-runtime.md), [RAG](docs/rag.md), [conversational retrieval and context selection](docs/conversational-rag.md), [tools](docs/tools.md), [model routing and retrieval](docs/model-routing-rag.md).
+- **Building agents:** [AI-assisted creation](docs/ai-creation.md), [Agent configuration](docs/agent-configure.md), [runtime](docs/agent-runtime.md), [RAG](docs/rag.md), [conversational retrieval and context selection](docs/conversational-rag.md), [tools](docs/tools.md), [model routing and retrieval](docs/model-routing-rag.md).
 - **Knowledge and integrations:** [connectors](docs/connectors.md), [integration scope](docs/integrations.md), [quality](docs/quality.md).
 - **Customer experience:** [channels and voice](docs/channels-voice.md), [customer engagement](docs/customer-engagement.md), [rich responses](docs/generative-experience.md), [human support](docs/human-support.md), [core banking AI](docs/bank-core-ai.md).
 - **Workflows and operations:** [workflows](docs/workflows.md), [operations](docs/operations.md), [customer insights and token controls](docs/customer-insights-context.md).
