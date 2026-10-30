@@ -7329,3 +7329,72 @@ fieldset {
 .workflow-properties > fieldset > * + * {
   margin-top: 0;
 }
+.workflow-resource-picker {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-width: 0;
+}
+.workflow-resource-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.workflow-resource-picker p {
+  margin: 0;
+  font-size: 13px;
+}
+.workflow-resource-heading .button {
+  min-height: 32px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+.workflow-resource-search {
+  display: grid;
+  gap: 10px;
+  padding-block: 8px;
+}
+.workflow-resource-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+.workflow-resource-list li {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  overflow-wrap: anywhere;
+}
+.workflow-resource-list li > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+}
+.workflow-properties label.workflow-agent-share {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workflow-properties .workflow-agent-share input {
+  margin: 0;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+.workflow-canvas .react-flow__handle {
+  width: 10px;
+  height: 10px;
+}
+.workflow-canvas .react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--focus);
+  stroke-width: 3;
+}
