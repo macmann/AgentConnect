@@ -14,6 +14,11 @@ export const workflowKinds = [
   "merge",
   "approval",
   "output",
+  "structured-ai",
+  "human-task",
+  "transform",
+  "set-variable",
+  "switch",
 ] as const;
 const nodeId = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,47}$/);
 export const workflowNode = z.object({
@@ -60,7 +65,7 @@ export const workflowEdge = z.object({
   id: z.string().min(1).max(128),
   source: nodeId,
   target: nodeId,
-  sourceHandle: z.enum(["true", "false"]).nullable().optional(),
+  sourceHandle: nodeId.nullable().optional(),
   sourcePort: z.enum(["out-top", "out-bottom", "out-left"]).optional(),
   targetPort: z.enum(["in-top", "in-bottom", "in-right"]).optional(),
 });
@@ -108,6 +113,7 @@ export const workflowRunInput = z.object({
   revision: z.number().int().min(1).optional(),
 });
 export const workflowApprovalInput = z.object({
+  nodeId: nodeId.optional(),
   decision: z.enum(["approved", "rejected"]),
   comment: z.string().max(2000).default(""),
   editedInput: z.json().optional(),
@@ -116,6 +122,19 @@ export type WorkflowGraph = z.infer<typeof workflowGraph>;
 export type WorkflowNode = z.infer<typeof workflowNode>;
 export function analyzeWorkflow(graph: WorkflowGraph) {
   const errors: string[] = [];
+  if (
+    !graph.programV2 &&
+    graph.nodes.some((n) =>
+      [
+        "structured-ai",
+        "human-task",
+        "transform",
+        "set-variable",
+        "switch",
+      ].includes(n.type),
+    )
+  )
+    errors.push("These node kinds require Workflow V2");
   if (
     new Set(graph.inputFields?.map((f) => f.name)).size !==
     (graph.inputFields?.length ?? 0)
@@ -155,7 +174,10 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
     outputs = graph.nodes.filter((n) => n.type === "output");
   if (inputs.length !== 1) errors.push("Exactly one Input node is required");
   if (outputs.length !== 1) errors.push("Exactly one Output node is required");
-  if (graph.nodes.filter((n) => n.type === "approval").length > 1)
+  if (
+    !graph.programV2 &&
+    graph.nodes.filter((n) => n.type === "approval").length > 1
+  )
     errors.push("This workflow supports one approval gate");
   const colors = new Map<string, number>();
   let cycle = false;
@@ -213,13 +235,18 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
         !edges.some((e) => e.sourceHandle === "false")
       )
         errors.push(`${n.data.label}: connect one true and one false branch`);
+    } else if (n.type === "switch" && graph.programV2) {
+      if (outs.length < 2)
+        errors.push(`${n.data.label}: connect cases and a default route`);
     } else if (n.type === "parallel") {
       if (outs.length < 2 || outs.length > 4)
         errors.push(`${n.data.label}: connect two to four branches`);
     } else if (outs.length > 1)
       errors.push(`${n.data.label}: use Router or Parallel for branching`);
     if (
-      !["router", "condition"].includes(n.type) &&
+      !["router", "condition", ...(graph.programV2 ? ["switch"] : [])].includes(
+        n.type,
+      ) &&
       graph.edges.some((e) => e.source === n.id && e.sourceHandle)
     )
       errors.push(
@@ -302,6 +329,9 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
               "router",
               "condition",
               "approval",
+              "human-task",
+              "switch",
+              "set-variable",
             ].includes(item.type) ||
             path.has(current) ||
             branchNodes.has(current)

@@ -999,7 +999,7 @@ test("canvas deletes nodes and connections and persists connections on multiple 
   );
 });
 
-test("V2 canvas is a read-only projection and preserves the canonical definition", async ({
+test("V2 canvas edits canonical definitions and keeps its property panel inside the canvas", async ({
   page,
   context,
 }) => {
@@ -1039,33 +1039,261 @@ test("V2 canvas is a read-only projection and preserves the canonical definition
     .getByLabel("Current workflow", { exact: true })
     .selectOption(created.id);
   await expect(
-    page.getByText(/Workflow V2 · This canvas previews/),
+    page.getByRole("heading", { name: "V2 preview · Workflow V2" }),
   ).toBeVisible();
   await expect(page.locator(".react-flow__node")).toHaveCount(2);
   await expect(
-    page.getByRole("button", { name: "＋ Add nodes", exact: true }),
-  ).toBeDisabled();
-  await expect(
-    page.getByRole("button", { name: "Create reusable copy", exact: true }),
-  ).toBeDisabled();
-  await expect(
-    page.getByRole("button", {
-      name: "Two-agent review template",
-      exact: true,
-    }),
-  ).toBeDisabled();
-  await expect(
-    page.getByLabel("Workflow name", { exact: true }),
-  ).toBeDisabled();
+    page.getByRole("button", { name: "+ Add node", exact: true }),
+  ).toBeEnabled();
+  await page.locator('.react-flow__node[data-id="end"]').click();
   await page
-    .getByRole("button", { name: "Test Workflow", exact: true })
+    .getByLabel("Result title", { exact: true })
+    .fill("Reviewed result");
+  const canvas = await page.locator(".workflow-canvas").boundingBox();
+  const panel = await page
+    .getByLabel("Node properties", { exact: true })
+    .boundingBox();
+  expect(panel.x).toBeGreaterThanOrEqual(canvas.x);
+  expect(panel.y + panel.height).toBeLessThanOrEqual(canvas.y + canvas.height);
+  await page
+    .getByRole("button", { name: "› Minimize panel", exact: true })
     .click();
+  await expect(page.getByLabel("Node properties", { exact: true })).toHaveCount(
+    0,
+  );
+  await page
+    .getByRole("button", { name: "‹ Restore panel", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Draft saved");
+  await page.getByRole("button", { name: "Test / runs", exact: true }).click();
   await expect(
-    page.getByRole("region", { name: "Workflow test panel" }),
+    page.getByLabel("Workflow testing", { exact: true }),
   ).toBeVisible();
   const [stored] =
     await sql`SELECT draft_graph FROM workflows WHERE id=${created.id}`;
   expect(stored.draft_graph.schemaVersion).toBe(2);
   expect(stored.draft_graph.execution.nodes[1].config.input.path).toBe("input");
   expect(stored.draft_graph.nodes).toBeUndefined();
+  expect(stored.draft_graph.execution.nodes[1].config.title).toBe(
+    "Reviewed result",
+  );
+});
+
+test("V2 no-code panels reuse Agents and schemas and select mapped fields", async ({
+  page,
+  context,
+}) => {
+  const agents =
+    await sql`SELECT id,agent_id FROM agent_versions WHERE organization_id=${org} ORDER BY version DESC`;
+  const model =
+    await sql`SELECT id FROM model_configurations WHERE organization_id=${org} LIMIT 1`;
+  const created = await api(`/workspaces/${workspace}/workflows`, {
+    name: "V2 configure",
+    graph: {
+      schemaVersion: 2,
+      execution: {
+        resources: {
+          model: { kind: "model", id: model[0].id },
+          agent: {
+            kind: "agent",
+            agentId: agents[0].agent_id,
+            versionId: agents[0].id,
+          },
+        },
+        nodes: [
+          { id: "start", kind: "input", label: "Input", config: {} },
+          {
+            id: "extract",
+            kind: "structured-ai",
+            label: "Structured Extraction",
+            config: {
+              resource: "model",
+              instruction: "Extract invoice fields",
+              outputSchema: {
+                type: "object",
+                properties: {
+                  invoiceNumber: { type: "string" },
+                  total: { type: "number" },
+                },
+                required: ["invoiceNumber", "total"],
+                additionalProperties: false,
+              },
+            },
+          },
+          {
+            id: "review",
+            kind: "human-task",
+            label: "Review",
+            config: {
+              mode: "review-edit",
+              prompt: "Check invoice",
+              outputSchema: { type: "object", properties: {} },
+            },
+          },
+          {
+            id: "agent",
+            kind: "agent",
+            label: "Existing Agent",
+            config: { resource: "agent" },
+          },
+          { id: "end", kind: "output", label: "Output", config: {} },
+        ],
+        edges: [
+          ["start", "extract"],
+          ["extract", "review"],
+          ["review", "agent"],
+          ["agent", "end"],
+        ].map(([source, target], i) => ({ id: "edge_" + i, source, target })),
+      },
+      editor: {
+        nodes: {
+          start: { x: 20, y: 100 },
+          extract: { x: 260, y: 100 },
+          review: { x: 500, y: 100 },
+          agent: { x: 740, y: 100 },
+          end: { x: 980, y: 100 },
+        },
+      },
+    },
+  });
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByLabel("Current workflow", { exact: true })
+    .selectOption(created.id);
+  await expect(page.locator(".react-flow__node")).toHaveCount(5);
+  await page.locator('.react-flow__node[data-id="review"]').click();
+  await page
+    .getByRole("button", {
+      name: "Use previous step’s output schema",
+      exact: true,
+    })
+    .click();
+  await expect(page.getByLabel("Node properties")).toContainText(
+    "invoiceNumber",
+  );
+  await page
+    .getByRole("button", { name: "Choose mapped value", exact: true })
+    .click();
+  await page
+    .getByLabel("Value source", { exact: true })
+    .selectOption("steps.extract.output");
+  await page
+    .getByLabel("Known field", { exact: true })
+    .selectOption("invoiceNumber");
+  await page.getByLabel("Approve button", { exact: true }).fill("Process");
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Draft saved");
+  const [stored] =
+    await sql`SELECT draft_graph FROM workflows WHERE id=${created.id}`;
+  const review = stored.draft_graph.execution.nodes.find(
+    (n) => n.id === "review",
+  );
+  expect(review.config.input.path).toBe("steps.extract.output.invoiceNumber");
+  expect(review.config.approveLabel).toBe("Process");
+  expect(review.config.outputSchema.properties.total.type).toBe("number");
+  await page
+    .getByRole("button", { name: "› Minimize panel", exact: true })
+    .click();
+  await page.locator('.react-flow__node[data-id="agent"]').click();
+  await expect(page.getByLabel("Agent", { exact: true })).toBeVisible();
+  await expect(
+    page.getByLabel("Published version", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Uses the selected published Agent/),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Node properties").getByText("Tools", { exact: true }),
+  ).toHaveCount(0);
+});
+
+test("V2 creates structured schemas and deterministic Actions from canvas property panels", async ({
+  page,
+  context,
+}) => {
+  const tool = await api(`/workspaces/${workspace}/tools`, {
+    name: "V2 calculator",
+    description: "Deterministic calculation",
+    config: { kind: "financial" },
+    readOnlyAcknowledged: true,
+  });
+  const [model] =
+    await sql`SELECT id FROM model_configurations WHERE organization_id=${org} ORDER BY name LIMIT 1`;
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create V2 workflow", exact: true })
+    .click();
+  await page
+    .getByLabel("Node type", { exact: true })
+    .selectOption("structured-ai");
+  await page.getByRole("button", { name: "+ Add node", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: /Model \/ provider/ })
+    .selectOption(model.id);
+  await page.getByLabel("New schema field", { exact: true }).fill("total");
+  await page.getByRole("button", { name: "+ Field", exact: true }).click();
+  await page
+    .locator(".v2-schema-editor details")
+    .first()
+    .getByLabel("Schema type", { exact: true })
+    .selectOption("number");
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Draft saved");
+  await page.getByLabel("Node type", { exact: true }).selectOption("action");
+  await page.getByRole("button", { name: "+ Add node", exact: true }).click();
+  await page
+    .getByLabel("Action connector", { exact: true })
+    .selectOption("agentconnect.tool");
+  await page
+    .getByRole("combobox", { name: /Integration \/ operation/ })
+    .selectOption(tool.id);
+  await expect(
+    page.getByText("Connector: agentconnect.tool", { exact: false }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Input field to map", { exact: true })
+    .selectOption("operation");
+  await page.getByRole("button", { name: "+ Mapping", exact: true }).click();
+  await page.getByLabel("Value", { exact: true }).fill("sum");
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Draft saved");
+  const [stored] =
+    await sql`SELECT draft_graph FROM workflows WHERE organization_id=${org} AND name='New workflow' ORDER BY updated_at DESC LIMIT 1`;
+  expect(
+    stored.draft_graph.execution.nodes.find((n) => n.kind === "structured-ai")
+      .config.outputSchema.properties.total.type,
+  ).toBe("number");
+  const actionNode = stored.draft_graph.execution.nodes.find(
+    (n) => n.kind === "action",
+  );
+  expect(actionNode.config.inputs.operation).toEqual({
+    type: "literal",
+    value: "sum",
+  });
+  expect(stored.draft_graph.execution.actions[0].toolId).toBe(tool.id);
+  await page.screenshot({
+    path: "test-results/workflow-v2-canvas.png",
+    fullPage: true,
+  });
 });

@@ -3,6 +3,8 @@ import {
   workflowV2Program,
   validateV2Resources,
   executeWorkflowAction,
+  executeStructuredAI,
+  schemaValidator,
 } from "./workflow-v2.js";
 import {
   resolveWorkflowExpression,
@@ -131,7 +133,16 @@ const State = Annotation.Root({
     },
     default: () => ({}),
   }),
-  decisions: Annotation<Record<string, boolean>>({
+  variables: Annotation<Record<string, unknown>>({
+    reducer: (a, b) => {
+      const merged = { ...a, ...b };
+      if (Buffer.byteLength(JSON.stringify(merged)) > 1000000)
+        throw new WorkflowError("WORKFLOW_STATE_LIMIT");
+      return merged;
+    },
+    default: () => ({}),
+  }),
+  decisions: Annotation<Record<string, boolean | string>>({
     reducer: (a, b) => ({ ...a, ...b }),
     default: () => ({}),
   }),
@@ -193,7 +204,7 @@ export async function compileWorkflow(
       steps: Object.fromEntries(
         Object.entries(state.outputs).map(([id, output]) => [id, { output }]),
       ),
-      variables: program?.variables ?? {},
+      variables: { ...program?.variables, ...state.variables },
       workflow: {
         id: run.workflow_id,
         versionId: run.version_id ?? null,
@@ -270,6 +281,41 @@ export async function compileWorkflow(
               outputTokens: number | null = null,
               citations: unknown[] = [];
             const nodeCtx = { ...ctx, workflowNodeId: node.id };
+            if (definitionNode?.kind === "structured-ai") {
+              const resource =
+                program!.resources[definitionNode.config.resource]!;
+              if (resource.kind !== "model")
+                throw new WorkflowError("WORKFLOW_MODEL_UNAVAILABLE");
+              const result = await executeStructuredAI(
+                resource.id,
+                definitionNode.config.instruction,
+                input,
+                definitionNode.config.outputSchema,
+                nodeCtx,
+                signal,
+                overrides.providerFactory,
+              );
+              output = result.output;
+              inputTokens = result.inputTokens;
+              outputTokens = result.outputTokens;
+            }
+            if (definitionNode?.kind === "transform")
+              output = Object.fromEntries(
+                Object.entries(definitionNode.config.fields).map(
+                  ([key, value]) => [
+                    key,
+                    resolveWorkflowExpression(value, context),
+                  ],
+                ),
+              );
+            let variableUpdate: Record<string, unknown> | undefined;
+            if (definitionNode?.kind === "set-variable") {
+              output = resolveWorkflowExpression(
+                definitionNode.config.value,
+                context,
+              );
+              variableUpdate = { [definitionNode.config.name]: output };
+            }
             if (node.type === "agent") {
               const result = await workflowRetry(run.id, node, signal, () =>
                 executeWorkflowNodeAgent(
@@ -316,8 +362,12 @@ export async function compileWorkflow(
                 ).result;
               }
             }
-            if (node.type === "approval") {
-              await sql`INSERT INTO workflow_approvals(id,run_id,node_id,workspace_id,organization_id,prompt,input,decision) VALUES (${randomUUID()},${run.id},${node.id},${run.workspace_id},${run.organization_id},${node.data.approvalPrompt},${sql.json(redact(input) as never)},'pending') ON CONFLICT(run_id,node_id) DO NOTHING`;
+            if (node.type === "approval" || node.type === "human-task") {
+              const prompt =
+                definitionNode?.kind === "human-task"
+                  ? definitionNode.config.prompt
+                  : node.data.approvalPrompt;
+              await sql`INSERT INTO workflow_approvals(id,run_id,node_id,workspace_id,organization_id,prompt,input,decision) VALUES (${randomUUID()},${run.id},${node.id},${run.workspace_id},${run.organization_id},${prompt},${sql.json(redact(input) as never)},'pending') ON CONFLICT(run_id,node_id) DO NOTHING`;
               await sql`UPDATE workflow_node_runs SET status='waiting' WHERE run_id=${run.id} AND node_id=${node.id}`;
               const decision = interrupt<
                 { nodeId: string },
@@ -329,8 +379,30 @@ export async function compileWorkflow(
                 decision.editedInput === undefined
                   ? input
                   : decision.editedInput;
+              if (
+                definitionNode?.kind === "human-task" &&
+                !schemaValidator(definitionNode.config.outputSchema)(output)
+              )
+                throw new WorkflowError("HUMAN_TASK_OUTPUT_INVALID");
             }
-            let branch: boolean | undefined;
+            let branch: boolean | string | undefined;
+            if (definitionNode?.kind === "switch") {
+              const left = resolveWorkflowExpression(
+                definitionNode.config.value,
+                context,
+              );
+              branch =
+                definitionNode.config.cases.find((c) =>
+                  evaluateWorkflowCondition(
+                    {
+                      operator: "equals",
+                      left: { type: "literal", value: left as never },
+                      right: { type: "literal", value: c.value },
+                    },
+                    context,
+                  ),
+                )?.id ?? "default";
+            }
             if (node.type === "router" || node.type === "condition") {
               const text = stringify(input);
               branch =
@@ -346,6 +418,8 @@ export async function compileWorkflow(
                       : text.trim().length > 0;
             }
             output = redact(output);
+            if (variableUpdate && definitionNode?.kind === "set-variable")
+              variableUpdate = { [definitionNode.config.name]: output };
             if (Buffer.byteLength(JSON.stringify(output)) > 128000)
               throw new WorkflowError("WORKFLOW_OUTPUT_LIMIT");
             signal.throwIfAborted();
@@ -353,6 +427,7 @@ export async function compileWorkflow(
             observationContent(span, "output", output);
             return {
               outputs: { [node.id]: output },
+              ...(variableUpdate ? { variables: variableUpdate } : {}),
               ...(branch !== undefined
                 ? { decisions: { [node.id]: branch } }
                 : {}),
@@ -376,11 +451,20 @@ export async function compileWorkflow(
       builder.addEdge("node_" + node.id, END);
       continue;
     }
-    if (node.type === "router" || node.type === "condition") {
+    if (
+      node.type === "router" ||
+      node.type === "condition" ||
+      node.type === "switch"
+    ) {
       const edges = graph.edges.filter((e) => e.source === node.id);
       builder.addConditionalEdges(
         "node_" + node.id,
-        (state) => (state.decisions[node.id] ? "true" : "false"),
+        (state) =>
+          node.type === "switch"
+            ? String(state.decisions[node.id])
+            : state.decisions[node.id]
+              ? "true"
+              : "false",
         Object.fromEntries(
           edges.map((e) => [e.sourceHandle!, "node_" + e.target]),
         ),
@@ -477,11 +561,17 @@ export async function processWorkflowRun(
               maxConcurrency: 4,
             };
           const before = await graph.getState(executionConfig);
+          const interrupted = before.tasks
+            .flatMap((t) => t.interrupts ?? [])
+            .map((i) => (i.value as { nodeId?: string })?.nodeId)
+            .filter(Boolean);
           const [approval] =
-            await sql`SELECT decision,edited_input,edited_input IS NOT NULL AS has_edit FROM workflow_approvals WHERE run_id=${run.id}`;
+            interrupted.length === 1
+              ? await sql`SELECT decision,edited_input,edited_input IS NOT NULL AS has_edit FROM workflow_approvals WHERE run_id=${run.id} AND node_id=${interrupted[0]!}`
+              : [];
           let initial: GraphUpdate | Command | null = before.createdAt
             ? null
-            : { input: run.input, outputs: {}, decisions: {} };
+            : { input: run.input, outputs: {}, decisions: {}, variables: {} };
           if (
             approval?.decision === "approved" &&
             before.tasks.some((t) => t.interrupts?.length)

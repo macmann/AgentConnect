@@ -1,0 +1,1215 @@
+"use client";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  Panel,
+  applyNodeChanges,
+  type Node,
+  type Edge,
+  type Connection,
+  Handle,
+  Position,
+  type NodeProps,
+  useUpdateNodeInternals,
+} from "@xyflow/react";
+import {
+  workflowDefinitionV2,
+  validateWorkflowDefinition,
+  type WorkflowDefinitionV2,
+} from "@agentconnect/schemas/workflow-v2";
+import {
+  WorkflowV2NodePanel,
+  type WorkflowCatalog,
+} from "./workflow-v2-node-panel";
+import {
+  FieldPicker,
+  StructuredFields,
+  type ValueSchema,
+} from "./workflow-v2-fields";
+import { requestJson } from "./agent-client";
+import { Button } from "./button";
+import { WorkflowResult } from "./workflow-result";
+import { WorkflowTriggers } from "./workflow-triggers";
+type Step = WorkflowDefinitionV2["execution"]["nodes"][number];
+type VNode = Node<
+  {
+    label: string;
+    kind: string;
+    routes: { id: string; label: string }[];
+    invalid: boolean;
+  },
+  "v2"
+>;
+type Run = {
+  id: string;
+  status: string;
+  output: unknown;
+  error_code?: string;
+  graph_snapshot: {
+    programV2: { execution: WorkflowDefinitionV2["execution"] };
+  };
+  approvals: {
+    node_id: string;
+    prompt: string;
+    input: unknown;
+    decision: string;
+  }[];
+  nodes: {
+    node_id: string;
+    label: string;
+    status: string;
+    error_code?: string;
+  }[];
+};
+function StepNode({ id, data, selected, isConnectable }: NodeProps<VNode>) {
+  const updateInternals = useUpdateNodeInternals();
+  const handles = data.routes.map((r) => r.id).join("|");
+  useEffect(() => {
+    updateInternals(id);
+  }, [id, handles, updateInternals]);
+  return (
+    <div
+      className={`workflow-node ${selected ? "selected" : ""}`}
+      style={{
+        borderColor: data.invalid ? "#d97706" : undefined,
+        minHeight: 80 + data.routes.length * 18,
+      }}
+    >
+      <small>{data.kind}</small>
+      <strong>{data.label}</strong>
+      {data.invalid && <span>Needs configuration</span>}
+      {data.kind !== "input" &&
+        [Position.Left, Position.Top, Position.Bottom, Position.Right].map(
+          (position, i) => (
+            <Handle
+              key={position}
+              id={["in-left", "in-top", "in-bottom", "in-right"][i]}
+              type="target"
+              position={position}
+              isConnectable={isConnectable}
+              style={position === Position.Right ? { top: "25%" } : undefined}
+            />
+          ),
+        )}
+      {data.kind !== "output" &&
+        (data.routes.length
+          ? data.routes.map((route, i) => (
+              <div key={route.id}>
+                <span style={{ fontSize: 10 }}>{route.label}</span>
+                <Handle
+                  id={route.id}
+                  type="source"
+                  position={Position.Right}
+                  style={{ top: `${45 + (i / data.routes.length) * 45}%` }}
+                  isConnectable={isConnectable}
+                />
+              </div>
+            ))
+          : [Position.Right, Position.Top, Position.Bottom, Position.Left].map(
+              (position, i) => (
+                <Handle
+                  key={position}
+                  id={["out-right", "out-top", "out-bottom", "out-left"][i]}
+                  type="source"
+                  position={position}
+                  isConnectable={isConnectable}
+                  style={
+                    position === Position.Left ? { top: "75%" } : undefined
+                  }
+                />
+              ),
+            ))}
+    </div>
+  );
+}
+const nodeTypes = { v2: StepNode };
+function connectionPorts(
+  connection: Connection,
+): NonNullable<WorkflowDefinitionV2["editor"]>["edges"][string] {
+  return {
+    ...(["out-top", "out-bottom", "out-left"].includes(
+      connection.sourceHandle ?? "",
+    )
+      ? {
+          sourcePort: connection.sourceHandle as
+            "out-top" | "out-bottom" | "out-left",
+        }
+      : {}),
+    ...(["in-top", "in-bottom", "in-right"].includes(
+      connection.targetHandle ?? "",
+    )
+      ? {
+          targetPort: connection.targetHandle as
+            "in-top" | "in-bottom" | "in-right",
+        }
+      : {}),
+  };
+}
+
+const initial = (): WorkflowDefinitionV2 =>
+  workflowDefinitionV2.parse({
+    schemaVersion: 2,
+    execution: {
+      nodes: [
+        { id: "input", label: "Input", kind: "input", config: {} },
+        { id: "output", label: "Output", kind: "output", config: {} },
+      ],
+      edges: [{ id: "input_output", source: "input", target: "output" }],
+    },
+    editor: { nodes: { input: { x: 50, y: 120 }, output: { x: 450, y: 120 } } },
+  });
+const kinds = [
+  "agent",
+  "structured-ai",
+  "action",
+  "human-task",
+  "transform",
+  "set-variable",
+  "condition",
+  "switch",
+  "parallel",
+  "merge",
+  "input",
+  "output",
+] as const;
+const outputSchema = {
+  type: "object",
+  properties: {},
+  required: [],
+  additionalProperties: false,
+};
+export function WorkflowV2Studio({
+  workspaceId,
+  workflowId,
+  role,
+  onBack,
+}: {
+  workspaceId: string;
+  workflowId: string;
+  role: string;
+  onBack: () => void;
+}) {
+  const editable = [
+    "owner",
+    "org_admin",
+    "workspace_admin",
+    "builder",
+  ].includes(role);
+  const canExecute = [
+    "owner",
+    "org_admin",
+    "workspace_admin",
+    "builder",
+    "operator",
+  ].includes(role);
+  const approver = [
+    "owner",
+    "org_admin",
+    "workspace_admin",
+    "operator",
+  ].includes(role);
+  const [definition, setDefinition] = useState(initial),
+    [id, setId] = useState(workflowId),
+    [name, setName] = useState("New workflow"),
+    [revision, setRevision] = useState(1),
+    [description, setDescription] = useState("");
+  const [selectedEdges, setSelectedEdges] = useState<string[]>([]);
+  const [selected, setSelected] = useState("input"),
+    [minimized, setMinimized] = useState(false),
+    [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
+    [busy, setBusy] = useState(false),
+    [dirty, setDirty] = useState(false),
+    [ready, setReady] = useState(!workflowId),
+    [serverErrors, setServerErrors] = useState<string[]>([]);
+  const [kind, setKind] = useState<(typeof kinds)[number]>("agent"),
+    [variableName, setVariableName] = useState(""),
+    [testOpen, setTestOpen] = useState(false),
+    [input, setInput] = useState<unknown>(""),
+    [runId, setRunId] = useState(""),
+    [edited, setEdited] = useState<unknown>(),
+    [versionId, setVersionId] = useState("");
+  const catalog = useQuery({
+    queryKey: ["workflow-catalog", workspaceId],
+    queryFn: () =>
+      requestJson<WorkflowCatalog>(
+        `/workspaces/${workspaceId}/workflow-catalog`,
+      ),
+  });
+  const versions = useQuery({
+    queryKey: ["v2-versions", id, revision],
+    enabled: !!id,
+    queryFn: () =>
+      requestJson<
+        {
+          id: string;
+          version: number;
+          definitionVersion?: 2;
+          graph: import("@agentconnect/schemas/workflows").WorkflowGraph;
+        }[]
+      >(`/workflows/${id}/versions`),
+  });
+  const runs = useQuery({
+    queryKey: ["v2-runs", id],
+    enabled: !!id,
+    queryFn: () =>
+      requestJson<{ id: string; status: string }[]>(`/workflows/${id}/runs`),
+    refetchInterval: runId ? 2500 : false,
+  });
+  const run = useQuery({
+    queryKey: ["v2-run", runId],
+    enabled: !!runId,
+    queryFn: () => requestJson<Run>(`/workflow-runs/${runId}`),
+    refetchInterval: (q) =>
+      q.state.data &&
+      ["completed", "failed", "rejected", "cancelled"].includes(
+        q.state.data.status,
+      )
+        ? false
+        : 1500,
+  });
+  useEffect(() => {
+    if (!workflowId) return;
+    let active = true;
+    requestJson<{
+      name: string;
+      description: string;
+      revision: number;
+      definition: WorkflowDefinitionV2;
+    }>(`/workflows/${workflowId}`)
+      .then((w) => {
+        if (active) {
+          setDefinition(workflowDefinitionV2.parse(w.definition));
+          setName(w.name);
+          setDescription(w.description);
+          setRevision(w.revision);
+          setReady(true);
+        }
+      })
+      .catch((e) => {
+        if (active) setError(e.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, [workflowId]);
+  const pending = run.data?.approvals.find((a) => a.decision === "pending");
+  const taskNode = pending
+    ? run.data?.graph_snapshot.programV2.execution.nodes.find(
+        (n) => n.id === pending.node_id,
+      )
+    : undefined;
+  const taskInputKey = pending ? runId + pending.node_id : "";
+  useEffect(() => {
+    setEdited(undefined);
+  }, [taskInputKey]);
+  function change(next: WorkflowDefinitionV2) {
+    setDefinition(next);
+    setDirty(true);
+    setServerErrors([]);
+  }
+  const errors = [
+    ...validateWorkflowDefinition(definition).map((error) => {
+      const index = /^execution\.nodes\.(\d+)/.exec(error)?.[1];
+      return index
+        ? `${definition.execution.nodes[Number(index)]?.id}: ${error}`
+        : error;
+    }),
+    ...definition.execution.nodes.flatMap((n) => {
+      if (!catalog.data) return [];
+      if (n.kind === "agent") {
+        const r = definition.execution.resources[n.config.resource];
+        if (
+          r?.kind === "agent" &&
+          !catalog.data.agents.some(
+            (a) => a.agent_id === r.agentId && a.id === r.versionId,
+          )
+        )
+          return [`${n.id}: published Agent version is unavailable`];
+      }
+      if (n.kind === "structured-ai") {
+        const r = definition.execution.resources[n.config.resource];
+        if (
+          r?.kind === "model" &&
+          !catalog.data.models.some((m) => m.id === r.id)
+        )
+          return [`${n.id}: model is unavailable`];
+      }
+      if (n.kind === "action") {
+        const a = definition.execution.actions.find(
+          (a) => a.id === n.config.actionId,
+        );
+        if (
+          a &&
+          !catalog.data.actions.some((t) => t.id === a.toolId && !t.unavailable)
+        )
+          return [
+            `${n.id}: registered Action or saved connection is unavailable`,
+          ];
+      }
+      return [];
+    }),
+    ...serverErrors,
+  ];
+  const node = definition.execution.nodes.find((n) => n.id === selected);
+  const routes = (n: Step) =>
+    n.kind === "condition"
+      ? [
+          { id: "true", label: "True" },
+          { id: "false", label: "False" },
+        ]
+      : n.kind === "switch"
+        ? [
+            ...n.config.cases.map((c) => ({ id: c.id, label: c.label })),
+            { id: "default", label: "Default" },
+          ]
+        : [];
+  const nodes: VNode[] = definition.execution.nodes.map((n, i) => ({
+    id: n.id,
+    type: "v2",
+    position: definition.editor?.nodes[n.id] ?? { x: i * 250, y: 150 },
+    selected: selected === n.id,
+    data: {
+      label: n.label,
+      kind: n.kind,
+      routes: routes(n),
+      invalid: errors.some(
+        (e) => e.startsWith(n.id + ":") || e.startsWith(n.label + ":"),
+      ),
+    },
+  }));
+  const edges: Edge[] = definition.execution.edges.map((e) => ({
+    id: e.id,
+    source: e.source,
+    target: e.target,
+    sourceHandle:
+      e.branch ?? definition.editor?.edges[e.id]?.sourcePort ?? "out-right",
+    targetHandle: definition.editor?.edges[e.id]?.targetPort ?? "in-left",
+    selected: selectedEdges.includes(e.id),
+    label: e.branch,
+  }));
+  async function task(fn: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function save() {
+    const parsed = workflowDefinitionV2.parse(definition);
+    const saved = await requestJson<{
+      id: string;
+      revision: number;
+      validation: string[];
+    }>(
+      id ? `/workflows/${id}` : `/workspaces/${workspaceId}/workflows`,
+      id ? "PUT" : "POST",
+      { name, description, graph: parsed, ...(id ? { revision } : {}) },
+    );
+    setId(saved.id);
+    setRevision(saved.revision);
+    setDirty(false);
+    setServerErrors(saved.validation);
+    setNotice("Draft saved");
+    return saved;
+  }
+  function add() {
+    const nodeId =
+      kind.replaceAll("-", "_") + "_" + crypto.randomUUID().slice(0, 8);
+    const config =
+      kind === "agent"
+        ? { resource: "agent_" + nodeId }
+        : kind === "structured-ai"
+          ? {
+              resource: "model_" + nodeId,
+              instruction: "Extract the requested fields.",
+              outputSchema,
+            }
+          : kind === "action"
+            ? { actionId: "action_" + nodeId }
+            : kind === "human-task"
+              ? {
+                  mode: "review-edit",
+                  prompt: "Review the result before continuing.",
+                  outputSchema,
+                }
+              : kind === "transform"
+                ? { fields: {} }
+                : kind === "set-variable"
+                  ? {
+                      name:
+                        Object.keys(definition.execution.variables)[0] ??
+                        "value",
+                      value: { type: "literal", value: "" },
+                    }
+                  : kind === "condition"
+                    ? {
+                        condition: {
+                          operator: "equals",
+                          left: { type: "reference", path: "input" },
+                          right: { type: "literal", value: "" },
+                        },
+                      }
+                    : kind === "switch"
+                      ? {
+                          value: { type: "reference", path: "input" },
+                          cases: [
+                            {
+                              id: "case_one",
+                              label: "First route",
+                              value: "high",
+                            },
+                          ],
+                        }
+                      : {};
+    const step = workflowDefinitionV2.shape.execution.shape.nodes.element.parse(
+      { id: nodeId, label: kind.replaceAll("-", " "), kind, config },
+    );
+    change({
+      ...definition,
+      execution: {
+        ...definition.execution,
+        nodes: [...definition.execution.nodes, step],
+      },
+      editor: {
+        ...definition.editor,
+        edges: definition.editor?.edges ?? {},
+        nodes: {
+          ...definition.editor?.nodes,
+          [nodeId]: {
+            x: 250 + Math.random() * 100,
+            y: 280 + Math.random() * 80,
+          },
+        },
+      },
+    });
+    setSelected(nodeId);
+    setMinimized(false);
+  }
+  function remove(ids: string[], edgeIds: string[] = []) {
+    const nodes = definition.execution.nodes.filter((n) => !ids.includes(n.id));
+    const edges = definition.execution.edges.filter(
+      (e) =>
+        !ids.includes(e.source) &&
+        !ids.includes(e.target) &&
+        !edgeIds.includes(e.id),
+    );
+    const removedResources = definition.execution.nodes
+      .filter((n) => ids.includes(n.id))
+      .flatMap((n) => ("resource" in n.config ? [n.config.resource] : []));
+    const retainedResources = nodes.flatMap((n) =>
+      "resource" in n.config ? [n.config.resource] : [],
+    );
+    const removedActions = definition.execution.nodes
+      .filter((n) => ids.includes(n.id))
+      .flatMap((n) => (n.kind === "action" ? [n.config.actionId] : []));
+    change({
+      ...definition,
+      execution: {
+        ...definition.execution,
+        nodes,
+        edges,
+        resources: Object.fromEntries(
+          Object.entries(definition.execution.resources).filter(
+            ([key]) =>
+              !removedResources.includes(key) ||
+              retainedResources.includes(key),
+          ),
+        ),
+        actions: definition.execution.actions.filter(
+          (a) =>
+            !removedActions.includes(a.id) ||
+            nodes.some(
+              (n) => n.kind === "action" && n.config.actionId === a.id,
+            ),
+        ),
+      },
+      editor: definition.editor
+        ? {
+            ...definition.editor,
+            nodes: Object.fromEntries(
+              Object.entries(definition.editor.nodes).filter(
+                ([key]) => !ids.includes(key),
+              ),
+            ),
+            edges: Object.fromEntries(
+              Object.entries(definition.editor.edges).filter(([key]) =>
+                edges.some((e) => e.id === key),
+              ),
+            ),
+          }
+        : undefined,
+    });
+  }
+  const testFields =
+    (versionId
+      ? versions.data?.find((v) => v.id === versionId)?.graph.inputFields
+      : undefined) ?? definition.execution.inputFields;
+  const resultNode = run.data?.graph_snapshot.programV2.execution.nodes.find(
+    (n) => n.kind === "output",
+  );
+  const fieldSchema: ValueSchema = {
+    type: "object",
+    properties: Object.fromEntries(
+      testFields.map((f) => [
+        f.name,
+        {
+          type:
+            f.type === "text"
+              ? "string"
+              : f.type === "json"
+                ? undefined
+                : f.type,
+        },
+      ]),
+    ),
+    required: testFields.filter((f) => f.required).map((f) => f.name),
+  };
+  return (
+    <section className="panel workflow-studio v2-studio">
+      <div className="panel-header">
+        <h2>{name} · Workflow V2</h2>
+        <Button
+          onClick={() => {
+            if (!dirty || window.confirm("Discard unsaved workflow changes?"))
+              onBack();
+          }}
+        >
+          Back to workflows
+        </Button>
+      </div>
+      {error && (
+        <p className="error-banner" role="alert">
+          {error}
+        </p>
+      )}
+      {notice && <p role="status">{notice}</p>}
+      {catalog.error && (
+        <p role="alert">
+          Resource list unavailable: {catalog.error.message}{" "}
+          <Button onClick={() => void catalog.refetch()}>Retry</Button>
+        </p>
+      )}
+      {!ready ? (
+        <p>Loading workflow…</p>
+      ) : (
+        <>
+          <div className="workflow-editor">
+            <div
+              className="workflow-canvas"
+              style={{ height: "min(78vh, 900px)", minHeight: 600 }}
+            >
+              <ReactFlow<VNode>
+                nodeTypes={nodeTypes}
+                nodes={nodes}
+                edges={edges}
+                fitView
+                fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
+                nodesDraggable={editable}
+                nodesConnectable={editable}
+                deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
+                onNodeClick={(_, n) => {
+                  setSelected(n.id);
+                  setSelectedEdges([]);
+                  setMinimized(false);
+                  setTestOpen(false);
+                }}
+                onEdgeClick={(_, edge) => {
+                  setSelectedEdges([edge.id]);
+                  setSelected("");
+                }}
+                onNodesChange={(changes) => {
+                  if (!editable) return;
+                  const removed = changes
+                    .filter((c) => c.type === "remove")
+                    .map((c) => c.id);
+                  if (removed.length) return remove(removed);
+                  if (!changes.some((c) => c.type === "position")) return;
+                  const updated = applyNodeChanges(changes, nodes);
+                  change({
+                    ...definition,
+                    editor: {
+                      ...definition.editor,
+                      edges: definition.editor?.edges ?? {},
+                      nodes: Object.fromEntries(
+                        updated.map((n) => [n.id, n.position]),
+                      ),
+                    },
+                  });
+                }}
+                onEdgesChange={(changes) => {
+                  if (editable) {
+                    const removed = changes
+                      .filter((c) => c.type === "remove")
+                      .map((c) => c.id);
+                    if (removed.length) remove([], removed);
+                  }
+                }}
+                onConnect={(connection) => {
+                  if (!editable || !connection.source || !connection.target)
+                    return;
+                  const source = definition.execution.nodes.find(
+                    (n) => n.id === connection.source,
+                  );
+                  const edgeId = "edge_" + crypto.randomUUID().slice(0, 8);
+                  change({
+                    ...definition,
+                    editor: {
+                      nodes: definition.editor?.nodes ?? {},
+                      edges: {
+                        ...definition.editor?.edges,
+                        [edgeId]: connectionPorts(connection),
+                      },
+                    },
+                    execution: {
+                      ...definition.execution,
+                      edges: [
+                        ...definition.execution.edges,
+                        {
+                          id: edgeId,
+                          source: connection.source,
+                          target: connection.target,
+                          ...((source?.kind === "condition" ||
+                            source?.kind === "switch") &&
+                          connection.sourceHandle
+                            ? { branch: connection.sourceHandle }
+                            : {}),
+                        },
+                      ],
+                    },
+                  });
+                }}
+                onReconnect={(old, connection) => {
+                  if (!editable || !connection.source || !connection.target)
+                    return;
+                  const source = definition.execution.nodes.find(
+                    (n) => n.id === connection.source,
+                  );
+                  change({
+                    ...definition,
+                    editor: {
+                      nodes: definition.editor?.nodes ?? {},
+                      edges: {
+                        ...definition.editor?.edges,
+                        [old.id]: connectionPorts(connection),
+                      },
+                    },
+                    execution: {
+                      ...definition.execution,
+                      edges: definition.execution.edges.map((e) =>
+                        e.id === old.id
+                          ? {
+                              ...e,
+                              source: connection.source!,
+                              target: connection.target!,
+                              branch:
+                                source?.kind === "condition" ||
+                                source?.kind === "switch"
+                                  ? (connection.sourceHandle ?? undefined)
+                                  : undefined,
+                            }
+                          : e,
+                      ),
+                    },
+                  });
+                }}
+                edgesReconnectable={editable}
+              >
+                <Background />
+                <Controls />
+                <Panel position="top-left">
+                  <div className="v2-topbar">
+                    <select
+                      aria-label="Node type"
+                      value={kind}
+                      disabled={!editable}
+                      onChange={(e) => setKind(e.target.value as typeof kind)}
+                    >
+                      {kinds.map((k) => (
+                        <option key={k} value={k}>
+                          {k.replaceAll("-", " ")}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      disabled={
+                        !editable || definition.execution.nodes.length >= 40
+                      }
+                      onClick={add}
+                    >
+                      + Add node
+                    </Button>
+                    <Button
+                      disabled={!editable || busy}
+                      onClick={() =>
+                        void task(async () => {
+                          await save();
+                        })
+                      }
+                    >
+                      Save draft
+                    </Button>
+                    <Button
+                      disabled={!editable || busy || !!errors.length}
+                      onClick={() =>
+                        void task(async () => {
+                          const saved =
+                            dirty || !id ? await save() : { id, revision };
+                          const result = await requestJson<{
+                            valid: boolean;
+                            errors: string[];
+                          }>(`/workflows/${saved.id}/validate`, "POST");
+                          setServerErrors(result.errors);
+                          if (result.valid) {
+                            await requestJson(
+                              `/workflows/${saved.id}/publish`,
+                              "POST",
+                              { revision: saved.revision },
+                            );
+                            void versions.refetch();
+                            setNotice("Workflow published");
+                          }
+                        })
+                      }
+                    >
+                      Publish
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        setTestOpen(!testOpen);
+                        setMinimized(false);
+                      }}
+                    >
+                      Test / runs
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        setSelected("");
+                        setTestOpen(false);
+                        setMinimized(false);
+                      }}
+                    >
+                      Workflow settings
+                    </Button>
+                    <Button
+                      disabled={
+                        !editable || (!selectedEdges.length && !selected)
+                      }
+                      onClick={() => {
+                        remove(selected ? [selected] : [], selectedEdges);
+                        setSelectedEdges([]);
+                        setSelected("");
+                      }}
+                    >
+                      Delete selected
+                    </Button>
+                    <span>{dirty ? "Unsaved" : "Saved"}</span>
+                  </div>
+                </Panel>
+              </ReactFlow>
+              <Button
+                className="v2-minimize"
+                aria-expanded={!minimized}
+                onClick={() => setMinimized(!minimized)}
+              >
+                {minimized ? "‹ Restore panel" : "› Minimize panel"}
+              </Button>
+              {!minimized && (
+                <aside
+                  className="v2-properties"
+                  aria-label={testOpen ? "Workflow testing" : "Node properties"}
+                >
+                  {testOpen ? (
+                    <>
+                      <h3>Test workflow</h3>
+                      <label>
+                        Run version
+                        <select
+                          value={versionId}
+                          onChange={(e) => setVersionId(e.target.value)}
+                        >
+                          <option value="">Saved draft</option>
+                          {versions.data?.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              Published version {v.version}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {testFields.length ? (
+                        <StructuredFields
+                          schema={fieldSchema}
+                          value={input}
+                          label="Workflow input"
+                          onChange={setInput}
+                        />
+                      ) : (
+                        <label>
+                          Workflow input
+                          <textarea
+                            value={typeof input === "string" ? input : ""}
+                            onChange={(e) => setInput(e.target.value)}
+                          />
+                        </label>
+                      )}
+                      <Button
+                        disabled={
+                          !canExecute || busy || !id || (!versionId && dirty)
+                        }
+                        onClick={() =>
+                          void task(async () => {
+                            const created = await requestJson<{ id: string }>(
+                              `/workflows/${id}/runs`,
+                              "POST",
+                              {
+                                input,
+                                ...(versionId ? { versionId } : { revision }),
+                              },
+                            );
+                            setRunId(created.id);
+                            void runs.refetch();
+                          })
+                        }
+                      >
+                        Run workflow
+                      </Button>
+                      {!versionId && dirty && (
+                        <p>Save your draft before testing.</p>
+                      )}
+                      <label>
+                        Run history
+                        <select
+                          value={runId}
+                          onChange={(e) => setRunId(e.target.value)}
+                        >
+                          <option value="">Select run</option>
+                          {runs.data?.map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.id.slice(0, 8)} · {r.status}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {run.data && (
+                        <>
+                          <h4>{run.data.status}</h4>
+                          {run.data.error_code && (
+                            <p role="alert">{run.data.error_code}</p>
+                          )}
+                          {run.data.nodes.map((n) => (
+                            <p key={n.node_id}>
+                              {n.label}: {n.status} {n.error_code}
+                            </p>
+                          ))}
+                          {pending && (
+                            <fieldset>
+                              <legend>{pending.prompt}</legend>
+                              {taskNode?.kind === "human-task" &&
+                              taskNode.config.mode === "review-edit" ? (
+                                <fieldset disabled={!approver || busy}>
+                                  <StructuredFields
+                                    schema={
+                                      taskNode.config
+                                        .outputSchema as ValueSchema
+                                    }
+                                    value={
+                                      edited === undefined
+                                        ? pending.input
+                                        : edited
+                                    }
+                                    onChange={setEdited}
+                                    label="Review data"
+                                  />
+                                </fieldset>
+                              ) : (
+                                <pre>
+                                  {JSON.stringify(pending.input, null, 2)}
+                                </pre>
+                              )}
+                              {approver && (
+                                <div className="v2-inline">
+                                  {(["approved", "rejected"] as const).map(
+                                    (decision) => (
+                                      <Button
+                                        key={decision}
+                                        disabled={busy}
+                                        onClick={() =>
+                                          void task(async () => {
+                                            await requestJson(
+                                              `/workflow-runs/${runId}/approval`,
+                                              "POST",
+                                              {
+                                                nodeId: pending.node_id,
+                                                decision,
+                                                ...(edited === undefined
+                                                  ? {}
+                                                  : { editedInput: edited }),
+                                              },
+                                            );
+                                            setEdited(undefined);
+                                            await run.refetch();
+                                          })
+                                        }
+                                      >
+                                        {taskNode?.kind === "human-task"
+                                          ? decision === "approved"
+                                            ? taskNode.config.approveLabel
+                                            : taskNode.config.rejectLabel
+                                          : decision === "approved"
+                                            ? "Approve"
+                                            : "Reject"}
+                                      </Button>
+                                    ),
+                                  )}
+                                </div>
+                              )}
+                            </fieldset>
+                          )}
+                          {run.data.output !== null &&
+                            run.data.output !== undefined && (
+                              <WorkflowResult
+                                output={run.data.output}
+                                title={
+                                  resultNode?.kind === "output"
+                                    ? resultNode.config.title || undefined
+                                    : undefined
+                                }
+                                summary={
+                                  resultNode?.kind === "output"
+                                    ? resultNode.config.summary
+                                    : undefined
+                                }
+                                format={
+                                  resultNode?.kind === "output"
+                                    ? resultNode.config.format
+                                    : undefined
+                                }
+                              />
+                            )}
+                          {["queued", "running", "waiting"].includes(
+                            run.data.status,
+                          ) && (
+                            <Button
+                              onClick={() =>
+                                void task(async () => {
+                                  await requestJson(
+                                    `/workflow-runs/${runId}/cancel`,
+                                    "POST",
+                                  );
+                                  await run.refetch();
+                                })
+                              }
+                            >
+                              Cancel run
+                            </Button>
+                          )}
+                        </>
+                      )}
+                    </>
+                  ) : node ? (
+                    <>
+                      <h3>Step properties</h3>
+                      <fieldset disabled={!editable || busy}>
+                        <WorkflowV2NodePanel
+                          key={node.id}
+                          workspaceId={workspaceId}
+                          node={node}
+                          definition={definition}
+                          catalog={catalog.data}
+                          onChange={change}
+                        />
+                        <Button onClick={() => remove([node.id])}>
+                          Delete node
+                        </Button>
+                      </fieldset>
+                    </>
+                  ) : (
+                    <>
+                      <h3>Workflow settings</h3>
+                      <fieldset disabled={!editable || busy}>
+                        <label>
+                          Name
+                          <input
+                            value={name}
+                            onChange={(e) => {
+                              setName(e.target.value);
+                              setDirty(true);
+                            }}
+                          />
+                        </label>
+                        <label>
+                          Description
+                          <textarea
+                            value={description}
+                            onChange={(e) => {
+                              setDescription(e.target.value);
+                              setDirty(true);
+                            }}
+                          />
+                        </label>
+                        <h4>Initial variables</h4>
+                        {Object.entries(definition.execution.variables).map(
+                          ([key, value]) => (
+                            <details key={key}>
+                              <summary>{key}</summary>
+                              <FieldPicker
+                                definition={definition}
+                                nodeId="input"
+                                value={{ type: "literal", value }}
+                                onChange={(expression) => {
+                                  if (expression.type === "literal")
+                                    change({
+                                      ...definition,
+                                      execution: {
+                                        ...definition.execution,
+                                        variables: {
+                                          ...definition.execution.variables,
+                                          [key]: expression.value,
+                                        },
+                                      },
+                                    });
+                                }}
+                              />
+                              <Button
+                                onClick={() =>
+                                  change({
+                                    ...definition,
+                                    execution: {
+                                      ...definition.execution,
+                                      variables: Object.fromEntries(
+                                        Object.entries(
+                                          definition.execution.variables,
+                                        ).filter(([k]) => k !== key),
+                                      ),
+                                    },
+                                  })
+                                }
+                              >
+                                Remove variable
+                              </Button>
+                            </details>
+                          ),
+                        )}
+                        <input
+                          aria-label="New variable name"
+                          placeholder="Variable name"
+                          value={variableName}
+                          onChange={(e) => setVariableName(e.target.value)}
+                        />
+                        <Button
+                          disabled={
+                            !/^[A-Za-z][A-Za-z0-9_]{0,47}$/.test(
+                              variableName,
+                            ) ||
+                            ["constructor", "prototype", "__proto__"].includes(
+                              variableName,
+                            ) ||
+                            Object.hasOwn(
+                              definition.execution.variables,
+                              variableName,
+                            )
+                          }
+                          onClick={() => {
+                            change({
+                              ...definition,
+                              execution: {
+                                ...definition.execution,
+                                variables: {
+                                  ...definition.execution.variables,
+                                  [variableName]: "",
+                                },
+                              },
+                            });
+                            setVariableName("");
+                          }}
+                        >
+                          + Variable
+                        </Button>
+                      </fieldset>
+                      {id && (
+                        <details>
+                          <summary>Published versions</summary>
+                          {dirty && (
+                            <p>
+                              Save your draft before restoring a published
+                              version.
+                            </p>
+                          )}
+                          {versions.data
+                            ?.filter((v) => v.definitionVersion === 2)
+                            .map((v) => (
+                              <p key={v.id}>
+                                Version {v.version}{" "}
+                                <Button
+                                  disabled={!editable || busy || dirty}
+                                  onClick={() =>
+                                    void task(async () => {
+                                      await requestJson(
+                                        `/workflows/${id}/restore/${v.id}`,
+                                        "POST",
+                                        { revision },
+                                      );
+                                      const restored = await requestJson<{
+                                        name: string;
+                                        revision: number;
+                                        definition: WorkflowDefinitionV2;
+                                      }>(`/workflows/${id}`);
+                                      setDefinition(
+                                        workflowDefinitionV2.parse(
+                                          restored.definition,
+                                        ),
+                                      );
+                                      setName(restored.name);
+                                      setRevision(restored.revision);
+                                      setServerErrors([]);
+                                      setDirty(false);
+                                      setSelected("");
+                                      setNotice(
+                                        "Published version restored into the draft",
+                                      );
+                                    })
+                                  }
+                                >
+                                  Restore to draft
+                                </Button>
+                              </p>
+                            ))}
+                        </details>
+                      )}
+                      {id && (
+                        <WorkflowTriggers
+                          workflowId={id}
+                          workspaceId={workspaceId}
+                          versions={versions.data ?? []}
+                          canManage={editable}
+                        />
+                      )}
+                    </>
+                  )}
+                  {errors.length > 0 && (
+                    <div role="alert">
+                      <h4>Resolve before publishing</h4>
+                      <ul>
+                        {[...new Set(errors)].map((e, i) => (
+                          <li key={i}>{e}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </aside>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}

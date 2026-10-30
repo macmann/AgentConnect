@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateV2Mappings } from "@agentconnect/schemas/workflow-v2-validation";
 import {
   workflowGraph,
   workflowInputField,
@@ -10,6 +11,7 @@ import {
   workflowAction,
   actionRetry,
   actionInputs,
+  actionJsonSchema,
 } from "@agentconnect/schemas/workflow-actions";
 import {
   workflowIdentifier,
@@ -62,6 +64,62 @@ export const workflowV2Node = z.discriminatedUnion("kind", [
       ...binding,
       actionId: workflowIdentifier,
       inputs: actionInputs.default({}),
+    }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("structured-ai"),
+    config: z.strictObject({
+      ...binding,
+      resource: workflowIdentifier,
+      instruction: z.string().trim().min(1).max(8000),
+      outputSchema: actionJsonSchema,
+    }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("human-task"),
+    config: z.strictObject({
+      ...binding,
+      mode: z.enum(["approve-reject", "review-edit"]),
+      prompt: z.string().min(1).max(2000),
+      outputSchema: actionJsonSchema,
+      approveLabel: z.string().trim().min(1).max(40).default("Approve"),
+      rejectLabel: z.string().trim().min(1).max(40).default("Reject"),
+    }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("transform"),
+    config: z.strictObject({ fields: actionInputs }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("set-variable"),
+    config: z.strictObject({
+      name: workflowIdentifier,
+      value: workflowExpression,
+    }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("switch"),
+    config: z.strictObject({
+      ...binding,
+      value: workflowExpression,
+      cases: z
+        .array(
+          z.strictObject({
+            id: workflowIdentifier.refine(
+              (v) => v !== "default",
+              "Reserved route name",
+            ),
+            label: z.string().min(1).max(80),
+            value: workflowJson,
+          }),
+        )
+        .min(1)
+        .max(10),
     }),
   }),
   z.strictObject({
@@ -119,7 +177,7 @@ export const workflowDefinitionV2 = z.strictObject({
           id: workflowIdentifier,
           source: workflowIdentifier,
           target: workflowIdentifier,
-          branch: z.enum(["true", "false"]).optional(),
+          branch: workflowIdentifier.optional(),
         }),
       )
       .max(80),
@@ -184,6 +242,8 @@ export function compileWorkflowDefinition(
   const nodes = e.nodes.map((n, i) => {
     const resource =
       "resource" in n.config ? e.resources[n.config.resource] : undefined;
+    if (n.kind === "structured-ai" && resource?.kind !== "model")
+      errors.push(`${n.id}: select an existing model resource`);
     if (n.kind === "agent" && resource?.kind !== "agent")
       errors.push(`${n.id}: select a published agent resource`);
     const action =
@@ -222,6 +282,7 @@ export function compileWorkflowDefinition(
     schemaVersion: 1,
     inputFields: e.inputFields,
     nodes,
+    programV2: { compilerVersion: 1, execution: JSON.parse(JSON.stringify(e)) },
     edges: e.edges.map((edge) => ({
       id: edge.id,
       source: edge.source,
@@ -249,11 +310,40 @@ export function compileWorkflowDefinition(
         ]
       : []),
     ...("inputs" in node.config ? Object.values(node.config.inputs) : []),
+    ...(node.kind === "transform" ? Object.values(node.config.fields) : []),
+    ...(node.kind === "set-variable" || node.kind === "switch"
+      ? [node.config.value]
+      : []),
     ...(node.kind === "action"
       ? Object.values(actions.get(node.config.actionId)?.mappedInputs ?? {})
       : []),
   ];
   for (const node of e.nodes) {
+    if (
+      node.kind === "set-variable" &&
+      !Object.hasOwn(e.variables, node.config.name)
+    )
+      errors.push(`${node.id}: declare the variable before assigning it`);
+    if (node.kind === "switch") {
+      const routes = [...node.config.cases.map((c) => c.id), "default"];
+      const outgoing = e.edges.filter((edge) => edge.source === node.id);
+      if (
+        new Set(routes).size !== routes.length ||
+        outgoing.length !== routes.length ||
+        routes.some(
+          (route) =>
+            outgoing.filter((edge) => edge.branch === route).length !== 1,
+        )
+      )
+        errors.push(
+          `${node.id}: connect each unique case and default exactly once`,
+        );
+      if (
+        new Set(node.config.cases.map((c) => JSON.stringify(c.value))).size !==
+        node.config.cases.length
+      )
+        errors.push(`${node.id}: case values must be unique`);
+    }
     const ancestors = workflowAncestors(graph, node.id);
     for (const expression of expressions(node)) {
       if (expression.type !== "reference") continue;
@@ -281,6 +371,7 @@ export function compileWorkflowDefinition(
         errors.push(`${node.id}: input cannot reference steps`);
     }
   }
+  errors.push(...validateV2Mappings(e));
   if (errors.length && options.validate !== false)
     throw new WorkflowCompileError([...new Set(errors)]);
   // Persist the validated execution program without editor layout or resource configurations.

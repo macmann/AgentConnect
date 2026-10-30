@@ -7398,3 +7398,105 @@ fieldset {
   stroke: var(--focus);
   stroke-width: 3;
 }
+
+/* V2 keeps controls and its scrollable property drawer inside the canvas. */
+.v2-studio .workflow-canvas {
+  position: relative;
+  overflow: hidden;
+}
+.v2-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  max-width: calc(100vw - 140px);
+}
+.v2-topbar .button,
+.v2-topbar select {
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.v2-properties {
+  position: absolute;
+  right: 12px;
+  top: 108px;
+  bottom: 12px;
+  width: min(380px, calc(100% - 24px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px;
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--line);
+  box-shadow: 0 6px 24px #0002;
+  z-index: 5;
+}
+.v2-minimize {
+  position: absolute;
+  top: 72px;
+  right: 12px;
+  z-index: 6;
+  background: var(--surface, #fff);
+}
+.v2-inline {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 10px 0;
+}
+.v2-properties fieldset {
+  min-width: 0;
+  padding: 10px;
+  margin: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.v2-properties fieldset:disabled {
+  opacity: 0.75;
+}
+.v2-properties details {
+  margin: 10px 0;
+}
+.v2-properties summary {
+  cursor: pointer;
+}
+.v2-properties input,
+.v2-properties select,
+.v2-properties textarea {
+  max-width: 100%;
+}
+.v2-properties pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .v2-topbar {
+    max-width: calc(100vw - 70px);
+  }
+  .v2-properties {
+    top: 160px;
+    width: min(340px, calc(100% - 24px));
+  }
+  .v2-minimize {
+    top: 124px;
+  }
+}
+.v2-topbar select {
+  width: auto;
+  min-width: 110px;
+  max-width: 160px;
+}
+.v2-topbar .button,
+.v2-minimize {
+  color: var(--accent-text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.v2-topbar select {
+  color: var(--ink);
+  background: var(--surface);
+}

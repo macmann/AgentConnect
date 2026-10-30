@@ -384,3 +384,188 @@ test("AI V2 conversion retains published resource references and never converts 
   );
   assert.throws(() => agentChainDefinitionV2(legacy, {}));
 });
+
+test("V2 node schemas reject inline resources, arbitrary transforms and invalid typed mappings", () => {
+  const base = definition();
+  const id = randomUUID();
+  const build = (kind: string, config: unknown) => ({
+    ...base,
+    execution: {
+      ...base.execution,
+      resources: { model: { kind: "model", id } },
+      variables: { priority: "high" },
+      nodes: [
+        base.execution.nodes[0],
+        { id: "work", label: "Work", kind, config },
+        base.execution.nodes[1],
+      ],
+      edges: [
+        { id: "a", source: "start", target: "work" },
+        { id: "b", source: "work", target: "end" },
+      ],
+    },
+  });
+  for (const [kind, config] of [
+    [
+      "structured-ai",
+      {
+        resource: "model",
+        instruction: "Extract fields",
+        outputSchema: { type: "object" },
+      },
+    ],
+    [
+      "human-task",
+      {
+        mode: "review-edit",
+        prompt: "Review",
+        outputSchema: { type: "object" },
+      },
+    ],
+    [
+      "transform",
+      {
+        fields: {
+          email: reference("trigger.body.email"),
+          status: literal("ready"),
+        },
+      },
+    ],
+    ["set-variable", { name: "priority", value: literal("low") }],
+  ] as const)
+    assert.equal(validateWorkflowDefinition(build(kind, config)).length, 0);
+  assert.ok(
+    !workflowDefinitionV2.safeParse(
+      build("structured-ai", {
+        resource: "model",
+        instruction: "Extract",
+        outputSchema: {},
+        apiKey: "forbidden",
+      }),
+    ).success,
+  );
+  assert.ok(
+    !workflowDefinitionV2.safeParse(
+      build("transform", { javascript: "return input" }),
+    ).success,
+  );
+  assert.ok(
+    validateWorkflowDefinition(
+      build("set-variable", { name: "undeclared", value: literal(1) }),
+    ).some((e) => e.includes("declare")),
+  );
+  assert.ok(
+    validateWorkflowDefinition(
+      build("condition", {
+        condition: {
+          operator: "greater-than",
+          left: literal("5"),
+          right: literal(2),
+        },
+      }),
+    ).some((e) => e.includes("numeric")),
+  );
+  const mapping = build("structured-ai", {
+    resource: "model",
+    instruction: "Extract",
+    outputSchema: {
+      type: "object",
+      properties: { total: { type: "number" } },
+      additionalProperties: false,
+    },
+  });
+  mapping.execution.nodes[2] = {
+    id: "end",
+    kind: "output",
+    label: "End",
+    config: { input: reference("steps.work.output.missing") },
+  };
+  assert.ok(
+    validateWorkflowDefinition(mapping).some((e) => e.includes("absent")),
+  );
+});
+
+test("Switch requires every distinct case and exactly one default; mutable state and HITL cannot race in parallel branches", () => {
+  const base = definition();
+  const switchDefinition = {
+    ...base,
+    execution: {
+      ...base.execution,
+      nodes: [
+        base.execution.nodes[0],
+        {
+          id: "route",
+          kind: "switch",
+          label: "Route",
+          config: {
+            value: reference("input.priority"),
+            cases: [{ id: "high", label: "High", value: "high" }],
+          },
+        },
+        { id: "yes", kind: "transform", label: "High", config: { fields: {} } },
+        {
+          id: "no",
+          kind: "transform",
+          label: "Default",
+          config: { fields: {} },
+        },
+        { id: "join", kind: "merge", label: "Join", config: {} },
+        base.execution.nodes[1],
+      ],
+      edges: [
+        { id: "a", source: "start", target: "route" },
+        { id: "b", source: "route", target: "yes", branch: "high" },
+        { id: "c", source: "route", target: "no", branch: "default" },
+        { id: "d", source: "yes", target: "join" },
+        { id: "e", source: "no", target: "join" },
+        { id: "f", source: "join", target: "end" },
+      ],
+    },
+  };
+  assert.equal(validateWorkflowDefinition(switchDefinition).length, 0);
+  const missing = structuredClone(switchDefinition);
+  missing.execution.edges[2]!.branch = "wrong";
+  assert.ok(
+    validateWorkflowDefinition(missing).some((e) =>
+      e.includes("default exactly once"),
+    ),
+  );
+  for (const [kind, config] of [
+    [
+      "human-task",
+      { mode: "approve-reject", prompt: "Review", outputSchema: {} },
+    ],
+    ["set-variable", { name: "priority", value: literal("high") }],
+  ] as const) {
+    const parallel = {
+      schemaVersion: 2,
+      execution: {
+        variables: { priority: "low" },
+        nodes: [
+          base.execution.nodes[0],
+          { id: "fork", kind: "parallel", label: "Parallel", config: {} },
+          { id: "work", kind, label: "Work", config },
+          {
+            id: "other",
+            kind: "transform",
+            label: "Other",
+            config: { fields: {} },
+          },
+          { id: "join", kind: "merge", label: "Join", config: {} },
+          base.execution.nodes[1],
+        ],
+        edges: [
+          ["start", "fork"],
+          ["fork", "work"],
+          ["fork", "other"],
+          ["work", "join"],
+          ["other", "join"],
+          ["join", "end"],
+        ].map(([source, target], i) => ({ id: "e_" + i, source, target })),
+      },
+    };
+    assert.ok(
+      validateWorkflowDefinition(parallel).some((e) => e.includes("parallel")),
+    );
+  }
+});

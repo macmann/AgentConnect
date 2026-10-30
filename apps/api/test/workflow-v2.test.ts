@@ -552,3 +552,414 @@ test("V2 supports live KB, MCP, provider, encrypted-secret and saved-connection 
   );
   assert.equal(revoked.statusCode, 400, revoked.body);
 });
+
+const invoiceSchema = {
+  type: "object",
+  required: ["invoiceNumber", "total", "invoiceDate"],
+  additionalProperties: false,
+  properties: {
+    invoiceNumber: { type: "string" },
+    total: { type: "number" },
+    invoiceDate: { type: "string", format: "date" },
+  },
+};
+function reviewFlow() {
+  return workflowDefinitionV2.parse({
+    schemaVersion: 2,
+    execution: {
+      resources: { extraction: { kind: "model", id: modelId } },
+      actions: [
+        {
+          id: "lookup",
+          name: "Look up reviewed invoice",
+          connector: "agentconnect.tool",
+          operation: "execute",
+          toolId,
+          inputSchema: {
+            type: "object",
+            required: ["query"],
+            properties: { query: { type: "string" } },
+            additionalProperties: false,
+          },
+        },
+      ],
+      nodes: [
+        { id: "start", kind: "input", label: "Input", config: {} },
+        {
+          id: "extract",
+          kind: "structured-ai",
+          label: "Extract invoice",
+          config: {
+            resource: "extraction",
+            instruction: "Extract the invoice fields.",
+            outputSchema: invoiceSchema,
+          },
+        },
+        {
+          id: "review",
+          kind: "human-task",
+          label: "Review invoice",
+          config: {
+            mode: "review-edit",
+            prompt: "Correct invoice details",
+            outputSchema: invoiceSchema,
+            approveLabel: "Process",
+          },
+        },
+        {
+          id: "lookup",
+          kind: "action",
+          label: "Invoice lookup",
+          config: {
+            actionId: "lookup",
+            inputs: { query: reference("steps.review.output.invoiceNumber") },
+          },
+        },
+        {
+          id: "check",
+          kind: "condition",
+          label: "Check total",
+          config: {
+            condition: {
+              operator: "greater-than",
+              left: reference("steps.review.output.total"),
+              right: literal(10000),
+            },
+          },
+        },
+        {
+          id: "high",
+          kind: "transform",
+          label: "Finance review",
+          config: {
+            fields: {
+              route: literal("finance"),
+              invoiceNumber: reference("steps.review.output.invoiceNumber"),
+            },
+          },
+        },
+        {
+          id: "low",
+          kind: "transform",
+          label: "Automatic route",
+          config: {
+            fields: {
+              route: literal("automatic"),
+              invoiceNumber: reference("steps.review.output.invoiceNumber"),
+            },
+          },
+        },
+        { id: "join", kind: "merge", label: "Result", config: {} },
+        {
+          id: "confirm",
+          kind: "human-task",
+          label: "Final approval",
+          config: {
+            mode: "approve-reject",
+            prompt: "Approve processing",
+            outputSchema: { type: "object" },
+          },
+        },
+        { id: "end", kind: "output", label: "Output", config: {} },
+      ],
+      edges: [
+        ["start", "extract"],
+        ["extract", "review"],
+        ["review", "lookup"],
+        ["lookup", "check"],
+        ["check", "high", "true"],
+        ["check", "low", "false"],
+        ["high", "join"],
+        ["low", "join"],
+        ["join", "confirm"],
+        ["confirm", "end"],
+      ].map(([source, target, branch], i) => ({
+        id: "edge_" + i,
+        source,
+        target,
+        ...(branch ? { branch } : {}),
+      })),
+    },
+  });
+}
+const extractedInvoice = {
+  invoiceNumber: "ORIGINAL",
+  total: 2,
+  invoiceDate: "2026-10-30",
+};
+function extractionProvider(
+  value: unknown,
+  onCall = () => {},
+): ProviderFactory {
+  return () => ({
+    async *stream() {
+      onCall();
+      yield {
+        type: "token",
+        text: typeof value === "string" ? value : JSON.stringify(value),
+      };
+      yield { type: "usage", inputTokens: 5, outputTokens: 5 };
+    },
+  });
+}
+test("acceptance: Structured AI → human edit → Action → typed condition → output, with two durable human tasks", async () => {
+  const definition = reviewFlow(),
+    id = await create(definition),
+    published = await publish(id);
+  const rid = await run(id, "invoice to extract", published);
+  let extractions = 0;
+  const factory = extractionProvider(extractedInvoice, () => extractions++);
+  await processWorkflowRun({ providerFactory: factory });
+  let result = await inspect(rid);
+  assert.equal(result.status, "waiting");
+  assert.equal(result.approvals[0].node_id, "review");
+  assert.equal(
+    result.nodes.find((n: { node_id: string }) => n.node_id === "extract")
+      .input_tokens,
+    5,
+  );
+  const invalid = await call("POST", `/workflow-runs/${rid}/approval`, {
+    decision: "approved",
+    nodeId: "review",
+    editedInput: { ...extractedInvoice, total: "wrong" },
+  });
+  assert.equal(invalid.statusCode, 400, invalid.body);
+  const invalidDate = await call("POST", `/workflow-runs/${rid}/approval`, {
+    decision: "approved",
+    editedInput: { ...extractedInvoice, invoiceDate: "2026-02-30" },
+  });
+  assert.equal(invalidDate.statusCode, 400, invalidDate.body);
+  const wrongTask = await call("POST", `/workflow-runs/${rid}/approval`, {
+    decision: "approved",
+    nodeId: "confirm",
+  });
+  assert.equal(wrongTask.statusCode, 409, wrongTask.body);
+  const approved = await call("POST", `/workflow-runs/${rid}/approval`, {
+    decision: "approved",
+    nodeId: "review",
+    editedInput: {
+      ...extractedInvoice,
+      invoiceNumber: "EDITED-123",
+      total: 12000,
+    },
+  });
+  assert.equal(approved.statusCode, 200, approved.body);
+  await processWorkflowRun({ providerFactory: factory });
+  result = await inspect(rid);
+  assert.equal(result.status, "waiting");
+  assert.equal(
+    result.approvals.filter(
+      (a: { decision: string }) => a.decision === "pending",
+    )[0].node_id,
+    "confirm",
+  );
+  assert.equal(
+    result.nodes.find((n: { node_id: string }) => n.node_id === "lookup").output
+      .query,
+    "EDITED-123",
+  );
+  assert.equal(
+    result.nodes.find((n: { node_id: string }) => n.node_id === "review").output
+      .total,
+    12000,
+  );
+  assert.equal(extractions, 1, "upstream AI must not replay on approval");
+  const cannotEdit = await call("POST", `/workflow-runs/${rid}/approval`, {
+    decision: "approved",
+    nodeId: "confirm",
+    editedInput: {},
+  });
+  assert.equal(cannotEdit.statusCode, 400, cannotEdit.body);
+  const confirmed = await call("POST", `/workflow-runs/${rid}/approval`, {
+    decision: "approved",
+    nodeId: "confirm",
+  });
+  assert.equal(confirmed.statusCode, 200, confirmed.body);
+  await processWorkflowRun({ providerFactory: factory });
+  result = await inspect(rid);
+  assert.equal(result.status, "completed", JSON.stringify(result));
+  assert.deepEqual(result.output, {
+    high: { route: "finance", invoiceNumber: "EDITED-123" },
+  });
+  assert.equal(extractions, 1);
+});
+
+test("Structured AI rejects malformed JSON, wrong types and dates without creating a human task", async () => {
+  for (const value of [
+    "not JSON",
+    { ...extractedInvoice, total: "2" },
+    { ...extractedInvoice, invoiceDate: "2026-02-30" },
+  ]) {
+    const id = await create(reviewFlow()),
+      rid = await run(id, "invoice");
+    await processWorkflowRun({ providerFactory: extractionProvider(value) });
+    const result = await inspect(rid);
+    assert.equal(result.status, "failed");
+    assert.equal(result.error_code, "STRUCTURED_AI_OUTPUT_INVALID");
+    assert.equal(result.approvals.length, 0);
+  }
+});
+
+test("Set Variable is checkpointed and Switch selects a named case or default without executing other routes", async () => {
+  for (const [priority, expected] of [
+    ["high", "finance"],
+    ["other", "fallback"],
+  ]) {
+    const definition = workflowDefinitionV2.parse({
+      schemaVersion: 2,
+      execution: {
+        variables: { priority: "unset" },
+        nodes: [
+          { id: "start", kind: "input", label: "Input", config: {} },
+          {
+            id: "set",
+            kind: "set-variable",
+            label: "Set priority",
+            config: { name: "priority", value: reference("input.priority") },
+          },
+          {
+            id: "review",
+            kind: "human-task",
+            label: "Pause",
+            config: {
+              mode: "approve-reject",
+              prompt: "Approve route",
+              outputSchema: {},
+            },
+          },
+          {
+            id: "route",
+            kind: "switch",
+            label: "Switch",
+            config: {
+              value: reference("variables.priority"),
+              cases: [
+                { id: "high", label: "High", value: "high" },
+                { id: "low", label: "Low", value: "low" },
+              ],
+            },
+          },
+          ...["finance", "automatic", "fallback"].map((id) => ({
+            id,
+            kind: "transform",
+            label: id,
+            config: {
+              fields: {
+                route: literal(id),
+                priority: reference("variables.priority"),
+              },
+            },
+          })),
+          { id: "join", kind: "merge", label: "Join", config: {} },
+          { id: "end", kind: "output", label: "Output", config: {} },
+        ],
+        edges: [
+          ["start", "set"],
+          ["set", "review"],
+          ["review", "route"],
+          ["route", "finance", "high"],
+          ["route", "automatic", "low"],
+          ["route", "fallback", "default"],
+          ["finance", "join"],
+          ["automatic", "join"],
+          ["fallback", "join"],
+          ["join", "end"],
+        ].map(([source, target, branch], i) => ({
+          id: "e_" + i,
+          source,
+          target,
+          ...(branch ? { branch } : {}),
+        })),
+      },
+    });
+    const id = await create(definition),
+      rid = await run(id, { priority });
+    await processWorkflowRun();
+    assert.equal((await inspect(rid)).status, "waiting");
+    assert.equal(
+      (
+        await call("POST", `/workflow-runs/${rid}/approval`, {
+          nodeId: "review",
+          decision: "approved",
+        })
+      ).statusCode,
+      200,
+    );
+    await processWorkflowRun();
+    const result = await inspect(rid);
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.deepEqual(result.output, {
+      [expected!]: { route: expected, priority },
+    });
+    assert.equal(
+      result.nodes.filter((n: { node_id: string }) =>
+        ["finance", "automatic", "fallback"].includes(n.node_id),
+      ).length,
+      1,
+    );
+  }
+});
+
+test("workflow resource catalog returns schemas and references without credentials", async () => {
+  const response = await call(
+    "GET",
+    `/workspaces/${workspace}/workflow-catalog`,
+  );
+  assert.equal(response.statusCode, 200, response.body);
+  const catalog = response.json();
+  assert.ok(catalog.models.some((m: { id: string }) => m.id === modelId));
+  assert.ok(
+    catalog.agents.some((a: { agent_id: string }) => a.agent_id === agentId),
+  );
+  assert.equal(
+    catalog.actions.find((a: { id: string }) => a.id === toolId).inputSchema
+      .properties.query.type,
+    "string",
+  );
+  assert.ok(!response.body.includes("ciphertext"));
+  assert.ok(!response.body.includes("https://api.openai.com"));
+});
+
+test("more than three sequential human tasks resume independently without exhausting worker recovery", async () => {
+  const definition = workflowDefinitionV2.parse({
+    schemaVersion: 2,
+    execution: {
+      nodes: [
+        { id: "start", kind: "input", label: "Input", config: {} },
+        ...[0, 1, 2, 3].map((i) => ({
+          id: "human_" + i,
+          kind: "human-task",
+          label: "Review " + i,
+          config: {
+            mode: "approve-reject",
+            prompt: "Approve stage " + i,
+            outputSchema: { type: "string" },
+          },
+        })),
+        { id: "end", kind: "output", label: "Output", config: {} },
+      ],
+      edges: ["start", "human_0", "human_1", "human_2", "human_3", "end"]
+        .slice(0, -1)
+        .map((id, i, list) => ({
+          id: "edge_" + i,
+          source: id,
+          target: list[i + 1] ?? "end",
+        })),
+    },
+  });
+  const id = await create(definition),
+    rid = await run(id, "four reviews");
+  for (let i = 0; i < 4; i++) {
+    await processWorkflowRun();
+    assert.equal((await inspect(rid)).status, "waiting");
+    const approved = await call("POST", `/workflow-runs/${rid}/approval`, {
+      nodeId: "human_" + i,
+      decision: "approved",
+    });
+    assert.equal(approved.statusCode, 200, approved.body);
+  }
+  await processWorkflowRun();
+  const result = await inspect(rid);
+  assert.equal(result.status, "completed", JSON.stringify(result));
+  assert.equal(result.output, "four reviews");
+});
