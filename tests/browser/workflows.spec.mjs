@@ -998,3 +998,74 @@ test("canvas deletes nodes and connections and persists connections on multiple 
     ]),
   );
 });
+
+test("V2 canvas is a read-only projection and preserves the canonical definition", async ({
+  page,
+  context,
+}) => {
+  const definition = {
+    schemaVersion: 2,
+    execution: {
+      nodes: [
+        { id: "start", kind: "input", label: "V2 input", config: {} },
+        {
+          id: "end",
+          kind: "output",
+          label: "V2 result",
+          config: { input: { type: "reference", path: "input" } },
+        },
+      ],
+      edges: [{ id: "next", source: "start", target: "end" }],
+    },
+    editor: { nodes: { start: { x: 40, y: 100 }, end: { x: 300, y: 100 } } },
+  };
+  const created = await api(`/workspaces/${workspace}/workflows`, {
+    name: "V2 preview",
+    graph: definition,
+  });
+  await api(`/workflows/${created.id}/publish`, { revision: 1 });
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByLabel("Current workflow", { exact: true })
+    .selectOption(created.id);
+  await expect(
+    page.getByText(/Workflow V2 · This canvas previews/),
+  ).toBeVisible();
+  await expect(page.locator(".react-flow__node")).toHaveCount(2);
+  await expect(
+    page.getByRole("button", { name: "＋ Add nodes", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Create reusable copy", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", {
+      name: "Two-agent review template",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await expect(
+    page.getByLabel("Workflow name", { exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Test Workflow", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Workflow test panel" }),
+  ).toBeVisible();
+  const [stored] =
+    await sql`SELECT draft_graph FROM workflows WHERE id=${created.id}`;
+  expect(stored.draft_graph.schemaVersion).toBe(2);
+  expect(stored.draft_graph.execution.nodes[1].config.input.path).toBe("input");
+  expect(stored.draft_graph.nodes).toBeUndefined();
+});

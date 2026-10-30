@@ -1,0 +1,368 @@
+import { z } from "zod";
+import {
+  workflowGraph,
+  workflowInputField,
+  analyzeWorkflow,
+  type WorkflowGraph,
+} from "@agentconnect/schemas/workflows";
+import { workflowAncestors } from "@agentconnect/schemas/workflow-mapping";
+import {
+  workflowAction,
+  actionRetry,
+  actionInputs,
+} from "@agentconnect/schemas/workflow-actions";
+import {
+  workflowIdentifier,
+  workflowExpression,
+  workflowCondition,
+  workflowJson,
+  referenceSegments,
+  type WorkflowExpression,
+} from "@agentconnect/schemas/workflow-values";
+
+export const workflowResource = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("agent"),
+    agentId: z.uuid(),
+    versionId: z.uuid(),
+  }),
+  z.strictObject({ kind: z.literal("knowledge"), id: z.uuid() }),
+  z.strictObject({ kind: z.literal("tool"), id: z.uuid() }),
+  z.strictObject({ kind: z.literal("mcp"), id: z.uuid() }),
+  z.strictObject({ kind: z.literal("model"), id: z.uuid() }),
+  z.strictObject({ kind: z.literal("secret"), id: z.uuid() }),
+  z.strictObject({ kind: z.literal("connection"), id: z.uuid() }),
+]);
+const binding = { input: workflowExpression.optional() };
+const common = {
+  id: workflowIdentifier,
+  label: z.string().trim().min(1).max(100),
+};
+export const workflowV2Node = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...common,
+    kind: z.literal("input"),
+    config: z.strictObject({}),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("agent"),
+    config: z.strictObject({
+      ...binding,
+      resource: workflowIdentifier,
+      prefix: z.string().max(2000).default(""),
+      suffix: z.string().max(2000).default(""),
+      retry: actionRetry,
+    }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("action"),
+    config: z.strictObject({
+      ...binding,
+      actionId: workflowIdentifier,
+      inputs: actionInputs.default({}),
+    }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("condition"),
+    config: z.strictObject({ ...binding, condition: workflowCondition }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("parallel"),
+    config: z.strictObject({ ...binding }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("merge"),
+    config: z.strictObject({ ...binding }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("approval"),
+    config: z.strictObject({
+      ...binding,
+      prompt: z
+        .string()
+        .max(2000)
+        .default("Review this result before continuing."),
+    }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("output"),
+    config: z.strictObject({
+      ...binding,
+      title: z.string().max(120).default(""),
+      summary: z.string().max(400).default(""),
+      format: z.enum(["auto", "text", "json"]).default("auto"),
+    }),
+  }),
+]);
+const coordinate = z.strictObject({
+  x: z.number().min(-10000).max(10000),
+  y: z.number().min(-10000).max(10000),
+});
+export const workflowDefinitionV2 = z.strictObject({
+  schemaVersion: z.literal(2),
+  execution: z.strictObject({
+    inputFields: z.array(workflowInputField).max(30).default([]),
+    variables: z.record(workflowIdentifier, workflowJson).default({}),
+    resources: z.record(workflowIdentifier, workflowResource).default({}),
+    actions: z.array(workflowAction).max(40).default([]),
+    nodes: z.array(workflowV2Node).min(1).max(40),
+    edges: z
+      .array(
+        z.strictObject({
+          id: workflowIdentifier,
+          source: workflowIdentifier,
+          target: workflowIdentifier,
+          branch: z.enum(["true", "false"]).optional(),
+        }),
+      )
+      .max(80),
+  }),
+  editor: z
+    .strictObject({
+      nodes: z.record(workflowIdentifier, coordinate).default({}),
+      edges: z
+        .record(
+          workflowIdentifier,
+          z.strictObject({
+            sourcePort: z
+              .enum(["out-top", "out-bottom", "out-left"])
+              .optional(),
+            targetPort: z.enum(["in-top", "in-bottom", "in-right"]).optional(),
+          }),
+        )
+        .default({}),
+      viewport: z
+        .strictObject({
+          x: z.number().finite(),
+          y: z.number().finite(),
+          zoom: z.number().min(0.15).max(2),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+export type WorkflowDefinitionV2 = z.infer<typeof workflowDefinitionV2>;
+export const workflowDefinition = z.union([
+  workflowDefinitionV2,
+  workflowGraph.omit({ programV2: true }),
+]);
+export type WorkflowDefinition = z.infer<typeof workflowDefinition>;
+export class WorkflowCompileError extends Error {
+  constructor(public readonly errors: string[]) {
+    super(errors.join("; "));
+  }
+}
+// This is a runtime adapter, deliberately not a second scheduler or execution engine.
+export function compileWorkflowDefinition(
+  value: unknown,
+  options: { validate?: boolean } = {},
+): WorkflowGraph {
+  const definition = workflowDefinition.parse(value);
+  if (definition.schemaVersion === 1) return definition;
+  const { execution: e, editor } = definition;
+  const errors: string[] = [];
+  const actions = new Map(e.actions.map((a) => [a.id, a]));
+  if (actions.size !== e.actions.length)
+    errors.push("Action IDs must be unique");
+  for (const a of e.actions) {
+    if (a.sideEffect !== "read")
+      errors.push(`${a.id}: only read actions have a registered executor`);
+    if (a.idempotency === "key")
+      errors.push(`${a.id}: this executor does not support idempotency keys`);
+    if (a.requiredScopes.length)
+      errors.push(
+        `${a.id}: this executor cannot verify additional OAuth scopes`,
+      );
+  }
+  const nodes = e.nodes.map((n, i) => {
+    const resource =
+      "resource" in n.config ? e.resources[n.config.resource] : undefined;
+    if (n.kind === "agent" && resource?.kind !== "agent")
+      errors.push(`${n.id}: select a published agent resource`);
+    const action =
+      n.kind === "action" ? actions.get(n.config.actionId) : undefined;
+    if (n.kind === "action" && !action)
+      errors.push(`${n.id}: action unavailable`);
+    return {
+      id: n.id,
+      type: n.kind === "action" ? "tool" : n.kind,
+      // Layout only projects into the legacy adapter. It is never consulted by validation or execution.
+      position: editor?.nodes[n.id] ?? { x: i * 250, y: 80 },
+      data: {
+        label: n.label,
+        ...(n.kind === "agent"
+          ? {
+              agentVersionId:
+                resource?.kind === "agent" ? resource.versionId : undefined,
+              prefix: n.config.prefix,
+              suffix: n.config.suffix,
+              retry: n.config.retry,
+            }
+          : {}),
+        ...(action ? { toolId: action.toolId, retry: action.retry } : {}),
+        ...(n.kind === "approval" ? { approvalPrompt: n.config.prompt } : {}),
+        ...(n.kind === "output"
+          ? {
+              resultTitle: n.config.title,
+              resultSummary: n.config.summary,
+              resultFormat: n.config.format,
+            }
+          : {}),
+      },
+    };
+  });
+  const graph = workflowGraph.parse({
+    schemaVersion: 1,
+    inputFields: e.inputFields,
+    nodes,
+    edges: e.edges.map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: edge.branch,
+      ...editor?.edges[edge.id],
+    })),
+  });
+  errors.push(...analyzeWorkflow(graph).errors);
+  const nodeIds = new Set(e.nodes.map((n) => n.id)),
+    edgeIds = new Set(e.edges.map((edge) => edge.id));
+  if (
+    Object.keys(editor?.nodes ?? {}).some((id) => !nodeIds.has(id)) ||
+    Object.keys(editor?.edges ?? {}).some((id) => !edgeIds.has(id))
+  )
+    errors.push("Editor layout references an unknown node or edge");
+  const expressions = (
+    node: (typeof e.nodes)[number],
+  ): WorkflowExpression[] => [
+    ...("input" in node.config && node.config.input ? [node.config.input] : []),
+    ...(node.kind === "condition"
+      ? [
+          node.config.condition.left,
+          ...(node.config.condition.right ? [node.config.condition.right] : []),
+        ]
+      : []),
+    ...("inputs" in node.config ? Object.values(node.config.inputs) : []),
+    ...(node.kind === "action"
+      ? Object.values(actions.get(node.config.actionId)?.mappedInputs ?? {})
+      : []),
+  ];
+  for (const node of e.nodes) {
+    const ancestors = workflowAncestors(graph, node.id);
+    for (const expression of expressions(node)) {
+      if (expression.type !== "reference") continue;
+      const parts = referenceSegments(expression.path);
+      if (
+        parts[0] === "steps" &&
+        (parts.length < 3 || parts[2] !== "output" || !ancestors.has(parts[1]!))
+      )
+        errors.push(
+          `${node.id}: step references must select an ancestor output`,
+        );
+      if (
+        parts[0] === "variables" &&
+        parts.length > 1 &&
+        !Object.hasOwn(e.variables, parts[1]!)
+      )
+        errors.push(`${node.id}: unknown workflow variable`);
+      if (
+        parts[0] === "workflow" &&
+        (parts.length !== 2 ||
+          !["id", "versionId", "runId", "schemaVersion"].includes(parts[1]!))
+      )
+        errors.push(`${node.id}: unknown workflow metadata field`);
+      if (node.kind === "input" && parts[0] === "steps")
+        errors.push(`${node.id}: input cannot reference steps`);
+    }
+  }
+  if (errors.length && options.validate !== false)
+    throw new WorkflowCompileError([...new Set(errors)]);
+  // Persist the validated execution program without editor layout or resource configurations.
+  graph.programV2 = {
+    compilerVersion: 1,
+    execution: JSON.parse(JSON.stringify(e)),
+  };
+  return graph;
+}
+export function validateWorkflowDefinition(value: unknown): string[] {
+  try {
+    compileWorkflowDefinition(value);
+    return [];
+  } catch (error) {
+    return error instanceof WorkflowCompileError
+      ? error.errors
+      : error instanceof z.ZodError
+        ? error.issues.map((i) => `${i.path.join(".")}: ${i.message}`)
+        : ["Invalid workflow definition"];
+  }
+}
+
+// AI chain proposals already use published versions. Conversion is opt-in and rejects inline assets.
+export function agentChainDefinitionV2(
+  graph: WorkflowGraph,
+  agentIds: Record<string, string>,
+): WorkflowDefinitionV2 {
+  const resources: WorkflowDefinitionV2["execution"]["resources"] = {};
+  const nodes = graph.nodes.map((n) => {
+    const common = { id: n.id, label: n.data.label };
+    if (n.type === "input") return { ...common, kind: "input", config: {} };
+    if (n.type === "output")
+      return {
+        ...common,
+        kind: "output",
+        config: {
+          title: n.data.resultTitle,
+          summary: n.data.resultSummary,
+          format: n.data.resultFormat,
+        },
+      };
+    if (
+      n.type !== "agent" ||
+      n.data.inlineAgent ||
+      !n.data.agentVersionId ||
+      !agentIds[n.data.agentVersionId]
+    )
+      throw new WorkflowCompileError([
+        "Only published-agent chain proposals can be converted automatically",
+      ]);
+    const resource = "agent_" + n.id;
+    resources[resource] = {
+      kind: "agent",
+      agentId: agentIds[n.data.agentVersionId]!,
+      versionId: n.data.agentVersionId,
+    };
+    return {
+      ...common,
+      kind: "agent",
+      config: {
+        resource,
+        prefix: n.data.prefix,
+        suffix: n.data.suffix,
+        retry: n.data.retry,
+      },
+    };
+  });
+  const definition = workflowDefinitionV2.parse({
+    schemaVersion: 2,
+    execution: {
+      resources,
+      nodes,
+      edges: graph.edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+      })),
+    },
+    editor: {
+      nodes: Object.fromEntries(graph.nodes.map((n) => [n.id, n.position])),
+    },
+  });
+  compileWorkflowDefinition(definition);
+  return definition;
+}

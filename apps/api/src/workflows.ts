@@ -1,3 +1,9 @@
+import {
+  workflowDefinition,
+  compileWorkflowDefinition,
+  validateWorkflowDefinition,
+} from "@agentconnect/schemas/workflow-v2";
+import { definitionInput, storedWorkflowGraph } from "./workflow-v2.js";
 import { snapshotWorkflowAgents } from "./workflow-agents.js";
 import {
   registerWorkflowTriggers,
@@ -8,12 +14,9 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
-  workflowInput,
-  workflowUpdate,
+  workflowInput as workflowInputV1,
   workflowRunInput,
   workflowApprovalInput,
-  workflowGraph,
-  analyzeWorkflow,
 } from "@agentconnect/schemas/workflows";
 import { actor, workspaceAccess, audit, HttpError, id, params } from "./app.js";
 import { sql } from "./db.js";
@@ -44,10 +47,22 @@ async function ownedRun(
   return { u, run };
 }
 export async function registerWorkflowRoutes(app: FastifyInstance) {
+  const workflowInput = workflowInputV1.extend({ graph: workflowDefinition });
+  const workflowUpdate = workflowInput.extend({
+    revision: z.number().int().min(1),
+  });
   await registerWorkflowComponentRoutes(app);
   await registerWorkflowTriggers(app);
   const schema = (body: z.ZodType) => ({
-    schema: { body: z.toJSONSchema(body, { io: "input", target: "draft-7" }) },
+    // AJV cannot apply defaults inside V1/V2 anyOf branches. Zod applies all defaults after validation.
+    schema: {
+      body: JSON.parse(
+        JSON.stringify(
+          z.toJSONSchema(body, { io: "input", target: "draft-7" }),
+          (key, value) => (key === "default" ? undefined : value),
+        ),
+      ),
+    },
     bodyLimit: 200000,
   });
   app.get("/workspaces/:workspaceId/workflows", async (r) => {
@@ -95,17 +110,35 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
       return reply.code(201).send({
         id: workflowId,
         revision: 1,
-        validation: analyzeWorkflow(data.graph).errors,
+        validation: validateWorkflowDefinition(data.graph),
       });
     },
   );
-  app.get(
-    "/workflows/:workflowId",
-    async (r) => (await owned(r, "workflow:read")).w,
-  );
+  app.get("/workflows/:workflowId", async (r) => {
+    const { w } = await owned(r, "workflow:read");
+    const definition = definitionInput(w.draft_graph);
+    return definition.schemaVersion === 2
+      ? {
+          ...w,
+          definitionVersion: 2,
+          definition,
+          draft_graph: compileWorkflowDefinition(definition, {
+            validate: false,
+          }),
+        }
+      : w;
+  });
   app.put("/workflows/:workflowId", schema(workflowUpdate), async (r) => {
     const { u, w } = await owned(r, "workflow:manage");
     const data = workflowUpdate.parse(r.body);
+    if (
+      definitionInput(w.draft_graph).schemaVersion === 2 &&
+      data.graph.schemaVersion !== 2
+    )
+      throw new HttpError(
+        409,
+        "A V2 workflow must be saved as a V2 definition; use the definition API",
+      );
     return sql.begin(async (tx) => {
       const [saved] =
         await tx`UPDATE workflows SET name=${data.name},description=${data.description},draft_graph=${tx.json(data.graph)},revision=revision+1,updated_at=now() WHERE id=${w.id} AND revision=${data.revision} RETURNING revision`;
@@ -123,25 +156,59 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
       return {
         id: w.id,
         revision: saved.revision,
-        validation: analyzeWorkflow(data.graph).errors,
+        validation: validateWorkflowDefinition(data.graph),
       };
     });
   });
+  app.get("/workflows/:workflowId/definition", async (r) => {
+    const { w } = await owned(r, "workflow:read");
+    return {
+      id: w.id,
+      revision: w.revision,
+      definition: definitionInput(w.draft_graph),
+    };
+  });
+  app.post(
+    "/workspaces/:workspaceId/workflows/compile",
+    { bodyLimit: 200000 },
+    async (r) => {
+      const u = await actor(r),
+        w = await workspaceAccess(
+          u.id,
+          id(params(r).workspaceId),
+          "workflow:manage",
+        );
+      const definition = definitionInput(
+        z.object({ definition: workflowDefinition }).parse(r.body).definition,
+      );
+      const graph = storedWorkflowGraph(definition);
+      await validateWorkflowDependencies(graph, {
+        workspaceId: w.id,
+        organizationId: w.organization_id,
+        userId: u.id,
+      });
+      return {
+        schemaVersion: definition.schemaVersion,
+        compilerVersion: 1,
+        graph,
+      };
+    },
+  );
   app.post("/workflows/:workflowId/validate", async (r) => {
-    const { w } = await owned(r, "workflow:manage");
-    const graph = workflowGraph.parse(w.draft_graph),
-      errors = analyzeWorkflow(graph).errors;
+    const { u, w } = await owned(r, "workflow:manage");
+    const errors = validateWorkflowDefinition(w.draft_graph);
     if (!errors.length)
       try {
-        await validateWorkflowDependencies(graph, {
+        await validateWorkflowDependencies(storedWorkflowGraph(w.draft_graph), {
           workspaceId: w.workspace_id,
           organizationId: w.organization_id,
+          userId: u.id,
         });
       } catch (e) {
         errors.push(
           e instanceof WorkflowError
             ? e.code
-            : "A selected agent, model, credential, knowledge base or tool is unavailable",
+            : "A selected agent, model, credential, knowledge base, tool or Action is unavailable",
         );
       }
     return { valid: !errors.length, errors };
@@ -162,19 +229,23 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
             409,
             "Workflow changed; reload before publishing",
           );
+        const definition = definitionInput(locked.draft_graph);
         const graph = await snapshotWorkflowAgents(
-          workflowGraph.parse(locked.draft_graph),
+          storedWorkflowGraph(definition),
           w.workspace_id,
         );
+        const publishedDefinition =
+          definition.schemaVersion === 2 ? definition : graph;
         await validateWorkflowDependencies(graph, {
           workspaceId: w.workspace_id,
           organizationId: w.organization_id,
+          userId: u.id,
         });
         const [previous] =
           await tx`SELECT COALESCE(max(version),0) AS latest FROM workflow_versions WHERE workflow_id=${w.id}`;
         const version = Number(previous!.latest) + 1,
           versionId = randomUUID();
-        await tx`INSERT INTO workflow_versions(id,workflow_id,workspace_id,organization_id,version,name,graph,published_by) VALUES (${versionId},${w.id},${w.workspace_id},${w.organization_id},${version},${locked.name},${tx.json(graph)},${u.id})`;
+        await tx`INSERT INTO workflow_versions(id,workflow_id,workspace_id,organization_id,version,name,graph,published_by) VALUES (${versionId},${w.id},${w.workspace_id},${w.organization_id},${version},${locked.name},${tx.json(publishedDefinition)},${u.id})`;
         await audit(
           tx,
           r,
@@ -191,7 +262,19 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
   );
   app.get("/workflows/:workflowId/versions", async (r) => {
     const { w } = await owned(r, "workflow:read");
-    return sql`SELECT id,version,name,graph,published_at FROM workflow_versions WHERE workflow_id=${w.id} ORDER BY version DESC`;
+    const rows =
+      await sql`SELECT id,version,name,graph,published_at FROM workflow_versions WHERE workflow_id=${w.id} ORDER BY version DESC`;
+    return rows.map((row) => {
+      const definition = definitionInput(row.graph);
+      return definition.schemaVersion === 2
+        ? {
+            ...row,
+            definitionVersion: 2,
+            definition,
+            graph: compileWorkflowDefinition(definition, { validate: false }),
+          }
+        : row;
+    });
   });
   app.post(
     "/workflows/:workflowId/restore/:versionId",
@@ -253,7 +336,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
         const [v] =
           await sql`SELECT graph FROM workflow_versions WHERE id=${data.versionId} AND workflow_id=${w.id}`;
         if (!v) throw new HttpError(404, "Version unavailable");
-        graph = workflowGraph.parse(v.graph);
+        graph = storedWorkflowGraph(v.graph);
       } else {
         if (data.revision !== w.revision)
           throw new HttpError(
@@ -261,7 +344,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
             "Save and reload the current draft before testing",
           );
         graph = await snapshotWorkflowAgents(
-          workflowGraph.parse(w.draft_graph),
+          storedWorkflowGraph(w.draft_graph),
           w.workspace_id,
         );
       }
@@ -270,6 +353,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
         {
           workspaceId: w.workspace_id,
           organizationId: w.organization_id,
+          userId: u.id,
         },
         true,
       );

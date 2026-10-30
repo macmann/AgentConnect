@@ -307,6 +307,24 @@ test("sequential workflow draft uses real published versions, valid edges and or
     {},
   );
   assert.equal(validation.statusCode, 200, validation.body);
+  const v2 = await call(
+    "POST",
+    assistant,
+    { ...request("workflow", "assisted"), workflowSchemaVersion: 2 },
+    "builder",
+  );
+  assert.equal(v2.statusCode, 200, v2.body);
+  const v2Draft = v2.json().draft;
+  assert.equal(v2Draft.graph.schemaVersion, 2);
+  assert.equal(
+    v2Draft.graph.execution.nodes[1].config.resource,
+    "agent_step_1",
+  );
+  assert.equal(
+    v2Draft.graph.execution.resources.agent_step_1.versionId,
+    version,
+  );
+  assert.ok(!JSON.stringify(v2Draft.graph).includes("draft_config"));
 });
 test("invented/cross-workspace/disabled resource IDs and wrong proposal kinds are rejected, never silently attached", async () => {
   for (const bad of [

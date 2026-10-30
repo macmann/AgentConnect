@@ -52,12 +52,14 @@ type Draft = {
   description: string;
   graph: WorkflowGraph;
   revision: number;
+  definitionVersion?: 2;
 };
 type Version = {
   id: string;
   version: number;
   name: string;
   graph: WorkflowGraph;
+  definitionVersion?: 2;
 };
 type PublishedAgent = {
   id: string;
@@ -348,7 +350,11 @@ export function WorkflowStudio({
     };
   }, [expanded]);
   const canvasEditable =
-    build && stage === "build" && !selectedRun && !starting;
+    build &&
+    draft?.definitionVersion !== 2 &&
+    stage === "build" &&
+    !selectedRun &&
+    !starting;
   const dirty = !!draft && JSON.stringify(draft) !== saved;
   useEffect(() => {
     if (!dirty) return;
@@ -541,6 +547,7 @@ export function WorkflowStudio({
         description: string;
         draft_graph: WorkflowGraph;
         revision: number;
+        definitionVersion?: 2;
       }>(`/workflows/${id}`);
       const loaded = {
         id: w.id,
@@ -548,6 +555,7 @@ export function WorkflowStudio({
         description: w.description,
         graph: workflowGraph.parse(w.draft_graph),
         revision: w.revision,
+        definitionVersion: w.definitionVersion,
       };
       setDraft(loaded);
       setSaved(JSON.stringify(loaded));
@@ -1163,11 +1171,19 @@ export function WorkflowStudio({
               </Button>
             </div>
             <div hidden={stage !== "build"}>
+              {draft.definitionVersion === 2 && (
+                <p role="status" className="settings-hint">
+                  Workflow V2 · This canvas previews the compiled definition.
+                  Configure V2 through the definition API; existing V1 canvas
+                  editing remains available. Publishing, testing and run history
+                  use the same durable runtime.
+                </p>
+              )}
               <div className="form-grid">
                 <label>
                   Workflow name
                   <input
-                    disabled={!build}
+                    disabled={!build || draft.definitionVersion === 2}
                     value={draft.name}
                     onChange={(e) =>
                       setDraft({ ...draft, name: e.target.value })
@@ -1178,7 +1194,7 @@ export function WorkflowStudio({
                 <label>
                   Description
                   <input
-                    disabled={!build}
+                    disabled={!build || draft.definitionVersion === 2}
                     value={draft.description}
                     onChange={(e) =>
                       setDraft({ ...draft, description: e.target.value })
@@ -1191,7 +1207,9 @@ export function WorkflowStudio({
                 <div className="workflow-toolbar">
                   <Button
                     className="secondary"
-                    disabled={busy || !!selectedRun}
+                    disabled={
+                      busy || !!selectedRun || draft.definitionVersion === 2
+                    }
                     onClick={() => create(undefined, true)}
                   >
                     Create reusable copy
@@ -1220,7 +1238,7 @@ export function WorkflowStudio({
                   <Button
                     className="secondary"
                     onClick={template}
-                    disabled={!!selectedRun}
+                    disabled={!!selectedRun || draft.definitionVersion === 2}
                   >
                     Two-agent review template
                   </Button>
@@ -2343,6 +2361,7 @@ export function WorkflowStudio({
                                 name: v.name,
                                 graph: workflowGraph.parse(v.graph),
                                 revision: result.revision,
+                                definitionVersion: v.definitionVersion,
                               };
                               setDraft(next);
                               setSaved(JSON.stringify(next));

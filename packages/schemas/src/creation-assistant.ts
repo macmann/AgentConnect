@@ -14,6 +14,7 @@ export const creationSettings = z
 export const creationRequest = z
   .object({
     kind: z.enum(["agent", "workflow"]),
+    workflowSchemaVersion: z.union([z.literal(1), z.literal(2)]).default(1),
     mode: z.enum(["guided", "assisted"]),
     messages: z
       .array(
@@ -75,4 +76,4 @@ export const creationReply = z
     workflow: suggestedWorkflow.nullable().optional(),
   })
   .strict();
-export type CreationRequest = z.infer<typeof creationRequest>;
+export type CreationRequest = z.input<typeof creationRequest>;
