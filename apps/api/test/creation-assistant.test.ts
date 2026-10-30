@@ -220,7 +220,16 @@ test("workflows explain the published-agent prerequisite before spending model t
   assert.equal(calls, total);
 });
 test("agent proposal reuses validated runtime schema and can be saved via the normal agent API", async () => {
-  output = proposal();
+  const configured = proposal();
+  output = {
+    ...configured,
+    agent: {
+      ...configured.agent,
+      temperature: 0.2,
+      maxOutputTokens: 512,
+      maxToolCalls: 2,
+    },
+  };
   const result = await call(
     "POST",
     assistant,
@@ -233,6 +242,9 @@ test("agent proposal reuses validated runtime schema and can be saved via the no
   assert.equal(draft.config.languageMode, "auto");
   assert.equal(draft.config.prompt.advanced, null);
   assert.equal(draft.config.modelId, model);
+  assert.equal(draft.config.temperature, 0.2);
+  assert.equal(draft.config.maxOutputTokens, 512);
+  assert.equal(draft.config.tools.maxCalls, 2);
   assert.equal(draft.config.rag.minScore, 0.2);
   assert.ok(agentConfig.safeParse(draft.config).success);
   const saved = await call(

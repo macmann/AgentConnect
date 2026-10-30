@@ -41,8 +41,8 @@ import {
   type ToolContext,
 } from "./tool-runtime.js";
 import {
-  workflowAgentVersion,
-  executeWorkflowAgent,
+  workflowNodeAgent,
+  executeWorkflowNodeAgent,
 } from "./workflow-agents.js";
 import { sql } from "./db.js";
 import { config } from "./config.js";
@@ -100,8 +100,7 @@ export async function validateWorkflowDependencies(
   const analysis = analyzeWorkflow(graph);
   if (analysis.errors.length) throw new WorkflowError("WORKFLOW_GRAPH_INVALID");
   for (const n of graph.nodes) {
-    if (n.type === "agent")
-      await workflowAgentVersion(n.data.agentVersionId!, ctx, runtime);
+    if (n.type === "agent") await workflowNodeAgent(n, ctx, runtime);
     if (n.type === "tool") await validateToolIds([n.data.toolId!], ctx);
   }
   return analysis;
@@ -211,8 +210,8 @@ export async function compileWorkflow(
             const nodeCtx = { ...ctx, workflowNodeId: node.id };
             if (node.type === "agent") {
               const result = await workflowRetry(run.id, node, signal, () =>
-                executeWorkflowAgent(
-                  node.data.agentVersionId!,
+                executeWorkflowNodeAgent(
+                  node,
                   node.data.prefix + stringify(input) + node.data.suffix,
                   nodeCtx,
                   signal,

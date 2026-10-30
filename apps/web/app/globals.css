@@ -7204,3 +7204,128 @@ fieldset {
     padding: 12px;
   }
 }
+/* One canvas action surface, with drawers constrained to the canvas viewport. */
+.workflow-studio .workflow-editor {
+  display: block;
+  position: relative;
+  overflow: hidden;
+}
+.canvas-controls.react-flow__panel {
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 3px 12px #0001;
+}
+.canvas-controls .canvas-toolbar-actions,
+.canvas-controls .canvas-top-actions {
+  flex-wrap: nowrap;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  gap: 6px;
+}
+.canvas-top-actions {
+  min-width: 0;
+  overflow-x: auto;
+}
+.canvas-controls button,
+.canvas-controls summary,
+.canvas-save-status {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.canvas-node-palette {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+}
+.workflow-studio .workflow-properties,
+.canvas-test-panel.react-flow__panel {
+  position: absolute;
+  top: calc(var(--canvas-toolbar-height, 76px) + 34px);
+  right: 12px;
+  bottom: 12px;
+  left: auto;
+  width: min(390px, calc(100% - 24px));
+  max-width: calc(100% - 24px);
+  max-height: none;
+  height: auto;
+  margin: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px;
+  background: var(--surface);
+  box-shadow: 0 8px 28px #0002;
+  z-index: 15;
+}
+.canvas-panel-toggle {
+  position: absolute;
+  top: var(--canvas-toolbar-height, 76px);
+  right: 12px;
+  z-index: 22;
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 12px;
+  box-shadow: 0 2px 6px #0001;
+}
+.workflow-studio .panel-minimized {
+  display: none;
+}
+.workflow-agent-editor {
+  display: grid;
+  gap: 12px;
+}
+.workflow-agent-editor input[type="checkbox"] {
+  width: auto;
+  margin-right: 8px;
+}
+.workflow-properties .creation-layout {
+  display: flex;
+  flex-direction: column;
+}
+.workflow-properties .creation-mode-grid {
+  grid-template-columns: 1fr;
+}
+.workflow-properties .creation-transcript {
+  max-height: 240px;
+}
+.workflow-properties .creation-header {
+  flex-wrap: wrap;
+}
+@media (max-width: 700px) {
+  .canvas-controls.react-flow__panel {
+    gap: 6px;
+  }
+  .canvas-controls .canvas-toolbar-actions {
+    max-width: 42vw;
+    overflow-x: auto;
+  }
+}
+.workflow-studio .workflow-properties:not([hidden]):not(.panel-minimized) {
+  display: block;
+}
+.canvas-controls .canvas-top-actions:has(details[open]) {
+  overflow: visible;
+}
+.canvas-controls .canvas-draft-settings[open] {
+  z-index: 31;
+}
+.workflow-studio .workflow-properties {
+  height: calc(100% - var(--canvas-toolbar-height, 76px) - 46px);
+  min-height: 0;
+  align-self: stretch;
+}
+.workflow-properties > fieldset > * + * {
+  margin-top: 0;
+}

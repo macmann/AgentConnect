@@ -691,7 +691,7 @@ test("Starter templates require real agents, validate when configured, and paral
   for (const template of workflowTemplates) {
     assert(
       analyzeWorkflow(workflowFromTemplate(template.id)).errors.some((e) =>
-        e.includes("published agent"),
+        e.includes("choose an agent"),
       ),
     );
     assert.deepEqual(
@@ -1205,4 +1205,85 @@ test("field mappings reach agents as selected content and tool arguments keep de
   assert(r.output.includes("Selected query"));
   assert(!r.output.includes("Do not forward"));
   assert.deepEqual(r.tools[0].arguments, { query: "Selected query" });
+});
+
+test("Workflow-owned agents run without an Agents entry and pin model settings on publication", async () => {
+  const m = await call("POST", `/workspaces/${workspace}/models`, {
+    name: "Embedded agent model",
+    provider: "openai-compatible",
+    modelId: "embedded-original",
+    baseUrl: "https://api.openai.com/v1",
+  });
+  assert.equal(m.statusCode, 201, m.body);
+  const beforeAgents = await call("GET", `/workspaces/${workspace}/agents`);
+  const g = graph(
+    [
+      node("input", "input"),
+      node("embedded", "agent", {
+        inlineAgent: agentConfig.parse({
+          modelId: m.json().id,
+          prompt: { instructions: "Summarize the input" },
+        }),
+        inlineModelSnapshot: { modelId: "untrusted-client-model" },
+      }),
+      node("output", "output"),
+    ],
+    [
+      ["input", "embedded"],
+      ["embedded", "output"],
+    ],
+  );
+  assert.deepEqual(analyzeWorkflow(g).errors, []);
+  const workflowId = await create("Independent workflow agent", g);
+  const published = await call("POST", `/workflows/${workflowId}/publish`, {
+    revision: 1,
+  });
+  assert.equal(published.statusCode, 201, published.body);
+  await sql`UPDATE model_configurations SET model_id='embedded-updated' WHERE id=${m.json().id}`;
+  const runId = await run(workflowId, { versionId: published.json().id });
+  const queued = await inspect(runId);
+  assert.equal(
+    queued.graph_snapshot.nodes[1].data.inlineModelSnapshot.modelId,
+    "embedded-original",
+  );
+  await processWorkflowRun({ providerFactory: provider });
+  const completed = await inspect(runId);
+  assert.equal(completed.status, "completed");
+  assert.match(JSON.stringify(completed.output), /embedded-original/);
+  const afterAgents = await call("GET", `/workspaces/${workspace}/agents`);
+  assert.equal(afterAgents.json().length, beforeAgents.json().length);
+  const draftRun = await run(workflowId);
+  assert.equal(
+    (await inspect(draftRun)).graph_snapshot.nodes[1].data.inlineModelSnapshot
+      .modelId,
+    "embedded-updated",
+  );
+  await call("POST", `/workflow-runs/${draftRun}/cancel`);
+});
+
+test("Workflow-owned agents reject unavailable workspace resources and ambiguous sources", async () => {
+  const g = graph(
+    [
+      node("input", "input"),
+      node("embedded", "agent", {
+        inlineAgent: agentConfig.parse({ modelId: randomUUID() }),
+      }),
+      node("output", "output"),
+    ],
+    [
+      ["input", "embedded"],
+      ["embedded", "output"],
+    ],
+  );
+  const workflowId = await create("Invalid embedded model", g);
+  const response = await call("POST", `/workflows/${workflowId}/publish`, {
+    revision: 1,
+  });
+  assert.equal(response.statusCode, 400, response.body);
+  g.nodes[1]!.data.agentVersionId = research;
+  assert.ok(
+    analyzeWorkflow(g).errors.some((e) =>
+      e.includes("choose one agent source"),
+    ),
+  );
 });

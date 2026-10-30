@@ -668,6 +668,7 @@ export function AgentStudio({
       ),
     enabled: canBuild,
   });
+  const [configureAI, setConfigureAI] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [savedDraft, setSavedDraft] = useState("");
   const dirty = !!draft && JSON.stringify(draft) !== savedDraft;
@@ -1089,6 +1090,29 @@ export function AgentStudio({
                 </button>
               ))}
             </div>
+            {tab === "configure" && canBuild && (
+              <>
+                <Button
+                  className="secondary"
+                  onClick={() => setConfigureAI(!configureAI)}
+                >
+                  AI mode · configure from task
+                </Button>
+                {configureAI && (
+                  <CreationAssistant
+                    workspaceId={workspaceId}
+                    kind="agent"
+                    onSettings={() => onNavigate("Settings")}
+                    onManual={() => setConfigureAI(false)}
+                    onCancel={() => setConfigureAI(false)}
+                    onAgent={(proposal) => {
+                      setDraft({ ...draft, config: proposal.config });
+                      setConfigureAI(false);
+                    }}
+                  />
+                )}
+              </>
+            )}
             {tab === "configure" && (
               <AgentConfigure
                 workspaceId={workspaceId}
