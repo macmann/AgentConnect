@@ -1,3 +1,4 @@
+import { agentConfig } from "@agentconnect/schemas/agents";
 import {
   workflowBinding,
   workflowFieldPath,
@@ -34,6 +35,8 @@ export const workflowNode = z.object({
     resultSummary: z.string().trim().max(400).default(""),
     resultFormat: z.enum(["auto", "text", "json"]).default("auto"),
     agentVersionId: z.uuid().optional(),
+    inlineAgent: agentConfig.optional(),
+    inlineModelSnapshot: z.record(z.string(), z.json()).optional(),
     toolId: z.uuid().optional(),
     toolArguments: z.record(z.string(), z.json()).default({}),
     inputArgument: z
@@ -219,8 +222,12 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
       errors.push(
         `${n.data.label}: retries are supported on agent and read-only tool steps`,
       );
-    if (n.type === "agent" && !n.data.agentVersionId)
-      errors.push(`${n.data.label}: select a published agent version`);
+    if (n.data.inlineAgent && n.data.agentVersionId)
+      errors.push(`${n.data.label}: choose one agent source`);
+    if (n.type === "agent" && !n.data.agentVersionId && !n.data.inlineAgent)
+      errors.push(
+        `${n.data.label}: choose an agent or create a workflow agent`,
+      );
     if (n.type === "tool" && !n.data.toolId)
       errors.push(`${n.data.label}: select a registered tool`);
     if (

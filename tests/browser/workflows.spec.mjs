@@ -642,3 +642,119 @@ test("Reusable components save selected nodes, insert versioned copies, and pres
     fullPage: true,
   });
 });
+
+test("workflow agents are created in a contained, minimizable canvas drawer", async ({
+  page,
+  context,
+}) => {
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create workflow", exact: true })
+    .click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
+  await page
+    .getByRole("button", { name: "Open canvas directly", exact: true })
+    .click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("Canvas-owned agent");
+  await page
+    .getByRole("button", { name: "Expand canvas", exact: true })
+    .click();
+  const canvas = page.getByRole("dialog", { name: "Expanded workflow canvas" });
+  await canvas
+    .getByRole("button", { name: "＋ Add nodes", exact: true })
+    .click();
+  await canvas.getByRole("button", { name: "Add agent", exact: true }).click();
+  const drawer = canvas.locator(".workflow-properties");
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByLabel("Agent source")).toHaveValue("workflow");
+
+  await drawer
+    .getByLabel("Runtime model", { exact: true })
+    .selectOption({ label: "Research" });
+  await drawer
+    .getByLabel("Agent task prompt", { exact: true })
+    .fill("Summarize the research for the workflow.");
+  const bounds = await canvas.boundingBox();
+  const panel = await drawer.boundingBox();
+  expect(panel.x).toBeGreaterThanOrEqual(bounds.x);
+  expect(panel.y + panel.height).toBeLessThanOrEqual(bounds.y + bounds.height);
+  const toggle = canvas.getByRole("button", { name: "Minimize canvas panel" });
+  const toggleBounds = await toggle.boundingBox();
+  expect(toggleBounds.y + toggleBounds.height).toBeLessThanOrEqual(panel.y);
+  await toggle.click();
+  await expect(drawer).toBeHidden();
+  await canvas.getByRole("button", { name: "Restore canvas panel" }).click();
+  await expect(
+    drawer.getByLabel("Agent task prompt", { exact: true }),
+  ).toHaveValue("Summarize the research for the workflow.");
+  await drawer
+    .getByRole("button", { name: "AI mode · describe the task" })
+    .click();
+  await expect(
+    drawer.getByRole("button", { name: /AI-assisted draft/ }),
+  ).toBeVisible();
+  await drawer.getByRole("button", { name: /Manual setup/ }).click();
+  await drawer.getByLabel("Also make a reusable copy in Agents").check();
+  await drawer.getByRole("button", { name: "Save copy to Agents" }).click();
+  await expect(drawer.getByRole("status")).toContainText(
+    "Saved a reusable draft",
+  );
+  await canvas.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(
+    canvas.getByRole("status", { name: "Draft save status" }),
+  ).toHaveText("Saved");
+  const [stored] =
+    await sql`SELECT draft_graph FROM workflows WHERE workspace_id=${workspace} AND name='Canvas-owned agent'`;
+  const embedded = stored.draft_graph.nodes.find((n) => n.type === "agent");
+  expect(embedded.data.inlineAgent.prompt.instructions).toBe(
+    "Summarize the research for the workflow.",
+  );
+  expect(embedded.data.agentVersionId).toBeUndefined();
+  const toolbar = await canvas.locator(".canvas-controls").boundingBox();
+  expect(toolbar.height).toBeLessThan(80);
+  await canvas
+    .getByRole("button", { name: "Test Workflow", exact: true })
+    .click();
+  const testing = canvas.getByRole("region", { name: "Workflow test panel" });
+  await expect(testing).toBeVisible();
+  await canvas.getByRole("button", { name: "Minimize canvas panel" }).click();
+  await expect(testing).toBeHidden();
+  await canvas.getByRole("button", { name: "Restore canvas panel" }).click();
+  await expect(testing).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const narrow = await canvas.boundingBox();
+  const narrowPanel = await testing.boundingBox();
+  expect(narrowPanel.x).toBeGreaterThanOrEqual(narrow.x);
+  expect(narrowPanel.x + narrowPanel.width).toBeLessThanOrEqual(
+    narrow.x + narrow.width,
+  );
+  expect(narrowPanel.y + narrowPanel.height).toBeLessThanOrEqual(
+    narrow.y + narrow.height,
+  );
+  await page.screenshot({ path: "/tmp/workflow-canvas-mobile.png" });
+  await testing.getByRole("button", { name: "Close test panel" }).click();
+  await expect(drawer).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await canvas
+    .getByRole("button", { name: "Exit expanded view", exact: true })
+    .click();
+  const normalCanvas = await page.locator(".workflow-canvas").boundingBox();
+  const normalPanel = await page.locator(".workflow-properties").boundingBox();
+  expect(normalPanel.y).toBeGreaterThanOrEqual(normalCanvas.y);
+  expect(normalPanel.y + normalPanel.height).toBeLessThanOrEqual(
+    normalCanvas.y + normalCanvas.height,
+  );
+});

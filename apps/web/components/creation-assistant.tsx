@@ -346,6 +346,12 @@ export function CreationAssistant({
                     <dl>
                       <dt>Runtime model</dt>
                       <dd>{reply?.summary?.model}</dd>
+                      <dt>Technical settings</dt>
+                      <dd>
+                        Temperature {proposal.config.temperature} · Up to{" "}
+                        {proposal.config.maxOutputTokens} output tokens ·{" "}
+                        {proposal.config.tools.maxCalls} tool calls
+                      </dd>
                       <dt>Knowledge</dt>
                       <dd>
                         {reply?.summary?.knowledge?.join(", ") ||

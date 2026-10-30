@@ -1,4 +1,5 @@
 "use client";
+import { WorkflowAgentEditor } from "./workflow-agent-editor";
 import { WorkflowMappingEditor } from "./workflow-mapping-editor";
 import { WorkflowNodeInspector } from "./workflow-node-inspector";
 import { WorkflowTriggers } from "./workflow-triggers";
@@ -58,7 +59,12 @@ type Version = {
   name: string;
   graph: WorkflowGraph;
 };
-type PublishedAgent = { id: string; name: string; version: number };
+type PublishedAgent = {
+  id: string;
+  agent_id: string;
+  name: string;
+  version: number;
+};
 type NodeTrace = {
   node_id: string;
   label: string;
@@ -202,6 +208,10 @@ export function WorkflowStudio({
       ),
     enabled: build,
   });
+  const [agentSources, setAgentSources] = useState<
+    Record<string, "workflow" | "existing">
+  >({});
+  const [panelMinimized, setPanelMinimized] = useState(false);
   const [expanded, setExpanded] = useState(false),
     [testOpen, setTestOpen] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -348,6 +358,9 @@ export function WorkflowStudio({
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
+  useEffect(() => {
+    setPanelMinimized(false);
+  }, [selected]);
   const current = draft?.graph.nodes.find((n) => n.id === selected);
   const validation = draft ? analyzeWorkflow(draft.graph).errors : [];
   const change = useCallback(
@@ -628,11 +641,7 @@ export function WorkflowStudio({
       kind,
       anchor.position.x + 240,
       anchor.position.y,
-      {
-        ...(kind === "agent" && agents.data?.[0]
-          ? { agentVersionId: agents.data[0].id }
-          : {}),
-      },
+      {},
     );
     let nodes = [...draft.graph.nodes, inserted],
       edges = draft.graph.edges;
@@ -1234,9 +1243,7 @@ export function WorkflowStudio({
                           kind as WorkflowNode["type"],
                           position.x,
                           position.y,
-                          kind === "agent" && agents.data?.[0]
-                            ? { agentVersionId: agents.data[0].id }
-                            : {},
+                          {},
                         ),
                       ],
                     });
@@ -1277,6 +1284,7 @@ export function WorkflowStudio({
                     onNodeClick={(event, n) => {
                       if (!event.shiftKey) setSelection([n.id]);
                       setSelected(n.id);
+                      setPanelMinimized(false);
                       if (selectedRun) setTestOpen(true);
                       const data = draft.graph.nodes.find(
                         (item) => item.id === n.id,
@@ -1381,7 +1389,10 @@ export function WorkflowStudio({
                         )}
                         <Button
                           className="secondary"
-                          onClick={() => setTestOpen(!testOpen)}
+                          onClick={() => {
+                            setTestOpen(!testOpen);
+                            setPanelMinimized(false);
+                          }}
                         >
                           Test Workflow
                         </Button>
@@ -1418,7 +1429,7 @@ export function WorkflowStudio({
                     {testOpen && (
                       <Panel
                         position="bottom-right"
-                        className="canvas-test-panel nodrag nopan"
+                        className={`canvas-test-panel nodrag nopan ${panelMinimized ? "panel-minimized" : ""}`}
                         role="region"
                         aria-label="Workflow test panel"
                       >
@@ -1793,9 +1804,23 @@ export function WorkflowStudio({
                     <Controls />
                   </ReactFlow>
                 </div>
+                {(testOpen || (stage === "build" && current)) && (
+                  <Button
+                    className="secondary canvas-panel-toggle"
+                    aria-label={
+                      panelMinimized
+                        ? "Restore canvas panel"
+                        : "Minimize canvas panel"
+                    }
+                    aria-expanded={!panelMinimized}
+                    onClick={() => setPanelMinimized(!panelMinimized)}
+                  >
+                    {panelMinimized ? "‹ Open panel" : "› Minimize"}
+                  </Button>
+                )}
                 <aside
-                  className="workflow-properties"
-                  hidden={stage !== "build" || testOpen}
+                  className={`workflow-properties ${panelMinimized ? "panel-minimized" : ""}`}
+                  hidden={stage !== "build" || testOpen || !current}
                 >
                   <fieldset disabled={!canvasEditable}>
                     {current && !selectedRun ? (
@@ -1832,27 +1857,123 @@ export function WorkflowStudio({
                         {current.type === "agent" && (
                           <>
                             <label>
-                              Published agent version
+                              Agent source
                               <select
-                                aria-label="Published agent version"
-                                disabled={!build}
-                                value={current.data.agentVersionId ?? ""}
-                                onChange={(e) =>
-                                  updateNode({
-                                    agentVersionId: e.target.value || undefined,
-                                  })
+                                aria-label="Agent source"
+                                value={
+                                  agentSources[current.id] ??
+                                  (current.data.agentVersionId
+                                    ? "existing"
+                                    : "workflow")
                                 }
+                                onChange={(e) => {
+                                  setAgentSources({
+                                    ...agentSources,
+                                    [current.id]: e.target.value as
+                                      "workflow" | "existing",
+                                  });
+                                  updateNode({
+                                    agentVersionId: undefined,
+                                    inlineAgent: undefined,
+                                    inlineModelSnapshot: undefined,
+                                  });
+                                }}
                               >
-                                <option value="">
-                                  Choose a published agent
+                                <option value="workflow">
+                                  Create within workflow
                                 </option>
-                                {agents.data?.map((a) => (
-                                  <option key={a.id} value={a.id}>
-                                    {a.name} · v{a.version}
-                                  </option>
-                                ))}
+                                <option value="existing">
+                                  Use an existing agent
+                                </option>
                               </select>
                             </label>
+                            {(agentSources[current.id] ??
+                              (current.data.agentVersionId
+                                ? "existing"
+                                : "workflow")) === "workflow" ? (
+                              <WorkflowAgentEditor
+                                key={current.id}
+                                workspaceId={workspaceId}
+                                name={current.data.label}
+                                config={current.data.inlineAgent}
+                                onSettings={onSettings}
+                                onChange={(inlineAgent) =>
+                                  updateNode({
+                                    inlineAgent,
+                                    inlineModelSnapshot: undefined,
+                                    agentVersionId: undefined,
+                                  })
+                                }
+                              />
+                            ) : (
+                              <>
+                                <label>
+                                  Agent
+                                  <select
+                                    aria-label="Agent"
+                                    value={
+                                      agents.data?.find(
+                                        (a) =>
+                                          a.id === current.data.agentVersionId,
+                                      )?.agent_id ?? ""
+                                    }
+                                    onChange={(e) =>
+                                      updateNode({
+                                        agentVersionId: agents.data?.find(
+                                          (a) => a.agent_id === e.target.value,
+                                        )?.id,
+                                      })
+                                    }
+                                  >
+                                    <option value="">Choose an agent</option>
+                                    {Array.from(
+                                      new Map(
+                                        agents.data?.map((a) => [
+                                          a.agent_id,
+                                          a,
+                                        ]),
+                                      ).values(),
+                                    ).map((a) => (
+                                      <option
+                                        key={a.agent_id}
+                                        value={a.agent_id}
+                                      >
+                                        {a.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label>
+                                  Version
+                                  <select
+                                    aria-label="Published agent version"
+                                    value={current.data.agentVersionId ?? ""}
+                                    onChange={(e) =>
+                                      updateNode({
+                                        agentVersionId: e.target.value,
+                                      })
+                                    }
+                                  >
+                                    <option value="">Choose a version</option>
+                                    {agents.data
+                                      ?.filter(
+                                        (a) =>
+                                          a.agent_id ===
+                                          agents.data?.find(
+                                            (v) =>
+                                              v.id ===
+                                              current.data.agentVersionId,
+                                          )?.agent_id,
+                                      )
+                                      .map((a) => (
+                                        <option key={a.id} value={a.id}>
+                                          v{a.version}
+                                        </option>
+                                      ))}
+                                  </select>
+                                </label>
+                              </>
+                            )}
                             <details className="configure-group">
                               <summary>Advanced agent instructions</summary>{" "}
                               <label>

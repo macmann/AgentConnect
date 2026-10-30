@@ -4,7 +4,7 @@ Phase 4 provides a workspace-scoped canvas and a durable LangGraph runner. Start
 
 ## Build and run
 
-1. Register models, create agents, and publish their configurations in Agents. Workflow Agent nodes reference a specific published version, including its model snapshot and prompt.
+1. Register a workspace model. Create agents directly in workflow Agent nodes, or select an existing agent and then its published version. Workflow-owned agents keep their prompt, model settings, knowledge and tools inside the graph; they do not need an Agents-list entry or a separate agent publication.
 2. Open Workflows and choose **Create workflow**. The optional three-step wizard asks for a name and starter template, the published agents required by that template, then a canvas preview and review. **Create draft** saves the configured graph. Experienced users can choose **Open canvas directly** instead.
 3. In **Build**, select nodes to edit their settings, open **＋ Add nodes** inside the canvas and choose grouped node types. Click to insert after the selected step, or drag a type onto the canvas to place a single unconnected node on the drawing grid. Connect its handles to complete the flow. Common settings appear first; instruction overrides, input mapping and failure recovery are collapsed. Help icons support hover, focus and tap. Drag to position nodes; use pan/zoom, minimap, auto-layout, undo/redo, duplicate and keyboard copy/paste. Shift-select copies a group and its internal edges.
 4. Use **Save draft** in the canvas or the sticky **Save workflow** action and validate dependencies. **Workflow details** lets you name the draft inside the canvas. **Expand canvas** provides a larger drawing workspace; Escape exits and restores focus. The expanded view retains the same unsaved graph, selection and history. **Publish** creates an immutable version; invalid or unsaved drafts cannot publish. Node-specific validation messages select the affected node. Activity changes preserve draft edits; switching workflows or leaving the browser page warns about unsaved changes.
@@ -17,14 +17,14 @@ Input/output nodes use capsule shapes, decisions use diamonds, agents and tools 
 
 ## Nodes and data flow
 
-| Node               | Behavior                                                                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Input / Output     | One entry and one exit; the run input is text and the final result is JSON.                                                                 |
-| Agent              | Runs the selected published agent with its RAG/tool configuration; optional prefix/suffix surrounds the incoming value.                     |
-| Tool               | Executes an enabled, reviewed read-only registry tool with fixed JSON arguments and an optional argument populated from the incoming value. |
-| Router / Condition | Chooses the true or false handle using equals, contains, or not-empty. These predicates are deterministic.                                  |
-| Parallel / Merge   | Runs two to four branches concurrently and joins their outputs by predecessor node ID.                                                      |
-| Human Approval     | Persists a review request and interrupts execution until an authorized decision.                                                            |
+| Node               | Behavior                                                                                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Input / Output     | One entry and one exit; the run input is text and the final result is JSON.                                                                             |
+| Agent              | Runs a workflow-owned configuration or a selected published agent with its RAG/tool configuration; optional prefix/suffix surrounds the incoming value. |
+| Tool               | Executes an enabled, reviewed read-only registry tool with fixed JSON arguments and an optional argument populated from the incoming value.             |
+| Router / Condition | Chooses the true or false handle using equals, contains, or not-empty. These predicates are deterministic.                                              |
+| Parallel / Merge   | Runs two to four branches concurrently and joins their outputs by predecessor node ID.                                                                  |
+| Human Approval     | Persists a review request and interrupts execution until an authorized decision.                                                                        |
 
 By default, nodes consume their predecessor's output. An explicit input mapping may select an ancestor's output. Conditional merges use the selected branch; structured parallel merges wait for every branch, including unequal branch lengths.
 
@@ -57,3 +57,11 @@ Select the Input node to define named text, number, boolean or JSON fields, with
 ## Field-level handoffs and canvas inspection
 
 Input mapping can select a nested upstream field or assemble named fields from several ancestors. Tool mappings preserve argument types; legacy complete-output mappings remain compatible. Preview with recorded outputs without executing agents/tools, then test the saved draft. Clicking a run node opens its recorded inputs, outputs, citations, tool executions and status in the canvas panel; a step dropdown offers keyboard access. See [field mapping and inspection](workflow-mapping.md) for paths, snapshots and explicit failure behavior.
+
+## Workflow-owned agents and AI configuration
+
+New Agent nodes offer **Create within workflow**. Choose a runtime model and enter the task prompt, then attach existing workspace knowledge and enabled tools. The default scope is the workflow. Select **Also make a reusable copy in Agents** and **Save copy to Agents** to create an independent agent draft; later edits to either copy do not update the other. Existing agents are selected by name first, followed by a separate version choice.
+
+**AI mode · describe the task** proposes a prompt, runtime model, temperature, output limit, tool-call limit, and relevant existing knowledge/tools. Review and apply the proposal before saving. AI mode is also available in an agent’s Configure tab. An administrator must enable AI creation and select its assistant model in Settings. Model output is validated against the workspace catalog and model limits.
+
+The canvas uses one action bar. Build settings and test results open as scrollable drawers inside the canvas. Their external **Minimize** button remains available outside the scroll area; **Open panel** restores the same state. Both normal and expanded views use the same layout. Publishing and draft test runs resolve embedded model settings on the server into immutable snapshots. Published runs continue to use those model settings after the model registry changes; knowledge/tool availability and credentials are still checked at execution time.

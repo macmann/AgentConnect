@@ -1,3 +1,4 @@
+import { snapshotWorkflowAgents } from "./workflow-agents.js";
 import {
   registerWorkflowTriggers,
   workflowInputText,
@@ -65,7 +66,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
       id(params(r).workspaceId),
       "workflow:read",
     );
-    return sql`SELECT v.id,v.agent_id,v.name,v.version FROM agent_versions v JOIN agents a ON a.id=v.agent_id WHERE v.workspace_id=${w.id} AND v.organization_id=${w.organization_id} AND a.archived_at IS NULL ORDER BY v.name,v.version DESC`;
+    return sql`SELECT v.id,v.agent_id,a.name,v.version FROM agent_versions v JOIN agents a ON a.id=v.agent_id WHERE v.workspace_id=${w.id} AND v.organization_id=${w.organization_id} AND a.archived_at IS NULL ORDER BY a.name,v.version DESC`;
   });
   app.post(
     "/workspaces/:workspaceId/workflows",
@@ -161,7 +162,10 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
             409,
             "Workflow changed; reload before publishing",
           );
-        const graph = workflowGraph.parse(locked.draft_graph);
+        const graph = await snapshotWorkflowAgents(
+          workflowGraph.parse(locked.draft_graph),
+          w.workspace_id,
+        );
         await validateWorkflowDependencies(graph, {
           workspaceId: w.workspace_id,
           organizationId: w.organization_id,
@@ -256,7 +260,10 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
             409,
             "Save and reload the current draft before testing",
           );
-        graph = workflowGraph.parse(w.draft_graph);
+        graph = await snapshotWorkflowAgents(
+          workflowGraph.parse(w.draft_graph),
+          w.workspace_id,
+        );
       }
       await validateWorkflowDependencies(
         graph,

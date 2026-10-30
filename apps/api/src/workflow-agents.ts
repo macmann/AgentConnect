@@ -1,4 +1,9 @@
 import { resolveAgentSkills, validateSkillSelection } from "./agent-skills.js";
+import type {
+  WorkflowNode,
+  WorkflowGraph,
+} from "@agentconnect/schemas/workflows";
+import { modelSnapshot } from "./agents.js";
 import { observe, observationContent } from "./ai-tracing.js";
 import { routedProvider } from "./model-routing.js";
 import { agentReranker } from "./agent-reranking.js";
@@ -331,5 +336,81 @@ export async function executeAgentSnapshot(
         modelUsage: metered.usage().modelUsage,
       };
     },
+  );
+}
+
+// Resolve workspace models on the server before persisting immutable run/release graphs.
+export async function snapshotWorkflowAgents(
+  graph: WorkflowGraph,
+  workspaceId: string,
+) {
+  for (const node of graph.nodes) {
+    if (!node.data.inlineAgent) continue;
+    const c = node.data.inlineAgent;
+    node.data.inlineModelSnapshot = JSON.parse(
+      JSON.stringify(await modelSnapshot(c.modelId, workspaceId, c)),
+    );
+  }
+  return graph;
+}
+export async function workflowNodeAgent(
+  node: WorkflowNode,
+  ctx: ToolContext,
+  runtime = false,
+) {
+  if (!node.data.inlineAgent)
+    return workflowAgentVersion(node.data.agentVersionId!, ctx, runtime);
+  const c = agentConfig.parse(node.data.inlineAgent);
+  const model = node.data.inlineModelSnapshot
+    ? modelSnapshotSchema.parse(node.data.inlineModelSnapshot)
+    : await modelSnapshot(c.modelId, ctx.workspaceId, c);
+  validateModelSet(c, model);
+  await validateKnowledgeSelection(
+    c.rag,
+    ctx.workspaceId,
+    ctx.organizationId,
+    !!ctx.publicAccess,
+    !!ctx.publicAccess,
+  );
+  if (runtime) await availableAgentTools(c, ctx);
+  else {
+    await validateToolIds(c.tools.toolIds, ctx);
+    await validateSkillSelection(c.skills, ctx);
+  }
+  const conn = await connection(model, ctx.workspaceId, ctx.organizationId);
+  return { c, model, conn };
+}
+export async function executeWorkflowNodeAgent(
+  node: WorkflowNode,
+  input: string,
+  ctx: ToolContext,
+  signal: AbortSignal,
+  providerOverride?: ProviderFactory,
+  embeddingOverride?: EmbeddingFactory,
+) {
+  if (!node.data.inlineAgent)
+    return executeWorkflowAgent(
+      node.data.agentVersionId!,
+      input,
+      ctx,
+      signal,
+      providerOverride,
+      embeddingOverride,
+    );
+  const { c, model } = await workflowNodeAgent(node, ctx, true);
+  return observe(
+    "workflow.agent",
+    "agent",
+    { "workflow.node.id": node.id },
+    () =>
+      executeAgentSnapshot(
+        c,
+        model,
+        input,
+        ctx,
+        signal,
+        providerOverride,
+        embeddingOverride,
+      ),
   );
 }
