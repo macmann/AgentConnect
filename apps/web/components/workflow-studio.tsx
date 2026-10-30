@@ -1,4 +1,5 @@
 "use client";
+import { WorkflowV2Studio } from "./workflow-v2-studio";
 import { WorkflowAgentEditor } from "./workflow-agent-editor";
 import { WorkflowMappingEditor } from "./workflow-mapping-editor";
 import { WorkflowNodeInspector } from "./workflow-node-inspector";
@@ -124,11 +125,7 @@ const makeNode = (
     ],
     edges: [],
   }).nodes[0]!;
-const edge = (
-  source: string,
-  target: string,
-  sourceHandle?: "true" | "false",
-) => ({
+const edge = (source: string, target: string, sourceHandle?: string) => ({
   id: "e_" + crypto.randomUUID(),
   source,
   target,
@@ -180,6 +177,7 @@ export function WorkflowStudio({
   role: string;
   onSettings: () => void;
 }) {
+  const [v2Workflow, setV2Workflow] = useState<string | null>(null);
   const cache = useQueryClient(),
     build = ["owner", "org_admin", "workspace_admin", "builder"].includes(role),
     read = build || ["operator", "analyst"].includes(role),
@@ -549,6 +547,10 @@ export function WorkflowStudio({
         revision: number;
         definitionVersion?: 2;
       }>(`/workflows/${id}`);
+      if (w.definitionVersion === 2) {
+        setV2Workflow(w.id);
+        return;
+      }
       const loaded = {
         id: w.id,
         name: w.name,
@@ -992,6 +994,19 @@ export function WorkflowStudio({
 
     setManualWizard(false);
   }
+  if (v2Workflow !== null)
+    return (
+      <WorkflowV2Studio
+        key={v2Workflow || "new"}
+        workspaceId={workspaceId}
+        workflowId={v2Workflow}
+        role={role}
+        onBack={() => {
+          setV2Workflow(null);
+          void workflows.refetch();
+        }}
+      />
+    );
   return (
     <section className="panel workflow-studio">
       <div className="panel-header">
@@ -1002,6 +1017,21 @@ export function WorkflowStudio({
             workflow.
           </p>
         </div>
+        {build && (
+          <Button
+            onClick={() => {
+              if (
+                !dirty ||
+                window.confirm(
+                  "Discard unsaved changes and create a V2 workflow?",
+                )
+              )
+                setV2Workflow("");
+            }}
+          >
+            Create V2 workflow
+          </Button>
+        )}
         {build && (
           <Button
             onClick={() => {

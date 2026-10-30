@@ -7,7 +7,7 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "db:migrate": "tsx --env-file=../../.env src/migrate.ts",
-    "test": "tsx --env-file=../../.env --test --test-concurrency=1 test/*.test.ts",
+    "test": "NODE_ENV=test tsx --env-file=../../.env --test --test-concurrency=1 test/*.test.ts",
     "storage:init": "tsx --env-file=../../.env src/init-storage.ts",
     "mail:inspect": "tsx --env-file=../../.env src/local-mail.ts",
     "mail:worker": "tsx --env-file=../../.env src/mail-worker.ts",

@@ -22,6 +22,7 @@ import {
   connectorFor,
   executeTool,
   ToolError,
+  toolSecret,
   type ToolContext,
 } from "./tool-runtime.js";
 
@@ -72,7 +73,7 @@ export async function validateV2Resources(
 ) {
   const program = workflowV2Program(graph);
   if (!program) return;
-  for (const resource of Object.values(program.resources)) {
+  for (const [resourceName, resource] of Object.entries(program.resources)) {
     let found = false;
     switch (resource.kind) {
       case "agent": {
@@ -115,7 +116,7 @@ export async function validateV2Resources(
     if (!found)
       throw new HttpError(
         400,
-        "A referenced workflow resource is unavailable in this workspace",
+        `Resource ${resourceName} (${resource.kind}) is unavailable in this workspace`,
       );
     if (
       ctx.publicAccess &&
@@ -126,10 +127,25 @@ export async function validateV2Resources(
         "This resource reference is not available in public workflows",
       );
   }
-  for (const action of program.actions)
-    await validateWorkflowAction(action, ctx);
+  for (const node of program.nodes) {
+    if (node.kind === "structured-ai" || node.kind === "human-task")
+      schemaValidator(node.config.outputSchema);
+  }
+  for (const action of program.actions) {
+    try {
+      await validateWorkflowAction(action, ctx);
+    } catch (error) {
+      const node = program.nodes.find(
+        (n) => n.kind === "action" && n.config.actionId === action.id,
+      );
+      throw new HttpError(
+        400,
+        `${node?.id ?? action.id}: check the registered Action and its saved connection (${error instanceof ToolError ? error.code : "ACTION_UNAVAILABLE"})`,
+      );
+    }
+  }
 }
-function schemaValidator(schema: Record<string, unknown>) {
+export function schemaValidator(schema: Record<string, unknown>) {
   actionJsonSchema.parse(schema);
   let count = 0;
   const walk = (v: unknown, depth: number): void => {
@@ -143,17 +159,26 @@ function schemaValidator(schema: Record<string, unknown>) {
             "$dynamicRef",
             "pattern",
             "patternProperties",
-            "format",
             "$id",
           ].includes(key)
         )
+          throw new ToolError("ACTION_SCHEMA_UNSUPPORTED");
+        if (key === "format" && typeof value === "string" && value !== "date")
           throw new ToolError("ACTION_SCHEMA_UNSUPPORTED");
         walk(value, depth + 1);
       }
   };
   walk(schema, 0);
   try {
-    return new Ajv({ strict: false, validateFormats: false }).compile(schema);
+    return new Ajv({ strict: false, validateFormats: true })
+      .addFormat("date", {
+        type: "string",
+        validate: (v: string) =>
+          /^\d{4}-\d{2}-\d{2}$/.test(v) &&
+          !Number.isNaN(Date.parse(v)) &&
+          new Date(v).toISOString().slice(0, 10) === v,
+      })
+      .compile(schema);
   } catch {
     throw new ToolError("ACTION_SCHEMA_UNSUPPORTED");
   }
@@ -174,6 +199,11 @@ export async function validateWorkflowAction(
     throw new ToolError("ACTION_CONNECTOR_MISMATCH");
   if (action.connector === "agentconnect.tool" && tool.config.kind === "mcp")
     throw new ToolError("ACTION_CONNECTOR_MISMATCH");
+  if (tool.config.kind === "mcp") {
+    const connector = await connectorFor(tool.config.connectorId, ctx);
+    if (connector.secret_id) await toolSecret(connector.secret_id, ctx);
+  } else if ("secretId" in tool.config && tool.config.secretId)
+    await toolSecret(tool.config.secretId, ctx);
   if (action.connectionId) {
     const actual =
       tool.config.kind === "mcp"
@@ -216,3 +246,72 @@ export async function executeWorkflowAction(
 export const v2DefinitionRequest = z.strictObject({
   definition: workflowDefinitionV2,
 });
+
+export async function executeStructuredAI(
+  modelId: string,
+  instruction: string,
+  input: unknown,
+  outputSchema: Record<string, unknown>,
+  ctx: ToolContext,
+  signal: AbortSignal,
+  factory?: import("@agentconnect/provider-sdk").ProviderFactory,
+) {
+  const { modelSnapshot } = await import("./agents.js");
+  const { connection } = await import("./agent-models.js");
+  const { defaultProcessingFactory } =
+    await import("./knowledge-processing.js");
+  const { tracedProvider } = await import("./ai-tracing.js");
+  const { tokenCount } = await import("./context-control.js");
+  const model = await modelSnapshot(modelId, ctx.workspaceId);
+  const validate = schemaValidator(outputSchema);
+  const system =
+    instruction +
+    "\nReturn only valid JSON matching this schema: " +
+    JSON.stringify(outputSchema);
+  const content = typeof input === "string" ? input : JSON.stringify(input);
+  const maxOutputTokens = Math.min(8192, model.maxOutputTokens);
+  if (
+    tokenCount(system + content, "o200k_base") + maxOutputTokens + 512 >
+    model.contextWindow
+  )
+    throw new ToolError("STRUCTURED_AI_CONTEXT_LIMIT");
+  const provider = tracedProvider(
+    (factory ?? defaultProcessingFactory)(
+      await connection(model, ctx.workspaceId, ctx.organizationId),
+    ),
+    model,
+  );
+  let text = "",
+    inputTokens: number | null = null,
+    outputTokens: number | null = null;
+  for await (const event of provider.stream({
+    system,
+    messages: [{ role: "user", content }],
+    temperature: 0,
+    topP: null,
+    maxOutputTokens,
+    responseSchema: { name: "workflow_output", schema: outputSchema },
+    signal: AbortSignal.any([signal, AbortSignal.timeout(90000)]),
+  })) {
+    if (event.type === "token") {
+      text += event.text;
+      if (text.length > 128000)
+        throw new ToolError("STRUCTURED_AI_OUTPUT_LIMIT");
+    }
+    if (event.type === "usage") {
+      inputTokens = event.inputTokens;
+      outputTokens = event.outputTokens;
+    }
+  }
+  let output: unknown;
+  try {
+    output = JSON.parse(text);
+  } catch {
+    throw new ToolError("STRUCTURED_AI_OUTPUT_INVALID");
+  }
+  const { assertWorkflowValue } =
+    await import("@agentconnect/schemas/workflow-values");
+  assertWorkflowValue(output);
+  if (!validate(output)) throw new ToolError("STRUCTURED_AI_OUTPUT_INVALID");
+  return { output, inputTokens, outputTokens };
+}

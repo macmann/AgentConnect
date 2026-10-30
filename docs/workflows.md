@@ -58,7 +58,7 @@ Select the Input node to define named text, number, boolean or JSON fields, with
 
 Input mapping can select a nested upstream field or assemble named fields from several ancestors. Tool mappings preserve argument types; legacy complete-output mappings remain compatible. Preview with recorded outputs without executing agents/tools, then test the saved draft. Clicking a run node opens its recorded inputs, outputs, citations, tool executions and status in the canvas panel; a step dropdown offers keyboard access. See [field mapping and inspection](workflow-mapping.md) for paths, snapshots and explicit failure behavior.
 
-## Workflow-owned agents and AI configuration
+## V1 workflow-owned agents and AI configuration
 
 New Agent nodes offer **Create within workflow**. Choose a runtime model and enter the task prompt, then attach existing workspace knowledge and enabled tools. The default scope is the workflow. Select **Also make a reusable copy in Agents** and **Save copy to Agents** to create an independent agent draft; later edits to either copy do not update the other. Existing agents are selected by name first, followed by a separate version choice.
 
@@ -73,3 +73,5 @@ Select a node or connection and use **Delete selected**, Delete, or Backspace. D
 ## Workflow Definition V2
 
 V1 definitions and their published snapshots remain supported. V2 introduces resource-only Agent references, typed workflow context/conditions, reusable deterministic Actions and editor-independent execution definitions, compiled into the same durable runtime. See [V2 architecture, contracts, API and compatibility](workflows-v2.md). The current canvas previews V2 read-only to avoid a lossy V1 save; V1 editing and the other AgentConnect modules remain unchanged.
+
+For resource-referencing V2 workflows, choose **Create V2 workflow**. Its no-code panels support Structured AI, Human Review/Edit, Actions, Transform, variables and Switch routing. Published Agents remain reusable resources. See [Workflow V2 architecture and configuration](workflows-v2.md).

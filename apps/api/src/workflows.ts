@@ -3,7 +3,12 @@ import {
   compileWorkflowDefinition,
   validateWorkflowDefinition,
 } from "@agentconnect/schemas/workflow-v2";
-import { definitionInput, storedWorkflowGraph } from "./workflow-v2.js";
+import {
+  definitionInput,
+  storedWorkflowGraph,
+  workflowV2Program,
+  schemaValidator,
+} from "./workflow-v2.js";
 import { snapshotWorkflowAgents } from "./workflow-agents.js";
 import {
   registerWorkflowTriggers,
@@ -82,6 +87,58 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
       "workflow:read",
     );
     return sql`SELECT v.id,v.agent_id,a.name,v.version FROM agent_versions v JOIN agents a ON a.id=v.agent_id WHERE v.workspace_id=${w.id} AND v.organization_id=${w.organization_id} AND a.archived_at IS NULL ORDER BY a.name,v.version DESC`;
+  });
+  app.get("/workspaces/:workspaceId/workflow-catalog", async (r) => {
+    const u = await actor(r);
+    const w = await workspaceAccess(
+      u.id,
+      id(params(r).workspaceId),
+      "workflow:read",
+    );
+    const { inputSchemaFor, validateToolIds } =
+      await import("./tool-runtime.js");
+    const ctx = {
+      workspaceId: w.id,
+      organizationId: w.organization_id,
+      userId: u.id,
+    };
+    const models =
+      await sql`SELECT id,name,provider,model_id FROM model_configurations WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL ORDER BY name`;
+    const agents =
+      await sql`SELECT v.id,v.agent_id,a.name,v.version,v.public_description,v.model_snapshot->>'provider' AS provider,v.model_snapshot->>'modelId' AS model,COALESCE(jsonb_array_length(v.config->'rag'->'knowledgeBaseIds'),0) AS knowledge_count,COALESCE(jsonb_array_length(v.config->'tools'->'toolIds'),0) AS tool_count FROM agent_versions v JOIN agents a ON a.id=v.agent_id WHERE v.workspace_id=${w.id} AND v.organization_id=${w.organization_id} AND a.archived_at IS NULL ORDER BY a.name,v.version DESC`;
+    const registered =
+      await sql`SELECT id FROM tools WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND enabled=true AND archived_at IS NULL ORDER BY name`;
+    const actions = [];
+    for (const entry of registered) {
+      try {
+        const [tool] = await validateToolIds([entry.id], ctx);
+        if (!tool) continue;
+        actions.push({
+          id: tool.id,
+          name: tool.name,
+          connector:
+            tool.config.kind === "mcp"
+              ? "agentconnect.mcp"
+              : "agentconnect.tool",
+          operation: "execute",
+          connectionId:
+            tool.config.kind === "mcp"
+              ? tool.config.connectorId
+              : "secretId" in tool.config
+                ? (tool.config.secretId ?? undefined)
+                : undefined,
+          inputSchema: await inputSchemaFor(tool.config, ctx),
+          timeoutMs: tool.timeout_ms,
+        });
+      } catch {
+        actions.push({
+          id: entry.id,
+          name: "Unavailable integration",
+          unavailable: true,
+        });
+      }
+    }
+    return { models, agents, actions };
   });
   app.post(
     "/workspaces/:workspaceId/workflows",
@@ -208,7 +265,9 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
         errors.push(
           e instanceof WorkflowError
             ? e.code
-            : "A selected agent, model, credential, knowledge base, tool or Action is unavailable",
+            : e instanceof HttpError
+              ? e.message
+              : "A selected agent, model, credential, knowledge base, tool or Action is unavailable",
         );
       }
     return { valid: !errors.length, errors };
@@ -436,11 +495,38 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
           await tx`SELECT status FROM workflow_runs WHERE id=${run.id} FOR UPDATE`;
         if (locked?.status !== "waiting")
           throw new HttpError(409, "Run is not waiting for approval");
+        const pending =
+          await tx`SELECT node_id,input FROM workflow_approvals WHERE run_id=${run.id} AND decision='pending'`;
+        const task = pending.find(
+          (p) => !data.nodeId || p.node_id === data.nodeId,
+        );
+        if (!task || pending.length !== 1)
+          throw new HttpError(409, "Select the pending human task");
+        const program = workflowV2Program(
+          storedWorkflowGraph(run.graph_snapshot),
+        );
+        const node = program?.nodes.find((n) => n.id === task.node_id);
+        if (node?.kind === "human-task" && data.decision === "approved") {
+          if (
+            node.config.mode === "approve-reject" &&
+            data.editedInput !== undefined
+          )
+            throw new HttpError(400, "This human task does not allow editing");
+          if (
+            !schemaValidator(node.config.outputSchema)(
+              data.editedInput === undefined ? task.input : data.editedInput,
+            )
+          )
+            throw new HttpError(
+              400,
+              "Human task result does not match its output schema",
+            );
+        }
         const [approval] =
           await tx`UPDATE workflow_approvals SET decision=${data.decision},comment=${data.comment},edited_input=${data.editedInput === undefined ? null : tx.json(data.editedInput as never)},decided_by=${u.id},decided_at=now() WHERE run_id=${run.id} AND decision='pending' RETURNING id`;
         if (!approval)
           throw new HttpError(409, "Approval has already been decided");
-        await tx`UPDATE workflow_runs SET status=${data.decision === "approved" ? "queued" : "rejected"},finished_at=${data.decision === "rejected" ? new Date() : null} WHERE id=${run.id}`;
+        await tx`UPDATE workflow_runs SET status=${data.decision === "approved" ? "queued" : "rejected"},attempts=CASE WHEN ${data.decision} = 'approved' THEN 0 ELSE attempts END,finished_at=${data.decision === "rejected" ? new Date() : null} WHERE id=${run.id}`;
         await audit(
           tx,
           r,

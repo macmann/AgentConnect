@@ -232,7 +232,16 @@ export async function buildApp(
     },
   });
   await app.register(helmet);
-  await app.register(rateLimit, { max: 300, timeWindow: "1 minute", redis });
+  await app.register(rateLimit, {
+    max: 300,
+    timeWindow: "1 minute",
+    redis,
+    // Node runs test files in separate processes against one Redis instance.
+    // Keep each file's real rate limits while avoiding cross-file bucket collisions.
+    ...(config.NODE_ENV === "test"
+      ? { nameSpace: `agentconnect-test-${process.pid}-` }
+      : {}),
+  });
   await app.register(swagger, {
     openapi: {
       info: { title: "Agent Connex Foundation API", version: "0.1.0" },
