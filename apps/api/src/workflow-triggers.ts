@@ -1,3 +1,4 @@
+import { storedWorkflowGraph } from "./workflow-v2.js";
 import { randomUUID } from "node:crypto";
 import { CronExpressionParser } from "cron-parser";
 import { z } from "zod";
@@ -117,11 +118,15 @@ export async function registerWorkflowTriggers(app: FastifyInstance) {
       await sql`SELECT graph FROM workflow_versions WHERE id=${data.versionId} AND workflow_id=${w.id}`;
     if (!v)
       throw new HttpError(400, "Select a published version of this workflow");
-    const graph = workflowGraph.parse(v.graph),
+    const graph = storedWorkflowGraph(v.graph),
       input = workflowInputText(graph, data.input);
     await validateWorkflowDependencies(
       graph,
-      { workspaceId: w.workspace_id, organizationId: w.organization_id },
+      {
+        workspaceId: w.workspace_id,
+        organizationId: w.organization_id,
+        userId: u.id,
+      },
       true,
     );
     const next = nextWorkflowOccurrence(data.cron, data.timezone),
@@ -235,11 +240,15 @@ export async function registerWorkflowTriggers(app: FastifyInstance) {
           400,
           "Publish a workflow version before invoking it",
         );
-      const graph = workflowGraph.parse(v.graph),
+      const graph = storedWorkflowGraph(v.graph),
         input = workflowInputText(graph, data.input);
       await validateWorkflowDependencies(
         graph,
-        { workspaceId: key.workspace_id, organizationId: key.organization_id },
+        {
+          workspaceId: key.workspace_id,
+          organizationId: key.organization_id,
+          userId: key.created_by,
+        },
         true,
       );
 
@@ -359,11 +368,15 @@ export async function processWorkflowSchedules(now = new Date()) {
         const [v] =
           await tx`SELECT graph FROM workflow_versions WHERE id=${s.version_id} AND workflow_id=${s.workflow_id}`;
         if (!v) throw new HttpError(400, "Version unavailable");
-        const graph = workflowGraph.parse(v.graph),
+        const graph = storedWorkflowGraph(v.graph),
           input = workflowInputText(graph, s.input);
         await validateWorkflowDependencies(
           graph,
-          { workspaceId: s.workspace_id, organizationId: s.organization_id },
+          {
+            workspaceId: s.workspace_id,
+            organizationId: s.organization_id,
+            userId: s.created_by,
+          },
           true,
         );
         await tx`SELECT id FROM workspaces WHERE id=${s.workspace_id} FOR UPDATE`;

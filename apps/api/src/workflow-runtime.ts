@@ -1,4 +1,16 @@
 import {
+  storedWorkflowGraph,
+  workflowV2Program,
+  validateV2Resources,
+  executeWorkflowAction,
+} from "./workflow-v2.js";
+import {
+  resolveWorkflowExpression,
+  evaluateWorkflowCondition,
+  WorkflowValueError,
+  type WorkflowDataContext,
+} from "@agentconnect/schemas/workflow-values";
+import {
   resolveWorkflowMapping,
   workflowToolArguments,
   WorkflowMappingError,
@@ -28,7 +40,6 @@ import { ProviderError } from "@agentconnect/provider-sdk";
 import type { EmbeddingFactory } from "@agentconnect/provider-sdk/embeddings";
 import { KnowledgeError } from "@agentconnect/rag/parsers";
 import {
-  workflowGraph,
   analyzeWorkflow,
   type WorkflowGraph,
   type WorkflowNode,
@@ -53,6 +64,9 @@ export class WorkflowError extends Error {
 }
 export type WorkflowRun = {
   id: string;
+  workflow_id: string;
+  version_id?: string | null;
+  scheduled_for?: Date | string | null;
   workspace_id: string;
   organization_id: string;
   user_id: string | null;
@@ -99,6 +113,7 @@ export async function validateWorkflowDependencies(
 ) {
   const analysis = analyzeWorkflow(graph);
   if (analysis.errors.length) throw new WorkflowError("WORKFLOW_GRAPH_INVALID");
+  await validateV2Resources(graph, ctx);
   for (const n of graph.nodes) {
     if (n.type === "agent") await workflowNodeAgent(n, ctx, runtime);
     if (n.type === "tool") await validateToolIds([n.data.toolId!], ctx);
@@ -142,7 +157,7 @@ export async function compileWorkflow(
     embeddingFactory?: EmbeddingFactory;
   } = {},
 ) {
-  const graph = workflowGraph.parse(run.graph_snapshot),
+  const graph = storedWorkflowGraph(run.graph_snapshot),
     analysis = analyzeWorkflow(graph);
   if (analysis.errors.length) throw new WorkflowError("WORKFLOW_GRAPH_INVALID");
   const ctx: ToolContext = {
@@ -151,6 +166,42 @@ export async function compileWorkflow(
     userId: run.user_id ?? undefined,
     workflowRunId: run.id,
     publicAccess: !!run.customer_action_id,
+  };
+  const program = workflowV2Program(graph);
+  if (program) await validateV2Resources(graph, ctx);
+  const dataContext = (state: GraphState): WorkflowDataContext => {
+    let input: unknown = state.input;
+    if (program) {
+      try {
+        input = JSON.parse(state.input);
+      } catch {
+        /* Text input remains text. */
+      }
+    }
+    return {
+      trigger: graph.programV2?.trigger ?? {
+        type: run.schedule_id
+          ? "schedule"
+          : run.api_key_id
+            ? "api"
+            : run.customer_action_id
+              ? "customer"
+              : "manual",
+        body: input,
+      },
+      input,
+      steps: Object.fromEntries(
+        Object.entries(state.outputs).map(([id, output]) => [id, { output }]),
+      ),
+      variables: program?.variables ?? {},
+      workflow: {
+        id: run.workflow_id,
+        versionId: run.version_id ?? null,
+        runId: run.id,
+        schemaVersion: program ? 2 : 1,
+      },
+      error: { code: null, nodeId: null },
+    };
   };
   const builder = new StateGraph<
     typeof State.spec,
@@ -166,7 +217,8 @@ export async function compileWorkflow(
         {
           "workflow.run.id": run.id,
           "workflow.node.id": node.id,
-          "workflow.node.kind": node.type,
+          "workflow.node.kind":
+            program?.nodes.find((n) => n.id === node.id)?.kind ?? node.type,
         },
         async (span) => {
           signal.throwIfAborted();
@@ -196,9 +248,19 @@ export async function compileWorkflow(
             }
           }
           const started = performance.now();
-          await sql`INSERT INTO workflow_node_runs(run_id,node_id,workspace_id,organization_id,label,kind,status,input) VALUES (${run.id},${node.id},${run.workspace_id},${run.organization_id},${node.data.label},${node.type},'running',NULL) ON CONFLICT(run_id,node_id) DO UPDATE SET status='running',input=NULL,error_code=NULL,finished_at=NULL`;
+          await sql`INSERT INTO workflow_node_runs(run_id,node_id,workspace_id,organization_id,label,kind,status,input) VALUES (${run.id},${node.id},${run.workspace_id},${run.organization_id},${node.data.label},${program?.nodes.find((n) => n.id === node.id)?.kind ?? node.type},'running',NULL) ON CONFLICT(run_id,node_id) DO UPDATE SET status='running',input=NULL,error_code=NULL,finished_at=NULL`;
           try {
-            const input = nodeInput(node, graph, state);
+            const definitionNode = program?.nodes.find((n) => n.id === node.id);
+            const context = dataContext(state);
+            const expression =
+              definitionNode && "input" in definitionNode.config
+                ? definitionNode.config.input
+                : undefined;
+            const input = expression
+              ? resolveWorkflowExpression(expression, context)
+              : node.type === "input" && program
+                ? context.input
+                : nodeInput(node, graph, state);
             observationContent(span, "input", redact(input));
             if (Buffer.byteLength(JSON.stringify(input)) > 128000)
               throw new WorkflowError("WORKFLOW_INPUT_LIMIT");
@@ -225,12 +287,34 @@ export async function compileWorkflow(
               citations = result.citations;
             }
             if (node.type === "tool") {
-              const args = workflowToolArguments(node, input);
-              output = (
-                await workflowRetry(run.id, node, signal, () =>
-                  executeTool(node.data.toolId!, args, nodeCtx, signal),
-                )
-              ).result;
+              if (definitionNode?.kind === "action") {
+                const action = program!.actions.find(
+                  (a) => a.id === definitionNode.config.actionId,
+                )!;
+                const mapped = {
+                  ...action.mappedInputs,
+                  ...definitionNode.config.inputs,
+                };
+                const args = {
+                  ...action.staticInputs,
+                  ...Object.fromEntries(
+                    Object.entries(mapped).map(([key, value]) => [
+                      key,
+                      resolveWorkflowExpression(value, context),
+                    ]),
+                  ),
+                };
+                output = await workflowRetry(run.id, node, signal, () =>
+                  executeWorkflowAction(action, args, nodeCtx, signal),
+                );
+              } else {
+                const args = workflowToolArguments(node, input);
+                output = (
+                  await workflowRetry(run.id, node, signal, () =>
+                    executeTool(node.data.toolId!, args, nodeCtx, signal),
+                  )
+                ).result;
+              }
             }
             if (node.type === "approval") {
               await sql`INSERT INTO workflow_approvals(id,run_id,node_id,workspace_id,organization_id,prompt,input,decision) VALUES (${randomUUID()},${run.id},${node.id},${run.workspace_id},${run.organization_id},${node.data.approvalPrompt},${sql.json(redact(input) as never)},'pending') ON CONFLICT(run_id,node_id) DO NOTHING`;
@@ -250,11 +334,16 @@ export async function compileWorkflow(
             if (node.type === "router" || node.type === "condition") {
               const text = stringify(input);
               branch =
-                node.data.operator === "contains"
-                  ? text.includes(node.data.value)
-                  : node.data.operator === "equals"
-                    ? text === node.data.value
-                    : text.trim().length > 0;
+                definitionNode?.kind === "condition"
+                  ? evaluateWorkflowCondition(
+                      definitionNode.config.condition,
+                      context,
+                    )
+                  : node.data.operator === "contains"
+                    ? text.includes(node.data.value)
+                    : node.data.operator === "equals"
+                      ? text === node.data.value
+                      : text.trim().length > 0;
             }
             output = redact(output);
             if (Buffer.byteLength(JSON.stringify(output)) > 128000)
@@ -310,7 +399,8 @@ export async function compileWorkflow(
   return builder.compile({ checkpointer: await workflowSaver() });
 }
 function errorCode(e: unknown) {
-  return e instanceof WorkflowMappingError ||
+  return e instanceof WorkflowValueError ||
+    e instanceof WorkflowMappingError ||
     e instanceof WorkflowError ||
     e instanceof ToolError ||
     e instanceof ProviderError ||

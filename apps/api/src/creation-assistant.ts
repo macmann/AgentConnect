@@ -1,3 +1,4 @@
+import { agentChainDefinitionV2 } from "@agentconnect/schemas/workflow-v2";
 import type { FastifyInstance } from "fastify";
 import {
   creationSettings,
@@ -28,7 +29,7 @@ export async function creationCatalog(
     sql`SELECT id,name FROM model_configurations WHERE workspace_id=${workspaceId} AND organization_id=${organizationId} AND archived_at IS NULL ORDER BY name LIMIT 50`,
     sql`SELECT k.id,k.name FROM knowledge_bases k WHERE k.workspace_id=${workspaceId} AND k.organization_id=${organizationId} AND k.archived_at IS NULL AND EXISTS(SELECT 1 FROM knowledge_sources s WHERE s.knowledge_base_id=k.id AND s.status='ready') ORDER BY k.name LIMIT 50`,
     sql`SELECT id,name FROM tools WHERE workspace_id=${workspaceId} AND organization_id=${organizationId} AND enabled AND archived_at IS NULL ORDER BY name LIMIT 50`,
-    sql`SELECT v.id,v.name,v.version FROM agent_versions v JOIN agents a ON a.id=v.agent_id WHERE v.workspace_id=${workspaceId} AND v.organization_id=${organizationId} AND a.archived_at IS NULL ORDER BY v.name,v.version DESC LIMIT 100`,
+    sql`SELECT v.id,v.agent_id,v.name,v.version FROM agent_versions v JOIN agents a ON a.id=v.agent_id WHERE v.workspace_id=${workspaceId} AND v.organization_id=${organizationId} AND a.archived_at IS NULL ORDER BY v.name,v.version DESC LIMIT 100`,
     sql`SELECT v.id,v.skill_id,v.name,v.version FROM agent_skill_versions v JOIN agent_skills s ON s.id=v.skill_id WHERE v.workspace_id=${workspaceId} AND v.organization_id=${organizationId} AND s.enabled AND s.archived_at IS NULL ORDER BY v.name,v.version DESC LIMIT 100`,
   ]);
   return {
@@ -169,7 +170,19 @@ export async function normalizeCreationReply(
     return {
       message: reply.message,
       suggestions: reply.suggestions,
-      draft: { kind: "workflow" as const, ...draft },
+      draft: {
+        kind: "workflow" as const,
+        ...draft,
+        graph:
+          request.workflowSchemaVersion === 2
+            ? agentChainDefinitionV2(
+                draft.graph,
+                Object.fromEntries(
+                  catalog.agents.map((a) => [String(a.id), String(a.agent_id)]),
+                ),
+              )
+            : draft.graph,
+      },
       summary: {
         steps: w.steps.map((step) => ({
           label: step.label,

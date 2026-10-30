@@ -1,10 +1,8 @@
+import { storedWorkflowGraph } from "./workflow-v2.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { agentConfig, type AgentConfig } from "@agentconnect/schemas/agents";
-import {
-  workflowGraph,
-  normalizeWorkflowInput,
-} from "@agentconnect/schemas/workflows";
+import { normalizeWorkflowInput } from "@agentconnect/schemas/workflows";
 import { conversationAccess } from "./channels.js";
 import { actor, workspaceAccess, id, params } from "./app.js";
 import { sql } from "./db.js";
@@ -36,7 +34,7 @@ export async function validateCustomerActions(
       await sql`SELECT v.graph FROM workflow_versions v JOIN workflows w ON w.id=v.workflow_id WHERE v.id=${action.workflowVersionId} AND v.workspace_id=${wid} AND v.organization_id=${org} AND w.archived_at IS NULL`;
     if (!v) throw new HttpError(400, "Published workflow is unavailable");
     await validateWorkflowDependencies(
-      workflowGraph.parse(v.graph),
+      storedWorkflowGraph(v.graph),
       {
         workspaceId: wid,
         organizationId: org,
@@ -66,7 +64,7 @@ export async function registerCustomerWorkflows(app: FastifyInstance) {
       if (!run) throw new HttpError(404, "Workflow unavailable");
       const steps =
         await sql`SELECT node_id,label,status,attempts,retry_at FROM workflow_node_runs WHERE run_id=${run.id} ORDER BY started_at,node_id`;
-      const graph = workflowGraph.parse(run.graph_snapshot),
+      const graph = storedWorkflowGraph(run.graph_snapshot),
         output = graph.nodes.find((n) => n.type === "output")!;
       const name =
         agentConfig
@@ -154,7 +152,7 @@ export async function registerCustomerWorkflows(app: FastifyInstance) {
         );
         const [v] =
           await sql`SELECT * FROM workflow_versions WHERE id=${action.workflowVersionId} AND workspace_id=${c.workspace_id} AND organization_id=${c.organization_id}`;
-        const graph = workflowGraph.parse(v!.graph);
+        const graph = storedWorkflowGraph(v!.graph);
         let input: string;
         try {
           input = graph.inputFields.length
@@ -203,7 +201,7 @@ export async function registerCustomerWorkflows(app: FastifyInstance) {
               429,
               "Too many active workflow runs; retry later",
             );
-          await tx`INSERT INTO workflow_runs(id,workflow_id,version_id,workspace_id,organization_id,user_id,graph_snapshot,input,status,conversation_id,customer_action_id) VALUES(${data.requestId},${v!.workflow_id},${v!.id},${c.workspace_id},${c.organization_id},NULL,${tx.json(v!.graph)},${input},'queued',${c.id},${action.id})`;
+          await tx`INSERT INTO workflow_runs(id,workflow_id,version_id,workspace_id,organization_id,user_id,graph_snapshot,input,status,conversation_id,customer_action_id) VALUES(${data.requestId},${v!.workflow_id},${v!.id},${c.workspace_id},${c.organization_id},NULL,${tx.json(graph)},${input},'queued',${c.id},${action.id})`;
           return "queued";
         });
         return reply.code(201).send({ id: data.requestId, status: runStatus });

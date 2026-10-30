@@ -2,6 +2,12 @@
 
 Agent Connex is a greenfield, provider-neutral enterprise platform. The supplied specification is retained verbatim in product-spec.md. Implementation proceeds by vertical slices; UI alone does not establish feature completion.
 
+## Product modules
+
+AgentConnect remains a multi-module product: Agents, Knowledge/RAG, Tools/MCP, Workflows, and Runs/Operations share authentication, organization/workspace authorization, administration, encrypted Secrets and provider/connection registries. Workflows are an orchestration sub-product, not a replacement for these modules. Published assets remain owned and configured in their existing registries.
+
+[Workflow Definition V2](workflows-v2.md) separates semantic execution and resource references from canvas layout. Its compiler targets the existing LangGraph/PostgreSQL runtime, with V1 preserved and no destructive published-workflow migration.
+
 ## Foundation boundaries
 
 - `apps/web`: Next.js App Router shell, React, Tailwind, Radix dialogs, React Hook Form, Zod, TanStack Query. Server layout and page wrap interactive workspace views.
@@ -30,7 +36,7 @@ flowchart TD
   Runtime --> OTLP
 ```
 
-`packages/provider-sdk` owns provider protocols and approved HTTP transport. `packages/agent-sdk` owns provider-neutral single-agent execution and prompt rendering. `packages/rag` owns parsing, chunking and the retrieval/citation boundary. `apps/worker` delivers the durable SMTP outbox, ingests knowledge sources and purges deleted source objects. Phase 3 tool policies, MCP client and agent tool orchestration live in tested API modules (`tools.ts`, `tool-runtime.ts`, `web-search.ts`). LangGraph and AI workflow workers in the diagram remain future boundaries.
+`packages/provider-sdk` owns provider protocols and approved HTTP transport. `packages/agent-sdk` owns provider-neutral single-agent execution and prompt rendering. `packages/rag` owns parsing, chunking and the retrieval/citation boundary. `apps/worker` delivers the durable SMTP outbox, ingests knowledge sources and purges deleted source objects. Phase 3 tool policies, MCP client and agent tool orchestration live in tested API modules (`tools.ts`, `tool-runtime.ts`, `web-search.ts`). Workflow execution uses the existing LangGraph/PostgreSQL checkpoint runner and workflow worker loop. Temporal remains separate infrastructure; Workflow V2 does not replace the durable runner.
 
 Future apps: agent-runtime, ingestion, widget. Future extractions: auth, ui, tool-sdk, mcp, observability, security, shared, config. Extract modules when there is tested behavior to share; do not create empty service placeholders.
 

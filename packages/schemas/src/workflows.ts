@@ -80,6 +80,14 @@ export const workflowInputField = z.object({
 export const workflowGraph = z.object({
   inputFields: z.array(workflowInputField).max(30).default([]),
   schemaVersion: z.literal(1).default(1),
+  // Internal compiler artifact. Public definition inputs omit this field.
+  programV2: z
+    .object({
+      compilerVersion: z.literal(1),
+      execution: z.record(z.string(), z.json()),
+      trigger: z.record(z.string(), z.json()).optional(),
+    })
+    .optional(),
   nodes: z.array(workflowNode).min(1).max(40),
   edges: z.array(workflowEdge).max(80),
 });
@@ -339,6 +347,17 @@ export function normalizeWorkflowInput(
 ): string {
   const fields = graph.inputFields ?? [];
   if (!fields.length) {
+    if (
+      graph.programV2 &&
+      input &&
+      typeof input === "object" &&
+      !Array.isArray(input)
+    ) {
+      const serialized = JSON.stringify(input);
+      if (serialized.length > 12000)
+        throw new Error("Workflow input exceeds 12000 characters");
+      return serialized;
+    }
     if (typeof input !== "string" || !input.trim() || input.length > 12000)
       throw new Error(
         "Provide text input (1–12000 characters) for this workflow",
