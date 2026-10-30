@@ -43,12 +43,12 @@ For example:
 > the available information cannot answer the question.
 
 The assistant sees a bounded catalog of workspace model names, ready knowledge
-bases, enabled read-only tools and published agent versions. It may propose
+bases, enabled read-only tools, skill versions and published agent versions. It may propose
 existing resources by ID; the server checks every reference against that catalog.
 It cannot register a provider, upload documents or create a tool on your behalf.
 Unavailable resources must be set up separately.
 
-Review the proposed name, description, runtime model, attachments and prompt.
+Review the proposed name, description, runtime model, attachments, skills and prompt.
 You can edit the name, description and role in the review panel, or ask for changes
 in the conversation. **Use draft in Configure** opens the normal editor with
 unsaved settings. Review other sections, save, test in Playground and publish

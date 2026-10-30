@@ -139,6 +139,7 @@ export function controlledProvider(
             controls.dailyTokenQuota ||
             c.rag.queryRewrite ||
             c.rag.rerank ||
+            c.skills.versionIds.length ||
             c.modelRouting.enabled ||
             c.modelRouting.fallbackModelIds.length) &&
           measured > limit
@@ -285,7 +286,8 @@ export async function reserveTokens(
     (c.rag.rerank && c.rag.knowledgeBaseIds.length ? 1 : 0) +
     (controls.summarize ? 1 : 0) +
     (c.rag.usageMode === "automatic" && c.rag.knowledgeBaseIds.length ? 1 : 0) +
-    (c.tools.usageMode !== "disabled" && c.tools.toolIds.length ? 1 : 0);
+    (c.tools.usageMode !== "disabled" && c.tools.toolIds.length ? 1 : 0) +
+    (c.skills.usageMode === "automatic" && c.skills.versionIds.length ? 1 : 0);
   const attempts =
     1 +
     (c.modelRouting.enabled ? 1 : 0) +

@@ -101,6 +101,10 @@ Test greetings and irrelevant questions if you configured automatic knowledge us
 
 ![Grounded customer answer with citations](screenshots/rag-agent-chat.png)
 
+## Attach agent skills
+
+Open **Skills** to upload `SKILL.md` or a single-skill ZIP, then review instructions and text references. Under **Agent → Configure → Skills**, attach a version and choose Always, Automatic or Disabled loading. Save and start a new Playground chat. Public chat requires explicit public access on the skill. ZIP scripts are not executed. New uploads do not upgrade attached versions automatically. See [agent skills](agent-skills.md) for examples, limits, versioning and troubleshooting.
+
 ## Attach tools deliberately
 
 Open **Configure → Tools** and select approved, enabled tools from your workspace. If there are no tools, follow the empty-state link to Tools and register one with an administrator. Disabled tools explain their workspace state. Workspace administrators can use **Enable tool** directly in the attachment list, then select it and save the agent. Enabling applies across the workspace and does not automatically attach the tool. Builders must ask an administrator to enable it.

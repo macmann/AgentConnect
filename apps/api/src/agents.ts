@@ -1,3 +1,4 @@
+import { resolveAgentSkills, validateSkillSelection } from "./agent-skills.js";
 import {
   startObservation,
   observationContent,
@@ -391,6 +392,8 @@ async function streamChat(
       let support: unknown;
       const stages: RetrievalStage[] = [];
       let retrievalDetails: unknown;
+      let skillDetails:
+        Awaited<ReturnType<typeof resolveAgentSkills>>["details"] | null = null;
       const write = (event: string, data: unknown) => {
         if (integration) {
           if (event === "error") responseError = data;
@@ -450,6 +453,20 @@ async function streamChat(
           outputTokens = 0;
           write("token", { text: output });
         } else {
+          const skills = await resolveAgentSkills(
+            c,
+            model,
+            provider,
+            messages,
+            {
+              workspaceId: conversation.workspace_id,
+              organizationId: conversation.organization_id,
+              publicAccess: !!conversation.deployment_id,
+            },
+            controller.signal,
+          );
+          continuation.grounding += skills.prompt;
+          skillDetails = skills.details;
           if (
             c.contextControls.enabled &&
             c.contextControls.summarize &&
@@ -859,7 +876,9 @@ async function streamChat(
               c.modelRouting.fallbackModelIds.length ||
               c.rag.queryRewrite ||
               config.QUERY_REWRITE_ENABLED ||
-              c.rag.rerank
+              c.rag.rerank ||
+              (c.skills.usageMode === "automatic" &&
+                c.skills.versionIds.length > 0)
             ) {
               inputTokens = metered.usage().inputTokens;
               outputTokens = metered.usage().outputTokens;
@@ -924,6 +943,7 @@ async function streamChat(
                 modelRouting: metered.usage().routing,
                 modelUsage: metered.usage().modelUsage,
                 retrievalEnhancements: retrievalDiagnostics,
+                ...(c.skills.versionIds.length ? { skills: skillDetails } : {}),
               },
             )}::jsonb WHERE id=${runId}`;
           });
@@ -1016,6 +1036,7 @@ async function streamChat(
           ...(integration.includeDetails
             ? {
                 tools,
+                ...(c.skills.versionIds.length ? { skills: skillDetails } : {}),
                 retrieval: {
                   diagnostics: retrievalDiagnostics,
                   stages,
@@ -1310,6 +1331,10 @@ export async function registerAgentRoutes(
         "agent:create",
       );
       const data = agentInput.parse(r.body);
+      await validateSkillSelection(data.config.skills, {
+        workspaceId: w.id,
+        organizationId: w.organization_id,
+      });
       await validateCustomerActions(data.config, w.id, w.organization_id);
       await validateKnowledgeSelection(
         data.config.rag,
@@ -1347,6 +1372,10 @@ export async function registerAgentRoutes(
   app.put("/agents/:agentId", schema(agentUpdate), async (r) => {
     const { u, a, w } = await ownedAgent(r, "agent:update");
     const data = agentUpdate.parse(r.body);
+    await validateSkillSelection(data.config.skills, {
+      workspaceId: w.id,
+      organizationId: w.organization_id,
+    });
     await validateCustomerActions(data.config, w.id, w.organization_id);
     await validateKnowledgeSelection(data.config.rag, w.id, w.organization_id);
     await validateToolIds(data.config.tools.toolIds, {
@@ -1389,6 +1418,10 @@ export async function registerAgentRoutes(
         if (!locked || locked.revision !== data.revision)
           throw new HttpError(409, "Draft changed; reload before publishing");
         const c = agentConfig.parse(locked.draft_config);
+        await validateSkillSelection(c.skills, {
+          workspaceId: w.id,
+          organizationId: w.organization_id,
+        });
         await validateCustomerActions(c, w.id, w.organization_id);
         await validateKnowledgeSelection(
           c.rag,
@@ -1475,6 +1508,11 @@ export async function registerAgentRoutes(
         true,
         true,
       );
+      await validateSkillSelection(agentConfig.parse(v.config).skills, {
+        workspaceId: w.id,
+        organizationId: w.organization_id,
+        publicAccess: true,
+      });
       await validateToolIds(agentConfig.parse(v.config).tools.toolIds, {
         workspaceId: w.id,
         organizationId: w.organization_id,

@@ -128,3 +128,5 @@ Tests in `apps/api/test/conversational-rag.test.ts` cover contextual entity/week
 follow-ups, malformed/failed rewriting, bounded history and trace content,
 Weeks 9–16 context construction, narrow Week 14 queries, access/revision/release
 isolation, unchanged thresholds, budgets and overlap deduplication.
+
+When [agent skills](agent-skills.md) are attached, their bounded procedural context is resolved before retrieval. The remaining knowledge-context budget accounts for those instructions and references. Skills do not become citation passages or approved factual evidence; RAG authorization, score thresholds and source selection remain unchanged.

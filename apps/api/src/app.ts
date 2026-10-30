@@ -1,3 +1,4 @@
+import { registerAgentSkills } from "./agent-skills.js";
 import { registerCreationAssistant } from "./creation-assistant.js";
 import { registerPlatformApi } from "./platform-api.js";
 import { platformRequest, platformKey } from "./platform-auth.js";
@@ -803,6 +804,7 @@ export async function buildApp(
     options.providerFactory,
     options.embeddingFactory,
   );
+  await registerAgentSkills(app);
   await registerCreationAssistant(app, options.providerFactory);
   await registerPlatformApi(
     app,

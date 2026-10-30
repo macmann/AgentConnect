@@ -194,3 +194,5 @@ Metadata management and suggestion-review endpoints require an authenticated wor
 ## Workflow invocation
 
 Workflow-scoped keys authorize asynchronous published workflow runs through `POST /api/v1/workflows/:workflowId/runs`. Supply an `Idempotency-Key` header and `{ versionId?, input }`; poll `GET /api/v1/workflows/:workflowId/runs/:runId` with the same key. Typed inputs accept objects; legacy workflows accept text. Details require an explicit key grant. `GET /api/v1/resources` describes published workflow input definitions. Workflow invocation currently uses REST; existing agent/knowledge MCP tools are unchanged. See [workflow API and schedules](workflow-triggers.md).
+
+For agents with [skills](agent-skills.md), execution details include `skills` metadata: usage mode, selected skill/version IDs, loaded reference paths, context-token counts and skip/fallback reasons. Instruction/reference bodies are not included in this metadata. The same pinned skills run for REST and MCP agent execution; the skill-library upload and management endpoints require normal workspace session authorization.

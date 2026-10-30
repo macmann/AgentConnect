@@ -256,3 +256,13 @@ See the [metadata tagging guide](metadata-tagging.md) for upload, bulk editing, 
 - Validated workspace catalogs, bounded provider calls, audit events and Langfuse observations. No automatic publication or creation of specialist agents inside workflows.
 
 See [the creation guide](ai-creation.md).
+
+## Agent skills
+
+- Workspace SKILL.md / ZIP imports with validated frontmatter and bounded UTF-8 references; no script execution.
+- Immutable versions, up to five pinned attachments, Always/Automatic/Disabled loading and tokenizer context budgets.
+- Public-access approval, live disable/archive, authoring validation and safe runtime skips.
+- Shared behavior in agent chat, workflow agent nodes and agent API/MCP execution, plus Langfuse and private debug metadata.
+- AI-assisted creation can select available skill versions. Migration 0044 adds the skill registry.
+
+See [agent skills](agent-skills.md).

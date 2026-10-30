@@ -6722,3 +6722,130 @@ input[type="range"] {
     margin-left: auto;
   }
 }
+
+.skills-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
+  gap: 24px;
+  margin-top: 24px;
+}
+.skills-list,
+.skill-detail,
+.agent-skill-picker {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  align-content: start;
+}
+.skill-card {
+  display: grid;
+  gap: 10px;
+  text-align: left;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.skill-card[aria-pressed="true"] {
+  border-color: var(--accent-text);
+  background: var(--surface-subtle);
+}
+.skill-card span,
+.skill-card small {
+  color: var(--muted);
+  line-height: 1.6;
+}
+.skill-detail {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px;
+}
+.skill-detail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.skill-detail-heading h3,
+.skill-detail-heading h4 {
+  margin: 0;
+}
+.skill-detail label:not(.checkbox-label),
+.agent-skill-picker label:not(.checkbox-label) {
+  display: grid;
+  gap: 8px;
+}
+.skill-detail select,
+.agent-skill-picker select,
+.agent-skill-picker input[type="number"] {
+  padding: 10px 12px;
+  width: 100%;
+  max-width: 440px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--surface);
+}
+.agent-skill-picker textarea {
+  width: 100%;
+  padding: 12px;
+  min-height: 90px;
+}
+.skill-access-controls {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.skill-instructions {
+  max-height: 480px;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.skill-detail details {
+  padding: 12px 0;
+}
+.skill-detail details > details {
+  margin-top: 10px;
+}
+.skill-detail pre {
+  max-height: 360px;
+  overflow: auto;
+  padding: 14px;
+  background: var(--surface-subtle);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.skill-attachment {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+}
+.skill-attachment p {
+  margin: 0;
+}
+.agent-skill-picker > details {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.agent-skill-picker > details label {
+  margin-top: 16px;
+}
+.skills-studio .notice p {
+  margin: 0 0 8px;
+}
+@media (max-width: 900px) {
+  .skills-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .skill-detail {
+    padding: 16px;
+  }
+}
