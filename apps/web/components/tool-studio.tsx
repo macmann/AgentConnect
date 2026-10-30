@@ -1,6 +1,6 @@
 "use client";
 import { SettingsHint, SetupGuide } from "./settings-help";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   WorkspaceSections,
@@ -261,6 +261,18 @@ export function ToolStudio({
       setAck(false);
     });
   }
+  const openedRoute = useRef("");
+  useEffect(() => {
+    const toolId = new URLSearchParams(window.location.hash.slice(1)).get(
+      "tool",
+    );
+    if (!manage || !toolId || !tools.data || openedRoute.current === toolId)
+      return;
+    openedRoute.current = toolId;
+    const tool = tools.data.find((t) => t.id === toolId);
+    if (tool) void editTool(tool);
+    else setError("This tool is no longer available in this workspace.");
+  }, [tools.data, manage]);
   if (!read)
     return (
       <section className="panel">

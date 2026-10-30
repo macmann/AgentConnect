@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentConfig, type AgentConfig } from "@agentconnect/schemas/agents";
 import { requestJson } from "./agent-client";
-import { CreationAssistant } from "./creation-assistant";
+import { WorkflowResourcePicker } from "./workflow-resource-picker";
 import { Button } from "./button";
 
 export function WorkflowAgentEditor({
@@ -11,16 +11,13 @@ export function WorkflowAgentEditor({
   name,
   config,
   onChange,
-  onSettings,
 }: {
   workspaceId: string;
   name: string;
   config?: AgentConfig;
   onChange: (config: AgentConfig) => void;
-  onSettings: () => void;
 }) {
   const cache = useQueryClient();
-  const [ai, setAi] = useState(false);
   const [status, setStatus] = useState("");
   const [saving, setSaving] = useState(false);
   const [shared, setShared] = useState(false);
@@ -45,32 +42,15 @@ export function WorkflowAgentEditor({
         `/workspaces/${workspaceId}/tools`,
       ),
   });
-  if (ai)
-    return (
-      <CreationAssistant
-        workspaceId={workspaceId}
-        kind="agent"
-        onSettings={onSettings}
-        onManual={() => setAi(false)}
-        onCancel={() => setAi(false)}
-        onAgent={(p) => {
-          onChange(p.config);
-          setAi(false);
-        }}
-      />
-    );
   return (
     <section
       className="workflow-agent-editor"
       aria-label="Workflow agent setup"
     >
       <p>
-        Create an agent owned by this workflow. Configure it yourself or
-        describe its task to AI.
+        This agent belongs to this workflow. Choose its model and task, then
+        attach knowledge and tools.
       </p>
-      <Button className="secondary" onClick={() => setAi(true)}>
-        AI mode · describe the task
-      </Button>
       {!config ? (
         <label>
           Runtime model
@@ -165,59 +145,42 @@ export function WorkflowAgentEditor({
               }
             />
           </label>
-          <details>
-            <summary>
-              Knowledge · {config.rag.knowledgeBaseIds.length} attached
-            </summary>
-            {knowledge.data?.map((k) => (
-              <label key={k.id}>
-                <input
-                  type="checkbox"
-                  checked={config.rag.knowledgeBaseIds.includes(k.id)}
-                  onChange={(e) =>
-                    onChange({
-                      ...config,
-                      rag: {
-                        ...config.rag,
-                        knowledgeBaseIds: e.target.checked
-                          ? [...config.rag.knowledgeBaseIds, k.id]
-                          : config.rag.knowledgeBaseIds.filter(
-                              (id) => id !== k.id,
-                            ),
-                      },
-                    })
-                  }
-                />
-                {k.name}
-              </label>
-            ))}
-          </details>
-          <details>
-            <summary>Tools · {config.tools.toolIds.length} attached</summary>
-            {tools.data
-              ?.filter((t) => t.enabled)
-              .map((t) => (
-                <label key={t.id}>
-                  <input
-                    type="checkbox"
-                    checked={config.tools.toolIds.includes(t.id)}
-                    onChange={(e) =>
-                      onChange({
-                        ...config,
-                        tools: {
-                          ...config.tools,
-                          toolIds: e.target.checked
-                            ? [...config.tools.toolIds, t.id]
-                            : config.tools.toolIds.filter((id) => id !== t.id),
-                        },
-                      })
-                    }
-                  />
-                  {t.name}
-                </label>
-              ))}
-          </details>
-          <label>
+          <WorkflowResourcePicker
+            workspaceId={workspaceId}
+            kind="knowledge"
+            items={knowledge.data ?? []}
+            selected={config.rag.knowledgeBaseIds}
+            loading={knowledge.isPending}
+            error={knowledge.error}
+            onRetry={() => void knowledge.refetch()}
+            onChange={(knowledgeBaseIds) =>
+              onChange({
+                ...config,
+                rag: {
+                  ...config.rag,
+                  knowledgeBaseIds,
+                  releasePins: Object.fromEntries(
+                    Object.entries(config.rag.releasePins ?? {}).filter(
+                      ([id]) => knowledgeBaseIds.includes(id),
+                    ),
+                  ),
+                },
+              })
+            }
+          />
+          <WorkflowResourcePicker
+            workspaceId={workspaceId}
+            kind="tools"
+            items={tools.data ?? []}
+            selected={config.tools.toolIds}
+            loading={tools.isPending}
+            error={tools.error}
+            onRetry={() => void tools.refetch()}
+            onChange={(toolIds) =>
+              onChange({ ...config, tools: { ...config.tools, toolIds } })
+            }
+          />
+          <label className="workflow-agent-share">
             <input
               type="checkbox"
               checked={shared}

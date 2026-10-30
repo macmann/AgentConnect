@@ -240,6 +240,7 @@ export function WorkflowStudio({
   const skipFit = useRef(false);
   const canvas = useRef<ReactFlowInstance<CanvasNode, Edge> | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
+  const [selectedEdges, setSelectedEdges] = useState<string[]>([]);
   const [canvasNodes, setCanvasNodes, onCanvasNodesChange] =
     useNodesState<CanvasNode>([]);
   const versions = useQuery({
@@ -428,13 +429,15 @@ export function WorkflowStudio({
         ...draft.graph.edges,
         ...draft.graph.edges
           .filter((e) => mapping.has(e.source) && mapping.has(e.target))
-          .map((e) =>
-            edge(
+          .map((e) => ({
+            ...edge(
               mapping.get(e.source)!,
               mapping.get(e.target)!,
               e.sourceHandle ?? undefined,
             ),
-          ),
+            sourcePort: e.sourcePort,
+            targetPort: e.targetPort,
+          })),
       ],
     });
     setSelection([...mapping.values()]);
@@ -634,7 +637,11 @@ export function WorkflowStudio({
       return;
     }
     const id = "n_" + crypto.randomUUID().slice(0, 8),
-      anchor = current ?? draft.graph.nodes.find((n) => n.type === "input")!,
+      anchor =
+        current ??
+        draft.graph.nodes.find((n) => n.type === "input") ??
+        draft.graph.nodes[0] ??
+        makeNode("placeholder", "input", 40, 80),
       out = draft.graph.edges.filter((e) => e.source === anchor.id);
     const inserted = makeNode(
       id,
@@ -694,6 +701,7 @@ export function WorkflowStudio({
     }
     change(layout({ ...draft.graph, nodes, edges }));
     setSelected(id);
+    setSelection([id]);
   }
   function template() {
     if (!agents.data?.length) {
@@ -726,27 +734,57 @@ export function WorkflowStudio({
     change(graph);
     setSelected("research");
   }
-  function connections(connection: Connection) {
+  function connectionData(connection: Connection) {
+    return {
+      source: connection.source,
+      target: connection.target,
+      sourceHandle: ["true", "false"].includes(connection.sourceHandle ?? "")
+        ? (connection.sourceHandle as "true" | "false")
+        : undefined,
+      sourcePort: connection.sourceHandle?.startsWith("out-")
+        ? (connection.sourceHandle as "out-top" | "out-bottom" | "out-left")
+        : undefined,
+      targetPort: connection.targetHandle?.startsWith("in-")
+        ? (connection.targetHandle as "in-top" | "in-bottom" | "in-right")
+        : undefined,
+    };
+  }
+  function connections(connection: Connection, replaceId?: string) {
+    if (!canvasEditable || !draft || connection.source === connection.target)
+      return;
+    const remaining = draft.graph.edges.filter((e) => e.id !== replaceId);
     if (
-      !build ||
-      stage !== "build" ||
-      selectedRun ||
-      !draft ||
-      !connection.source ||
-      !connection.target
+      remaining.some(
+        (e) => e.source === connection.source && e.target === connection.target,
+      )
     )
       return;
     change({
       ...draft.graph,
       edges: [
-        ...draft.graph.edges,
-        edge(
-          connection.source,
-          connection.target,
-          connection.sourceHandle as "true" | "false" | undefined,
-        ),
+        ...remaining,
+        {
+          id: replaceId ?? "e_" + crypto.randomUUID(),
+          ...connectionData(connection),
+        },
       ],
     });
+  }
+  function deleteElements(nodeIds: string[], edgeIds: string[]) {
+    if (!canvasEditable || !draft) return;
+    change({
+      ...draft.graph,
+      nodes: draft.graph.nodes.filter((n) => !nodeIds.includes(n.id)),
+      edges: draft.graph.edges.filter(
+        (e) =>
+          !edgeIds.includes(e.id) &&
+          !nodeIds.includes(e.source) &&
+          !nodeIds.includes(e.target),
+      ),
+    });
+    setSelection([]);
+    setSelectedEdges([]);
+    if (nodeIds.includes(selected)) setSelected("");
   }
   function nodeChanges(changes: NodeChange<CanvasNode>[]) {
     if (!draft) return;
@@ -793,17 +831,20 @@ export function WorkflowStudio({
   }
   function edgeChanges(changes: EdgeChange<Edge>[]) {
     if (!draft) return;
-    const edges = applyEdgeChanges(changes, draft.graph.edges);
-    if (changes.some((c) => c.type !== "select"))
-      change({
-        ...draft.graph,
-        edges: edges.map((e) => ({
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          sourceHandle: e.sourceHandle as "true" | "false" | null | undefined,
-        })),
-      });
+    const edges = applyEdgeChanges(
+      changes,
+      draft.graph.edges.map((e) => ({
+        ...e,
+        selected: selectedEdges.includes(e.id),
+      })),
+    );
+    setSelectedEdges(edges.filter((e) => e.selected).map((e) => e.id));
+    if (changes.some((c) => c.type === "select" && c.selected)) {
+      setSelected("");
+      setSelection([]);
+    }
+    const removed = changes.filter((c) => c.type === "remove").map((c) => c.id);
+    if (removed.length) deleteElements([], removed);
   }
   const testBlockers = draft
     ? [
@@ -1248,12 +1289,16 @@ export function WorkflowStudio({
                       ],
                     });
                     setSelected(id);
+                    setSelection([id]);
                   }}
                 >
                   <ReactFlow<CanvasNode, Edge>
                     nodes={canvasNodes}
                     edges={(displayGraph?.edges ?? []).map((e) => ({
                       ...e,
+                      sourceHandle: e.sourcePort ?? e.sourceHandle ?? undefined,
+                      targetHandle: e.targetPort,
+                      selected: selectedEdges.includes(e.id),
                       label: e.sourceHandle ?? undefined,
                       animated:
                         (run.data?.status === "running" &&
@@ -1271,7 +1316,27 @@ export function WorkflowStudio({
                       if (canvasEditable) nodeChanges(changes);
                     }}
                     onEdgesChange={canvasEditable ? edgeChanges : undefined}
-                    onConnect={connections}
+                    onConnect={(connection) => connections(connection)}
+                    onReconnect={(oldEdge, connection) =>
+                      connections(connection, oldEdge.id)
+                    }
+                    onBeforeDelete={async ({ nodes, edges }) => {
+                      deleteElements(
+                        nodes.map((n) => n.id),
+                        edges.map((e) => e.id),
+                      );
+                      return false;
+                    }}
+                    onEdgeClick={(_, e) => {
+                      setSelectedEdges([e.id]);
+                      setSelection([]);
+                      setSelected("");
+                    }}
+                    onPaneClick={() => {
+                      setSelectedEdges([]);
+                      setSelection([]);
+                      setSelected("");
+                    }}
                     onInit={(instance) => {
                       canvas.current = instance;
                     }}
@@ -1282,6 +1347,7 @@ export function WorkflowStudio({
                       }
                     }}
                     onNodeClick={(event, n) => {
+                      setSelectedEdges([]);
                       if (!event.shiftKey) setSelection([n.id]);
                       setSelected(n.id);
                       setPanelMinimized(false);
@@ -1295,7 +1361,9 @@ export function WorkflowStudio({
                     }}
                     nodesDraggable={canvasEditable}
                     nodesConnectable={canvasEditable}
-                    edgesReconnectable={false}
+                    edgesReconnectable={canvasEditable}
+                    connectionRadius={28}
+                    reconnectRadius={14}
                     deleteKeyCode={
                       canvasEditable ? ["Backspace", "Delete"] : null
                     }
@@ -1326,6 +1394,21 @@ export function WorkflowStudio({
                           canUndo={!!undo.length}
                           canRedo={!!redo.length}
                           canDuplicate={!!current}
+                          canDelete={
+                            !!selection.length ||
+                            !!selectedEdges.length ||
+                            !!current
+                          }
+                          onDelete={() =>
+                            deleteElements(
+                              selection.length
+                                ? selection
+                                : current
+                                  ? [current.id]
+                                  : [],
+                              selectedEdges,
+                            )
+                          }
                         />
                       )}
 
@@ -1841,10 +1924,6 @@ export function WorkflowStudio({
                           <span>Node details</span>
                           <HelpTooltip>Node ID: {current.id}</HelpTooltip>
                         </div>
-                        <WorkflowNodeDepth
-                          node={current}
-                          onChange={updateNode}
-                        />
                         {current.type === "input" && (
                           <WorkflowInputEditor
                             fields={draft.graph.inputFields}
@@ -1896,7 +1975,6 @@ export function WorkflowStudio({
                                 workspaceId={workspaceId}
                                 name={current.data.label}
                                 config={current.data.inlineAgent}
-                                onSettings={onSettings}
                                 onChange={(inlineAgent) =>
                                   updateNode({
                                     inlineAgent,
@@ -2120,23 +2198,14 @@ export function WorkflowStudio({
                             onChange={updateNode}
                           />
                         )}
+                        <WorkflowNodeDepth
+                          node={current}
+                          onChange={updateNode}
+                        />
                         {build && (
                           <Button
                             className="danger"
-                            onClick={() => {
-                              change({
-                                ...draft.graph,
-                                nodes: draft.graph.nodes.filter(
-                                  (n) => n.id !== current.id,
-                                ),
-                                edges: draft.graph.edges.filter(
-                                  (e) =>
-                                    e.source !== current.id &&
-                                    e.target !== current.id,
-                                ),
-                              });
-                              setSelected("");
-                            }}
+                            onClick={() => deleteElements([current.id], [])}
                           >
                             Delete node
                           </Button>
@@ -2192,11 +2261,12 @@ export function WorkflowStudio({
               <div className="setting-label-row">
                 Canvas shortcuts
                 <HelpTooltip label="Workflow canvas help">
-                  Drag nodes to arrange them; connect handles to change data
-                  flow. Shift selects multiple nodes; Delete removes selection;
-                  Ctrl/Cmd+C/V copies a selected node; Ctrl/Cmd+Z/Shift+Z
-                  undo/redo. Parallel branches join at a Merge. One review gate
-                  is supported per workflow.
+                  Drag nodes to arrange them; connect handles on any supported
+                  side to change data flow. Click a connection to select it;
+                  drag either end to reconnect. Shift selects multiple nodes;
+                  Delete removes selection; Ctrl/Cmd+C/V copies a selected node;
+                  Ctrl/Cmd+Z/Shift+Z undo/redo. Parallel branches join at a
+                  Merge. One review gate is supported per workflow.
                 </HelpTooltip>
               </div>
             </div>

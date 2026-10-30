@@ -25,7 +25,7 @@ import {
   type ProcessingSettings,
 } from "./advanced-knowledge-settings";
 import { KnowledgeReleases } from "./knowledge-releases";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
@@ -202,6 +202,15 @@ export function KnowledgeStudio({
       }[]
     | null
   >(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const baseId = params.get("knowledgeBase");
+    if (baseId) {
+      setSelected(baseId);
+      setTab("settings");
+    } else if (params.get("createResource") === "knowledge" && canManage)
+      setForm("base");
+  }, [workspaceId, canManage]);
   const bases = useQuery({
     queryKey: ["knowledge", workspaceId],
     queryFn: () =>
