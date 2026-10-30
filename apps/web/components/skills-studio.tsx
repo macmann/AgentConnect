@@ -301,9 +301,12 @@ export function SkillsStudio({
                 ))}
               </div>
             )}
-            <div className="skill-instructions">
-              <ChatMarkdown content={current.instructions} />
-            </div>
+            <details className="settings-guide">
+              <summary>View skill instructions</summary>
+              <div className="skill-instructions">
+                <ChatMarkdown content={current.instructions} />
+              </div>
+            </details>
             {!!current.reference_files.length && (
               <details>
                 <summary>

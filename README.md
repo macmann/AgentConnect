@@ -309,3 +309,7 @@ Set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` in both
 Agents support automatic response language matching or a fixed language under **Configure → Overview → Locale**. New studio agents match the user by default; existing agents retain their fixed setting. See the [response-language guide](docs/user-guide.md#response-language).
 
 Workflows support typed inputs, server-side API invocation and timezone-aware scheduled execution. Use the canvas Input node to define fields and **Triggers** to configure automation. Apply migration **0041** and restart API, worker and web. See the [workflow trigger guide](docs/workflow-triggers.md).
+
+### Console experience
+
+The console uses compact forms, accessible on-demand help, guided connector setup and a visual question editor in Quality Lab. Workflow selection stays compact, while canvas testing and expanded mode remain available. See [console UI conventions](docs/console-design.md) for layout, help and responsive behavior.

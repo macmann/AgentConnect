@@ -80,6 +80,7 @@ test("Guided connector sign-in selects an account, browses folders and preserves
     .getByRole("button", { name: "Add connector", exact: true })
     .click();
   await page.getByLabel("Connector provider").selectOption("google-drive");
+  await page.getByRole("button", { name: /2\s*Account/ }).click();
   await page
     .getByRole("button", { name: "Sign in with Google", exact: true })
     .click();
@@ -89,6 +90,7 @@ test("Guided connector sign-in selects an account, browses folders and preserves
   await expect(page.getByLabel("Source workspace credential")).toHaveValue(
     secret,
   );
+  await page.getByRole("button", { name: /3\s*Source & sync/ }).click();
   await page
     .getByText("2. Choose a folder or channel", { exact: true })
     .click();

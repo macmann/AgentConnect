@@ -751,7 +751,6 @@ function Studio() {
           )}
           <div className="page-title">
             <div>
-              <div className="eyebrow">YOUR COMMAND CENTER</div>
               <h1>
                 {view === "Overview"
                   ? `Good to see you, ${user.data.name.split(" ")[0]}.`

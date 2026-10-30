@@ -103,6 +103,7 @@ test("Quality lab creates datasets, imports conversations, evaluates, gates publ
   await page
     .getByLabel("Dataset name", { exact: true })
     .fill("Greeting checks");
+  await page.getByText("Advanced JSON / import", { exact: true }).click();
   await page.getByLabel("Examples (JSON array)", { exact: true }).fill(
     JSON.stringify(
       [
@@ -186,6 +187,7 @@ test("Quality lab creates datasets, imports conversations, evaluates, gates publ
   await page
     .getByRole("button", { name: "Edit examples", exact: true })
     .click();
+  await page.getByText("Advanced JSON / import", { exact: true }).click();
   await page.getByLabel("Examples (JSON array)", { exact: true }).fill(
     JSON.stringify(
       [

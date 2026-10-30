@@ -1180,9 +1180,8 @@ export function AgentStudio({
                 </div>
                 <div className="publish-heading">
                   <div>
-                    <h3>Immutable versions</h3>
                     <div className="setting-label-row">
-                      <span>About published versions</span>
+                      <h3>Published versions</h3>
                       <HelpTooltip label="About published versions">
                         A deployment keeps its published prompt and model
                         settings.
