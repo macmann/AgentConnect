@@ -1,4 +1,5 @@
 "use client";
+import { SkillsStudio } from "./skills-studio";
 import { CreationAssistantSettings } from "./creation-assistant-settings";
 import { ProductBrand } from "./product-brand";
 import { SupportStudio } from "./support-studio";
@@ -25,6 +26,7 @@ import {
   Check,
   FolderKanban,
   SlidersHorizontal,
+  Sparkles,
   KeyRound,
   Layers,
   LayoutDashboard,
@@ -40,7 +42,6 @@ import {
   Plus,
   Search,
   ShieldCheck,
-  Sparkles,
   Users,
   Workflow,
   X,
@@ -89,6 +90,7 @@ const pageDescriptions: Record<string, string> = {
   Tools: "Register approved tools your agents can use.",
   Workflows: "Build and test workflows that coordinate your agents.",
   Settings: "Configure workspace AI creation assistance.",
+  Skills: "Upload reusable instructions and manage skill versions for agents.",
   Connectors: "Connect external services and manage synchronized sources.",
   Conversations: "Review conversations, answers and execution details.",
   Operations: "Monitor activity, usage and workspace health.",
@@ -586,6 +588,7 @@ function Studio() {
           { label: "Knowledge", icon: BookOpen },
           { label: "Connectors", icon: Cable },
           { label: "Tools", icon: Wrench },
+          { label: "Skills", icon: Sparkles },
           { label: "Workflows", icon: Workflow },
           { label: "Human Support", icon: UserRoundCheck },
           { label: "Conversations", icon: MessagesSquare },
@@ -748,7 +751,6 @@ function Studio() {
           )}
           <div className="page-title">
             <div>
-              <div className="eyebrow">YOUR COMMAND CENTER</div>
               <h1>
                 {view === "Overview"
                   ? `Good to see you, ${user.data.name.split(" ")[0]}.`
@@ -797,6 +799,7 @@ function Studio() {
             "Knowledge",
             "Connectors",
             "Tools",
+            "Skills",
             "Workflows",
           ].includes(view) &&
             (!wid ? (
@@ -859,6 +862,12 @@ function Studio() {
             ) : view === "Workflows" ? (
               <WorkflowStudio
                 onSettings={() => setView("Settings")}
+                key={wid}
+                workspaceId={wid}
+                role={currentWorkspace?.role ?? "viewer"}
+              />
+            ) : view === "Skills" ? (
+              <SkillsStudio
                 key={wid}
                 workspaceId={wid}
                 role={currentWorkspace?.role ?? "viewer"}

@@ -47,6 +47,12 @@ const embedding = createServer(async (req, res) => {
     }),
   );
 });
+async function setupStep(page, label) {
+  await page
+    .getByRole("navigation", { name: "Connector setup steps" })
+    .getByRole("button", { name: new RegExp(label) })
+    .click();
+}
 test.beforeEach(async ({}, testInfo) => {
   await paceApiBudget(testInfo);
 });
@@ -156,20 +162,28 @@ test("S3 setup, worker ingestion, incremental sync, schedule, pause and disconne
   await page
     .getByRole("button", { name: "Add connector", exact: true })
     .click();
+  await setupStep(page, "Destination");
+
   await page
     .getByLabel("Connector name", { exact: true })
     .fill("Policy storage");
   await page
     .getByLabel("Connector knowledge base", { exact: true })
     .selectOption(kb.id);
+  await setupStep(page, "Account");
+
   await page
     .getByLabel("Source workspace credential", { exact: true })
     .selectOption(secrets[0].id);
+
+  await setupStep(page, "Source");
   await page
     .getByLabel("S3 endpoint", { exact: true })
     .fill(process.env.S3_ENDPOINT);
   await page.getByLabel("S3 bucket", { exact: true }).fill(bucket);
   await page.getByLabel("S3 prefix", { exact: true }).fill("documents/");
+  await setupStep(page, "Source");
+
   await page
     .getByRole("button", { name: "Save connector", exact: true })
     .click();
@@ -179,7 +193,9 @@ test("S3 setup, worker ingestion, incremental sync, schedule, pause and disconne
       { exact: true },
     ),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Sync now", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Sync changes now", exact: true })
+    .click();
   await expect(page.getByText(/imported: 1/)).toBeVisible({ timeout: 30000 });
   await expect
     .poll(
@@ -200,7 +216,9 @@ test("S3 setup, worker ingestion, incremental sync, schedule, pause and disconne
   expect(search.results[0].sourceUrl).toBe(
     `s3://${bucket}/documents/policy.txt`,
   );
-  await page.getByRole("button", { name: "Sync now", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Sync changes now", exact: true })
+    .click();
   await expect(page.getByText(/unchanged: 1/)).toBeVisible({ timeout: 30000 });
   await storage.send(
     new PutObjectCommand({
@@ -209,16 +227,22 @@ test("S3 setup, worker ingestion, incremental sync, schedule, pause and disconne
       Body: "Refunds are available within 60 days.",
     }),
   );
-  await page.getByRole("button", { name: "Sync now", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Sync changes now", exact: true })
+    .click();
   await expect(page.getByText(/updated: 1/)).toBeVisible({ timeout: 30000 });
   await page
     .getByRole("button", { name: "Edit connector", exact: true })
     .click();
+  await setupStep(page, "Source");
+  await page.getByRole("button", { name: /3\s*Source & sync/ }).click();
   await page.getByText("Sync limits & schedule", { exact: true }).click();
   await page.getByLabel("Maximum listed objects", { exact: true }).fill("200");
   await page
     .getByLabel("Refresh schedule", { exact: true })
     .selectOption("1440");
+  await setupStep(page, "Source");
+
   await page
     .getByRole("button", { name: "Save connector", exact: true })
     .click();
@@ -227,14 +251,16 @@ test("S3 setup, worker ingestion, incremental sync, schedule, pause and disconne
     .getByRole("button", { name: "Pause connector", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Sync now", exact: true }),
+    page.getByRole("button", { name: "Sync changes now", exact: true }),
   ).toBeDisabled();
   await page
     .getByRole("button", { name: "Resume connector", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Sync now", exact: true }),
+    page.getByRole("button", { name: "Sync changes now", exact: true }),
   ).toBeEnabled();
+  page.once("dialog", (dialog) => dialog.accept());
+
   await page
     .getByRole("button", { name: "Disconnect connector", exact: true })
     .click();
@@ -290,23 +316,35 @@ test("Google Drive setup explains sharing, saves selected provider and locks sou
   await page
     .getByLabel("Connector provider", { exact: true })
     .selectOption("google-drive");
+  await setupStep(page, "Account");
+  await page
+    .getByText("Set up a workspace credential", { exact: true })
+    .click();
   await expect(
     page.getByText(/share this folder with its client_email as Viewer/),
   ).toBeVisible();
   await expect(page.getByLabel("S3 endpoint", { exact: true })).toHaveCount(0);
+  await setupStep(page, "Destination");
+
   await page
     .getByLabel("Connector name", { exact: true })
     .fill("Drive policies");
   await page
     .getByLabel("Connector knowledge base", { exact: true })
     .selectOption(bases[0].id);
+  await setupStep(page, "Account");
+
   await page
     .getByLabel("Source workspace credential", { exact: true })
     .selectOption(secrets.find((s) => s.name === "DRIVE_ACCOUNT").id);
+
+  await setupStep(page, "Source");
   await page
     .getByLabel("Google Drive folder ID", { exact: true })
     .fill("fixture-folder");
   await page.getByLabel("Include subfolders", { exact: true }).uncheck();
+  await setupStep(page, "Source");
+
   await page
     .getByRole("button", { name: "Save connector", exact: true })
     .click();
@@ -328,6 +366,7 @@ test("Google Drive setup explains sharing, saves selected provider and locks sou
   await page
     .getByRole("button", { name: "Edit connector", exact: true })
     .click();
+  await setupStep(page, "Source");
   await expect(
     page.getByLabel("Connector provider", { exact: true }),
   ).toBeDisabled();
@@ -337,6 +376,8 @@ test("Google Drive setup explains sharing, saves selected provider and locks sou
   await expect(
     page.getByLabel("Include subfolders", { exact: true }),
   ).not.toBeChecked();
+  await setupStep(page, "Source");
+
   await page
     .getByRole("button", { name: "Save connector", exact: true })
     .click();
@@ -344,8 +385,10 @@ test("Google Drive setup explains sharing, saves selected provider and locks sou
     .getByRole("button", { name: "Pause connector", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Sync now", exact: true }),
+    page.getByRole("button", { name: "Sync changes now", exact: true }),
   ).toBeDisabled();
+  page.once("dialog", (dialog) => dialog.accept());
+
   await page
     .getByRole("button", { name: "Disconnect connector", exact: true })
     .click();
@@ -393,6 +436,10 @@ test("OneDrive setup requires drive and folder IDs, saves application credential
   await page
     .getByLabel("Connector provider", { exact: true })
     .selectOption("onedrive");
+  await setupStep(page, "Account");
+  await page
+    .getByText("Set up a workspace credential", { exact: true })
+    .click();
   await expect(
     page.getByText(
       /Microsoft Graph application permissions and administrator consent/,
@@ -402,15 +449,21 @@ test("OneDrive setup requires drive and folder IDs, saves application credential
     page.getByLabel("Google Drive folder ID", { exact: true }),
   ).toHaveCount(0);
   await expect(page.getByLabel("S3 endpoint", { exact: true })).toHaveCount(0);
+  await setupStep(page, "Destination");
+
   await page
     .getByLabel("Connector name", { exact: true })
     .fill("OneDrive policies");
   await page
     .getByLabel("Connector knowledge base", { exact: true })
     .selectOption(bases[0].id);
+  await setupStep(page, "Account");
+
   await page
     .getByLabel("Source workspace credential", { exact: true })
     .selectOption(secrets.find((s) => s.name === "ONEDRIVE_APP").id);
+
+  await setupStep(page, "Source");
   await page
     .getByLabel("OneDrive folder item ID", { exact: true })
     .fill("fixture-folder");
@@ -420,8 +473,11 @@ test("OneDrive setup requires drive and folder IDs, saves application credential
   await page
     .getByLabel("OneDrive drive ID", { exact: true })
     .fill("b!fixture-drive");
+  await page.getByRole("button", { name: /3\s*Source & sync/ }).click();
   await page.getByText("Sync limits & schedule", { exact: true }).click();
   await page.getByLabel("Refresh schedule", { exact: true }).selectOption("60");
+  await setupStep(page, "Source");
+
   await page
     .getByRole("button", { name: "Save connector", exact: true })
     .click();
@@ -445,6 +501,7 @@ test("OneDrive setup requires drive and folder IDs, saves application credential
   await page
     .getByRole("button", { name: "Edit connector", exact: true })
     .click();
+  await setupStep(page, "Source");
   await expect(
     page.getByLabel("Connector provider", { exact: true }),
   ).toBeDisabled();
@@ -457,6 +514,8 @@ test("OneDrive setup requires drive and folder IDs, saves application credential
   await expect(
     page.getByLabel("Include subfolders", { exact: true }),
   ).toBeChecked();
+  await setupStep(page, "Source");
+
   await page
     .getByRole("button", { name: "Save connector", exact: true })
     .click();
@@ -464,8 +523,10 @@ test("OneDrive setup requires drive and folder IDs, saves application credential
     .getByRole("button", { name: "Pause connector", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Sync now", exact: true }),
+    page.getByRole("button", { name: "Sync changes now", exact: true }),
   ).toBeDisabled();
+  page.once("dialog", (dialog) => dialog.accept());
+
   await page
     .getByRole("button", { name: "Disconnect connector", exact: true })
     .click();
@@ -543,15 +604,21 @@ test("SharePoint discovery wizard selects a library folder, resets stale choices
   await page
     .getByLabel("Connector provider", { exact: true })
     .selectOption("sharepoint");
+  await setupStep(page, "Destination");
+
   await page
     .getByLabel("Connector name", { exact: true })
     .fill("SharePoint policies");
   await page
     .getByLabel("Connector knowledge base", { exact: true })
     .selectOption(bases[0].id);
+  await setupStep(page, "Account");
+
   await page
     .getByLabel("Source workspace credential", { exact: true })
     .selectOption(secret.id);
+
+  await setupStep(page, "Source");
   await page
     .getByLabel("SharePoint site URL", { exact: true })
     .fill(site.webUrl);
@@ -581,18 +648,26 @@ test("SharePoint discovery wizard selects a library folder, resets stale choices
     page.getByRole("button", { name: "Save connector", exact: true }),
   ).toBeEnabled();
   // A credential change clears discovered selection before another save.
+  await setupStep(page, "Account");
+
   await page
     .getByLabel("Source workspace credential", { exact: true })
     .selectOption("");
+
+  await setupStep(page, "Source");
   await expect(
     page.getByRole("button", { name: "Save connector", exact: true }),
   ).toBeDisabled();
   await expect(
     page.getByLabel("SharePoint document library", { exact: true }),
   ).toHaveCount(0);
+  await setupStep(page, "Account");
+
   await page
     .getByLabel("Source workspace credential", { exact: true })
     .selectOption(secret.id);
+
+  await setupStep(page, "Source");
   await page.getByRole("button", { name: "Find site", exact: true }).click();
   await page
     .getByLabel("SharePoint document library", { exact: true })
@@ -604,6 +679,8 @@ test("SharePoint discovery wizard selects a library folder, resets stale choices
     .getByRole("button", { name: "Use this folder", exact: true })
     .click();
   await page.getByLabel("Include subfolders", { exact: true }).uncheck();
+  await setupStep(page, "Source");
+
   await page
     .getByRole("button", { name: "Save connector", exact: true })
     .click();
@@ -627,6 +704,7 @@ test("SharePoint discovery wizard selects a library folder, resets stale choices
   await page
     .getByRole("button", { name: "Edit connector", exact: true })
     .click();
+  await setupStep(page, "Source");
   await expect(
     page.getByLabel("SharePoint site ID", { exact: true }),
   ).toBeDisabled();
@@ -636,9 +714,13 @@ test("SharePoint discovery wizard selects a library folder, resets stale choices
   await expect(
     page.getByLabel("SharePoint folder ID", { exact: true }),
   ).toHaveValue(policies.id);
+  await setupStep(page, "Source");
+
   await page
     .getByRole("button", { name: "Save connector", exact: true })
     .click();
+  page.once("dialog", (dialog) => dialog.accept());
+
   await page
     .getByRole("button", { name: "Disconnect connector", exact: true })
     .click();
@@ -693,23 +775,33 @@ for (const kind of ["teams", "slack"]) {
     await page
       .getByLabel("Connector provider", { exact: true })
       .selectOption(kind);
+    await setupStep(page, "Account");
     await expect(
       page.getByRole("button", { name: "Open Secrets", exact: true }),
     ).toBeVisible();
+    await setupStep(page, "Source");
     await expect(
-      page.getByText(/Imported content inherits knowledge base access/),
+      page.getByText("Imported content uses knowledge base access", {
+        exact: true,
+      }),
     ).toBeVisible();
+    await setupStep(page, "Destination");
+
     await page
       .getByLabel("Connector name", { exact: true })
       .fill(kind + " support");
     await page
       .getByLabel("Connector knowledge base", { exact: true })
       .selectOption(bases[0].id);
+    await setupStep(page, "Account");
+
     await page
       .getByLabel("Source workspace credential", { exact: true })
       .selectOption(
         secrets.find((s) => s.name === kind.toUpperCase() + "_MESSAGES").id,
       );
+
+    await setupStep(page, "Source");
     await expect(
       page.getByRole("button", { name: "Save connector", exact: true }),
     ).toBeDisabled();
@@ -718,11 +810,13 @@ for (const kind of ["teams", "slack"]) {
     const teamLabel = kind === "teams" ? "Teams team ID" : "Slack workspace ID";
     await page.getByLabel(teamLabel, { exact: true }).fill(teamId);
     await page.getByLabel("Channel ID", { exact: true }).fill(channelId);
+    await setupStep(page, "Source");
+
     await page
       .getByRole("button", { name: "Save connector", exact: true })
       .click();
     await expect(
-      page.getByRole("button", { name: "Sync now", exact: true }),
+      page.getByRole("button", { name: "Sync changes now", exact: true }),
     ).toBeVisible();
     const records = await (
         await context.request.get(base + "/connectors")
@@ -734,11 +828,16 @@ for (const kind of ["teams", "slack"]) {
     await page
       .getByRole("button", { name: "Edit connector", exact: true })
       .click();
+    await setupStep(page, "Source");
     await expect(page.getByLabel(teamLabel, { exact: true })).toBeDisabled();
     await expect(page.getByLabel("Channel ID", { exact: true })).toBeDisabled();
+    await setupStep(page, "Destination");
+
     await page
       .getByLabel("Connector name", { exact: true })
       .fill(kind + " renamed");
+    await setupStep(page, "Source");
+
     await page
       .getByRole("button", { name: "Save connector", exact: true })
       .click();
@@ -746,15 +845,16 @@ for (const kind of ["teams", "slack"]) {
       .getByRole("button", { name: "Pause connector", exact: true })
       .click();
     await expect(
-      page.getByRole("button", { name: "Sync now", exact: true }),
+      page.getByRole("button", { name: "Sync changes now", exact: true }),
     ).toBeDisabled();
     await page
       .getByRole("button", { name: "Resume connector", exact: true })
       .click();
     await expect(
-      page.getByRole("button", { name: "Sync now", exact: true }),
+      page.getByRole("button", { name: "Sync changes now", exact: true }),
     ).toBeEnabled();
     page.once("dialog", (dialog) => dialog.accept());
+
     await page
       .getByRole("button", { name: "Disconnect connector", exact: true })
       .click();

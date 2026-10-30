@@ -101,6 +101,10 @@ Test greetings and irrelevant questions if you configured automatic knowledge us
 
 ![Grounded customer answer with citations](screenshots/rag-agent-chat.png)
 
+## Attach agent skills
+
+Open **Skills** to upload `SKILL.md` or a single-skill ZIP, then review instructions and text references. Under **Agent → Configure → Skills**, attach a version and choose Always, Automatic or Disabled loading. Save and start a new Playground chat. Public chat requires explicit public access on the skill. ZIP scripts are not executed. New uploads do not upgrade attached versions automatically. See [agent skills](agent-skills.md) for examples, limits, versioning and troubleshooting.
+
 ## Attach tools deliberately
 
 Open **Configure → Tools** and select approved, enabled tools from your workspace. If there are no tools, follow the empty-state link to Tools and register one with an administrator. Disabled tools explain their workspace state. Workspace administrators can use **Enable tool** directly in the attachment list, then select it and save the agent. Enabling applies across the workspace and does not automatically attach the tool. Builders must ask an administrator to enable it.
@@ -475,3 +479,11 @@ Define named inputs on the workflow's Input node, save and publish. Open **Trigg
 ### Map workflow fields and inspect steps
 
 Select a workflow node and use **Input mapping** to select one upstream field or assemble named fields. Expand **Preview mapped input** to use recorded run outputs without executing the workflow. During run inspection, click a canvas node or use **Inspect step** to see that step's recorded input/output, status, citations and tools. See the [field mapping guide](workflow-mapping.md) for paths, typed tool arguments and error handling.
+
+## Compact console and guided setup
+
+Connector setup now shows **Destination → Account → Source & sync**. Use Continue or the step buttons; returning to a previous step preserves your entries. Sign-in, manual credentials, source browsing and optional sync scheduling remain available.
+
+In Quality → Datasets, edit **Test questions** directly. Add questions, set expected behavior and optionally supply an expected answer. Larger datasets use question pages. Use **Advanced JSON / import** for specialized assertions or bulk imports; ordinary edits preserve those settings.
+
+Hover, focus or tap an information icon for field help. Press Escape to dismiss it. Longer setup instructions, skill instruction previews and debug details use expandable sections. See [console UI conventions](console-design.md).

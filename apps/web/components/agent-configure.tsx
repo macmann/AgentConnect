@@ -1,4 +1,5 @@
 "use client";
+import { AgentSkillsSection } from "./agent-skills-section";
 import { useRef, useState } from "react";
 import { Button } from "./button";
 import {
@@ -23,6 +24,7 @@ const titles: Record<ConfigureSection, string> = {
   prompt: "Prompt",
   knowledge: "Knowledge",
   tools: "Tools",
+  skills: "Skills",
   behavior: "Behavior",
   experience: "Experience",
   advanced: "Advanced",
@@ -33,6 +35,7 @@ const descriptions: Record<ConfigureSection, string> = {
   prompt: "Define the agent’s role, instructions and response style.",
   knowledge: "Ground responses in approved workspace content.",
   tools: "Choose the external information this agent can access.",
+  skills: "Attach reusable procedures and choose when your agent uses them.",
   behavior: "Set response creativity and conversation memory.",
   experience: "Shape the messages and components customers see.",
   advanced: "Inspect the compiled prompt and find technical settings.",
@@ -159,6 +162,7 @@ export function AgentConfigure({
     prompt: PromptSection,
     knowledge: KnowledgeSection,
     tools: ToolsSection,
+    skills: AgentSkillsSection,
     behavior: BehaviorSection,
     experience: ExperienceSection,
     advanced: AdvancedSection,

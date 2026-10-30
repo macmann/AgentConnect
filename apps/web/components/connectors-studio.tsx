@@ -79,6 +79,8 @@ export function ConnectorsStudio({
       requestJson<{ id: string; name: string }[]>(base + "/secrets"),
     enabled: canManage,
   });
+  const [setupStep, setSetupStep] = useState(0);
+  const [stepError, setStepError] = useState("");
   const [selected, setSelected] = useState(""),
     [editing, setEditing] = useState(false),
     [name, setName] = useState(""),
@@ -170,6 +172,8 @@ export function ConnectorsStudio({
     });
   }
   function edit(c?: Connector) {
+    setSetupStep(0);
+    setStepError("");
     setSelected(c?.id ?? "");
     setEditing(true);
     setName(c?.name ?? "");
@@ -282,7 +286,30 @@ export function ConnectorsStudio({
               <h4>
                 {connector ? "Edit connector" : "Connect a knowledge source"}
               </h4>
-              <fieldset className="settings-group">
+              <nav className="setup-steps" aria-label="Connector setup steps">
+                {["Destination", "Account", "Source & sync"].map(
+                  (label, index) => (
+                    <button
+                      type="button"
+                      key={label}
+                      aria-current={setupStep === index ? "step" : undefined}
+                      onClick={() => {
+                        setSetupStep(index);
+                        setStepError("");
+                      }}
+                    >
+                      <span>{index + 1}</span>
+                      {label}
+                    </button>
+                  ),
+                )}
+              </nav>
+              {stepError && (
+                <p role="alert" className="error-banner">
+                  {stepError}
+                </p>
+              )}
+              <fieldset className="settings-group" hidden={setupStep !== 0}>
                 <legend>1. Destination</legend>
                 <label>
                   Provider
@@ -338,7 +365,7 @@ export function ConnectorsStudio({
                   </Button>
                 )}
               </fieldset>
-              <fieldset className="settings-group">
+              <fieldset className="settings-group" hidden={setupStep !== 1}>
                 <legend>2. Account</legend>
                 {kind !== "s3" && (
                   <ConnectorSignIn
@@ -390,7 +417,7 @@ export function ConnectorsStudio({
                   </Button>
                 </div>
               </fieldset>
-              <fieldset className="settings-group">
+              <fieldset className="settings-group" hidden={setupStep !== 2}>
                 <legend>3. Source</legend>
                 {!connector &&
                   secret &&
@@ -424,11 +451,11 @@ export function ConnectorsStudio({
                         onChange={(e) => setEndpoint(e.target.value)}
                       />
                     </label>
-                    <p>
-                      The exact host must be approved in CONNECTOR_ALLOWED_HOSTS
-                      on the API and worker. Trusted private servers require an
-                      explicit CONNECTOR_PRIVATE_HOSTS exception.
-                    </p>
+                    <SettingsHint label="Approved endpoint required">
+                      Approve the exact host in CONNECTOR_ALLOWED_HOSTS on API
+                      and worker. Trusted private servers require a
+                      CONNECTOR_PRIVATE_HOSTS exception.
+                    </SettingsHint>
                     <label>
                       Region
                       <input
@@ -766,7 +793,10 @@ export function ConnectorsStudio({
                   after creation.
                 </SettingsHint>
               </fieldset>
-              <details className="workspace-advanced-settings">
+              <details
+                className="workspace-advanced-settings"
+                hidden={setupStep !== 2}
+              >
                 <summary>Sync limits & schedule</summary>
                 <p className="muted">
                   Tune scan size and optional automatic sync. Manual sync
@@ -802,8 +832,41 @@ export function ConnectorsStudio({
                   </select>
                 </label>
               </details>
+              {setupStep === 2 && (!name.trim() || !kb || !secret) && (
+                <p className="error-banner" role="alert">
+                  Complete Destination and Account before saving this source.
+                </p>
+              )}
               <div className="connector-save-actions">
+                {setupStep > 0 && (
+                  <Button
+                    className="secondary"
+                    onClick={() => {
+                      setSetupStep(setupStep - 1);
+                      setStepError("");
+                    }}
+                  >
+                    Back
+                  </Button>
+                )}
+                {setupStep < 2 && (
+                  <Button
+                    onClick={() => {
+                      const message =
+                        setupStep === 0 && (!name.trim() || !kb)
+                          ? "Enter a name and select a knowledge base."
+                          : setupStep === 1 && !secret
+                            ? "Connect an account or select a workspace credential."
+                            : "";
+                      setStepError(message);
+                      if (!message) setSetupStep(setupStep + 1);
+                    }}
+                  >
+                    Continue
+                  </Button>
+                )}
                 <Button
+                  hidden={setupStep !== 2}
                   disabled={
                     busy ||
                     !name.trim() ||

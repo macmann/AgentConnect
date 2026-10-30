@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { promptSchema } from "./agents.js";
+import { promptSchema } from "@agentconnect/schemas/agents";
 
 export const creationSettings = z
   .object({
@@ -37,6 +37,7 @@ export const suggestedAgent = z
     prompt: promptSchema,
     knowledgeBaseIds: z.array(z.uuid()).max(5).default([]),
     toolIds: z.array(z.uuid()).max(8).default([]),
+    skillVersionIds: z.array(z.uuid()).max(5).default([]),
     language: z.string().trim().min(1).max(80).default("English"),
     welcomeMessage: z.string().max(1000).default("How can I help you?"),
     conversationStarters: z

@@ -6722,3 +6722,485 @@ input[type="range"] {
     margin-left: auto;
   }
 }
+
+.skills-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
+  gap: 24px;
+  margin-top: 24px;
+}
+.skills-list,
+.skill-detail,
+.agent-skill-picker {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  align-content: start;
+}
+.skill-card {
+  display: grid;
+  gap: 10px;
+  text-align: left;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.skill-card[aria-pressed="true"] {
+  border-color: var(--accent-text);
+  background: var(--surface-subtle);
+}
+.skill-card span,
+.skill-card small {
+  color: var(--muted);
+  line-height: 1.6;
+}
+.skill-detail {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px;
+}
+.skill-detail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.skill-detail-heading h3,
+.skill-detail-heading h4 {
+  margin: 0;
+}
+.skill-detail label:not(.checkbox-label),
+.agent-skill-picker label:not(.checkbox-label) {
+  display: grid;
+  gap: 8px;
+}
+.skill-detail select,
+.agent-skill-picker select,
+.agent-skill-picker input[type="number"] {
+  padding: 10px 12px;
+  width: 100%;
+  max-width: 440px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--surface);
+}
+.agent-skill-picker textarea {
+  width: 100%;
+  padding: 12px;
+  min-height: 90px;
+}
+.skill-access-controls {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.skill-instructions {
+  max-height: 480px;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.skill-detail details {
+  padding: 12px 0;
+}
+.skill-detail details > details {
+  margin-top: 10px;
+}
+.skill-detail pre {
+  max-height: 360px;
+  overflow: auto;
+  padding: 14px;
+  background: var(--surface-subtle);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.skill-attachment {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+}
+.skill-attachment p {
+  margin: 0;
+}
+.agent-skill-picker > details {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.agent-skill-picker > details label {
+  margin-top: 16px;
+}
+.skills-studio .notice p {
+  margin: 0 0 8px;
+}
+@media (max-width: 900px) {
+  .skills-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .skill-detail {
+    padding: 16px;
+  }
+}
+
+/* Console design contract: common rhythm, readable controls, bounded overlays. */
+:root {
+  --space-control: 12px;
+  --space-group: 20px;
+  --space-panel: 24px;
+}
+body {
+  line-height: 1.5;
+}
+.content {
+  width: 100%;
+  padding: 24px 32px 0;
+}
+.page-title {
+  margin-bottom: 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.page-title h1 {
+  font-size: 26px;
+  font-weight: 650;
+  margin: 0 0 6px;
+}
+.page-title p,
+.panel-header p {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.panel-header {
+  flex-wrap: wrap;
+  padding-block: 18px;
+}
+.panel-header > div {
+  min-width: 0;
+}
+.panel-header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+.panel-header p {
+  max-width: 68ch;
+  margin-top: 6px;
+}
+.button {
+  min-height: 40px;
+  border-radius: 8px;
+  line-height: 1.4;
+  white-space: normal;
+  text-align: center;
+}
+.button:disabled {
+  cursor: not-allowed;
+}
+.button:focus-visible,
+summary:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.button-row {
+  gap: 12px;
+  row-gap: 12px;
+}
+.button-row > .button {
+  margin: 0;
+}
+.studio-form,
+.configure-section,
+.workflow-inspector {
+  min-width: 0;
+}
+.studio-form textarea,
+.studio-form select,
+.studio-form input,
+.configure-section textarea,
+.configure-section select,
+.configure-section input {
+  max-width: 100%;
+  min-width: 0;
+}
+.studio-form textarea {
+  line-height: 1.55;
+}
+.setting-label-row {
+  align-items: flex-start;
+  gap: 10px;
+  margin-block: 12px;
+}
+.setting-label-row .checkbox-label {
+  margin: 0;
+  min-width: 0;
+}
+.checkbox-label input[type="checkbox"] {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.settings-hint {
+  font-size: 13px;
+  line-height: 1.5;
+  margin-block: 10px;
+}
+.settings-guide {
+  margin-block: 14px;
+}
+.settings-guide > summary {
+  line-height: 1.5;
+  padding-block: 8px;
+}
+.settings-guide-body {
+  max-width: 80ch;
+}
+.configure-group,
+.configure-details,
+fieldset {
+  min-width: 0;
+}
+.configure-details > summary {
+  padding-block: 12px;
+}
+.configure-metadata {
+  overflow-wrap: anywhere;
+}
+.panel > p[role="status"],
+.panel > p[role="alert"] {
+  margin-block: 12px;
+  line-height: 1.5;
+}
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.section-heading h4 {
+  margin: 0;
+  font-size: 15px;
+}
+.workflow-selector {
+  display: grid;
+  gap: 6px;
+  width: min(100%, 420px);
+  font-size: 13px;
+  color: var(--muted);
+}
+.workflow-selector select {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.workflow-picker {
+  margin-block: 16px;
+}
+.setup-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 20px;
+}
+.setup-steps button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.setup-steps button[aria-current="step"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.setup-steps button span {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface-subtle);
+}
+.connector-editor [hidden],
+.connector-save-actions [hidden] {
+  display: none;
+}
+.connector-editor .settings-group:first-of-type {
+  display: block;
+}
+.connector-editor .settings-group[hidden] {
+  display: none;
+}
+.connector-editor .settings-group {
+  margin-top: 0;
+  padding: 16px 0 20px;
+}
+.quality-example-row {
+  padding: 16px;
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.quality-example-row legend {
+  padding-inline: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.quality-example-row > .button {
+  margin-top: 8px;
+}
+.quality-examples-editor > .settings-guide {
+  margin-top: 20px;
+}
+.skill-detail > .settings-guide {
+  border: 0;
+  padding: 0;
+}
+.skill-detail .skill-instructions {
+  padding: 16px 0;
+}
+.playground-chat .chat-messages {
+  height: clamp(300px, 58dvh, 800px);
+}
+.playground-chat > .panel-header {
+  padding-block: 12px;
+}
+.playground-chat .chat-composer {
+  padding-block: 12px;
+}
+.playground-chat .chat-message {
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.playground-chat .chat-message > :first-child {
+  margin-top: 0;
+}
+.playground-chat .chat-message > :last-child {
+  margin-bottom: 0;
+}
+.canvas-toolbar-actions,
+.canvas-top-actions {
+  gap: 8px;
+  padding: 8px;
+}
+.canvas-node-palette {
+  max-height: min(420px, 55dvh);
+  overflow-y: auto;
+}
+.canvas-test-panel {
+  scrollbar-gutter: stable;
+}
+@media (max-width: 900px) {
+  .content {
+    padding: 20px 20px 0;
+  }
+  .panel-header {
+    gap: 12px;
+  }
+}
+@media (max-width: 600px) {
+  :root {
+    --space-panel: 16px;
+  }
+  .content {
+    padding: 20px 14px 0;
+  }
+  .page-title h1 {
+    font-size: 23px;
+  }
+  .panel-header {
+    padding: 16px;
+  }
+  .button-row {
+    align-items: stretch;
+  }
+  .button-row > .button {
+    max-width: 100%;
+  }
+  .setup-steps {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 4px;
+  }
+  .setup-steps button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    font-size: 12px;
+  }
+  .quality-example-row {
+    padding: 12px;
+  }
+  .connector-save-actions {
+    padding-block: 12px;
+  }
+  .playground-chat .chat-messages {
+    height: clamp(280px, 54dvh, 620px);
+  }
+}
+.help-tooltip-portal:not([hidden]) {
+  display: block;
+  z-index: 1000;
+}
+.help-tooltip-portal[hidden] {
+  display: none;
+}
+
+/* Keep empty states and section help aligned with their associated actions. */
+.empty .button-row {
+  justify-content: center;
+}
+.empty p {
+  font-size: 13px;
+}
+.connector-layout .studio-form > .empty {
+  padding: 20px 12px;
+}
+.workspace-section-navigation {
+  position: relative;
+}
+.workspace-section-navigation > .workspace-section-description {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  margin: 0;
+}
+.workspace-section-desktop {
+  padding-right: 32px;
+}
+.quality-layout .workspace-section-body > :is(h4, p, label, .button-row) {
+  margin-block: 0;
+}
+.quality-layout .workspace-section-body {
+  gap: var(--space-group);
+}
+.quality-layout .studio-form .quality-example-row {
+  border: 1px solid var(--line);
+  padding: 16px;
+  margin-block: 16px;
+}
+.quality-examples-editor .quality-example-row > label {
+  margin-bottom: 12px;
+}
+@media (max-width: 600px) {
+  .quality-layout .studio-form .quality-example-row {
+    padding: 12px;
+  }
+}

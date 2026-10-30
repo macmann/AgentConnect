@@ -5,6 +5,7 @@ export const configureSections = [
   "prompt",
   "knowledge",
   "tools",
+  "skills",
   "behavior",
   "experience",
   "advanced",
@@ -57,6 +58,8 @@ const labels: Record<string, string> = {
   usageInstructions: "Usage instructions",
   knowledgeBaseIds: "Attached knowledge",
   toolIds: "Attached tools",
+  versionIds: "Attached skills",
+  contextBudget: "Skill context budget",
   conversationStarters: "Conversation starters",
 };
 export function fieldSection(field: string): ConfigureSection {
@@ -65,6 +68,7 @@ export function fieldSection(field: string): ConfigureSection {
   if (field.startsWith("config.prompt")) return "prompt";
   if (field.startsWith("config.answerPolicy")) return "knowledge";
   if (field.startsWith("config.rag")) return "knowledge";
+  if (field.startsWith("config.skills")) return "skills";
   if (field.startsWith("config.tools")) return "tools";
   if (
     /generative|welcomeMessage|fallbackResponse|conversationStarters|quickActions|journeys/.test(

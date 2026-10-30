@@ -184,10 +184,10 @@ test("compact help is accessible and connector actions are separated", async ({
   const tooltip = page
     .getByRole("tooltip", { includeHidden: true })
     .filter({ hasText: "Example IDs" });
-  const trigger = page
-    .locator(".help-tooltip")
-    .filter({ has: tooltip })
-    .getByRole("button");
+  const trigger = page.getByRole("button", {
+    name: "About test examples",
+    exact: true,
+  });
   await expect(tooltip).toBeHidden();
   await trigger.hover();
   await expect(tooltip).toBeVisible();
@@ -265,6 +265,172 @@ test("panel bodies keep a shared gutter across studios and themes", async ({
     }
   }
 });
+test("guided connector steps retain values and explain missing setup", async ({
+  page,
+}) => {
+  await open(page);
+  await page.route(`**/workspaces/${first}/knowledge-bases`, (route) =>
+    route.fulfill({ json: [{ id: "kb-preview", name: "Policies" }] }),
+  );
+  await page.route(`**/workspaces/${first}/secrets`, (route) =>
+    route.fulfill({
+      json: [{ id: "secret-preview", name: "Read-only account" }],
+    }),
+  );
+  await page.getByRole("button", { name: "Connectors", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Add connector", exact: true })
+    .click();
+  await expect(page.getByLabel("S3 bucket", { exact: true })).toBeHidden();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.locator(".error-banner[role=alert]")).toContainText(
+    "Enter a name",
+  );
+  await page
+    .getByLabel("Connector name", { exact: true })
+    .fill("Policy documents");
+  await page
+    .getByLabel("Connector knowledge base", { exact: true })
+    .selectOption("kb-preview");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByLabel("Connector name", { exact: true })).toBeHidden();
+  await page
+    .getByLabel("Source workspace credential", { exact: true })
+    .selectOption("secret-preview");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByLabel("S3 bucket", { exact: true }).fill("policy-bucket");
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(
+    page.getByLabel("Source workspace credential", { exact: true }),
+  ).toHaveValue("secret-preview");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByLabel("S3 bucket", { exact: true })).toHaveValue(
+    "policy-bucket",
+  );
+  await expect(
+    page.getByRole("button", { name: "Save connector", exact: true }),
+  ).toBeEnabled();
+});
+
+test("question editor preserves advanced assertions and paginates imported examples", async ({
+  page,
+}) => {
+  await open(page);
+  await page.getByRole("button", { name: "Quality", exact: true }).click();
+  await page.getByRole("button", { name: "New dataset", exact: true }).click();
+  const raw = page.getByLabel("Examples (JSON array)", { exact: true });
+  await expect(raw).toBeHidden();
+  await page
+    .getByLabel("Question 1", { exact: true })
+    .fill("How do I reset access?");
+  await page.getByText("Advanced JSON / import", { exact: true }).click();
+  expect(JSON.parse(await raw.inputValue())[0].contains).toEqual(["hello"]);
+  await raw.fill(
+    JSON.stringify(
+      Array.from({ length: 7 }, (_, i) => ({
+        input: `Question ${i + 1}`,
+        expectedBehavior: "Help",
+        tags: ["retain"],
+        contains: ["policy"],
+      })),
+    ),
+  );
+  await expect(page.locator(".quality-example-row")).toHaveCount(5);
+  await page
+    .getByRole("button", { name: "Next questions", exact: true })
+    .click();
+  await page
+    .getByLabel("Question 6", { exact: true })
+    .fill("Edited sixth question");
+  const edited = JSON.parse(await raw.inputValue());
+  expect(edited[5]).toEqual({
+    input: "Edited sixth question",
+    expectedBehavior: "Help",
+    tags: ["retain"],
+    contains: ["policy"],
+  });
+  expect(edited).toHaveLength(7);
+  await raw.fill("invalid JSON");
+  await expect(page.locator(".error-banner[role=alert]")).toContainText(
+    "JSON array of objects",
+  );
+  await raw.fill("[]");
+  await page.getByRole("button", { name: "Add question", exact: true }).click();
+  await expect(page.getByLabel("Question 1", { exact: true })).toBeVisible();
+});
+
+test("console pages fit mobile, tablet and desktop in both themes", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180000);
+  await open(page);
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  for (const width of [390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 960 });
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate((theme) => {
+        localStorage.setItem("agent-connex-theme", theme);
+        document.documentElement.dataset.theme = theme;
+      }, theme);
+      for (const destination of [
+        "Agents",
+        "Workflows",
+        "Knowledge",
+        "Connectors",
+        "Skills",
+        "Tools",
+        "Models",
+        "Quality",
+        "Operations",
+        "Channels",
+        "Secrets",
+      ]) {
+        await page.goto(
+          `/#view=${destination}&organization=${org}&workspace=${first}`,
+        );
+        await expect(page.locator("h1")).toHaveText(destination);
+        await expect(page.locator(".panel").first()).toBeVisible();
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+          `${destination} at ${width} in ${theme}`,
+        ).toBe(true);
+        const collisions = await page
+          .locator(".panel-header")
+          .evaluateAll((headers) =>
+            headers.flatMap((header) => {
+              const boxes = [...header.children]
+                .map((child) => child.getBoundingClientRect())
+                .filter((box) => box.width && box.height);
+              return boxes.flatMap((a, i) =>
+                boxes
+                  .slice(i + 1)
+                  .filter(
+                    (b) =>
+                      Math.min(a.right, b.right) - Math.max(a.left, b.left) >
+                        1 &&
+                      Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1,
+                  ),
+              );
+            }),
+          );
+        expect(
+          collisions,
+          `${destination} header controls overlap at ${width}`,
+        ).toHaveLength(0);
+        if (width === 1440 || width === 390)
+          await page.screenshot({
+            path: testInfo.outputPath(`${destination}-${theme}-${width}.png`),
+            fullPage: true,
+          });
+      }
+    }
+  }
+  expect(errors).toEqual([]);
+});
+
 test("sign out removes private workspace state", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();

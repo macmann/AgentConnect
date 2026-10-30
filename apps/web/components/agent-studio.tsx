@@ -58,6 +58,7 @@ export type Prompt = {
   advanced: string | null;
 };
 export type Config = {
+  skills?: import("@agentconnect/schemas/agent-skills").AgentSkills;
   modelRouting?: import("zod").infer<
     typeof import("@agentconnect/schemas/model-routing").modelRouting
   >;
@@ -625,7 +626,14 @@ export function AgentStudio({
   workspaceId: string;
   role: string;
   onNavigate: (
-    destination: "Knowledge" | "Tools" | "Models" | "Channels" | "Settings",
+    destination:
+      | "Knowledge"
+      | "Tools"
+      | "Skills"
+      | "Models"
+      | "Channels"
+      | "Settings"
+      | "Skills",
   ) => void;
 }) {
   const cache = useQueryClient();
@@ -700,7 +708,9 @@ export function AgentStudio({
     };
   });
   const approvedLeave = useRef(false);
-  function navigateAttachments(destination: "Knowledge" | "Tools" | "Models") {
+  function navigateAttachments(
+    destination: "Knowledge" | "Tools" | "Skills" | "Models",
+  ) {
     if (
       (dirty || (draft && !draft.id)) &&
       !window.confirm(
@@ -1170,9 +1180,8 @@ export function AgentStudio({
                 </div>
                 <div className="publish-heading">
                   <div>
-                    <h3>Immutable versions</h3>
                     <div className="setting-label-row">
-                      <span>About published versions</span>
+                      <h3>Published versions</h3>
                       <HelpTooltip label="About published versions">
                         A deployment keeps its published prompt and model
                         settings.

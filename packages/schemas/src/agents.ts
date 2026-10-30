@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentSkills } from "@agentconnect/schemas/agent-skills";
 import { contextControls } from "@agentconnect/schemas/customer-experience";
 import { modelRouting } from "@agentconnect/schemas/model-routing";
 import {
@@ -48,6 +49,7 @@ export const promptSchema = z.object({
 });
 export const agentConfig = z
   .object({
+    skills: agentSkills,
     contextControls,
     modelRouting,
     generative: generativeConfig,

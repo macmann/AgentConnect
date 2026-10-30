@@ -1,3 +1,4 @@
+import { resolveAgentSkills, validateSkillSelection } from "./agent-skills.js";
 import { observe, observationContent } from "./ai-tracing.js";
 import { routedProvider } from "./model-routing.js";
 import { agentReranker } from "./agent-reranking.js";
@@ -54,7 +55,10 @@ export async function workflowAgentVersion(
     !!ctx.publicAccess,
   );
   if (runtime) await availableAgentTools(c, ctx);
-  else await validateToolIds(c.tools.toolIds, ctx);
+  else {
+    await validateToolIds(c.tools.toolIds, ctx);
+    await validateSkillSelection(c.skills, ctx);
+  }
   const conn = await connection(model, ctx.workspaceId, ctx.organizationId);
   return { c, model, conn };
 }
@@ -134,12 +138,21 @@ export async function executeAgentSnapshot(
         factory,
       );
       const provider = metered.provider;
+      const skills = await resolveAgentSkills(
+        c,
+        model,
+        provider,
+        [{ role: "user", content: input }],
+        ctx,
+        signal,
+      );
       const completeUsage =
         c.modelRouting.enabled ||
         c.modelRouting.fallbackModelIds.length ||
         c.rag.queryRewrite ||
         config.QUERY_REWRITE_ENABLED ||
-        c.rag.rerank;
+        c.rag.rerank ||
+        (c.skills.usageMode === "automatic" && c.skills.versionIds.length > 0);
       const contextBudget = c.contextControls.enabled
         ? Infinity
         : model.contextWindow - c.maxOutputTokens;
@@ -172,9 +185,12 @@ export async function executeAgentSnapshot(
                 rewriteModel: model.modelId,
                 countTokens: (text) =>
                   tokenCount(text, c.contextControls.tokenizer),
-                maxContextTokens: knowledgeContextBudget(c, model, [
-                  { role: "user", content: input },
-                ]),
+                maxContextTokens: knowledgeContextBudget(
+                  c,
+                  model,
+                  [{ role: "user", content: input }],
+                  skills.prompt,
+                ),
               },
               signal,
               c.maxOutputTokens,
@@ -216,7 +232,7 @@ export async function executeAgentSnapshot(
           sources,
           signal,
           contextBudget,
-          financial.grounding,
+          skills.prompt + financial.grounding,
         );
         return {
           output: result.message,
@@ -245,6 +261,7 @@ export async function executeAgentSnapshot(
         signal,
         () => {},
         contextBudget,
+        skills.prompt,
       );
       tools.inputTokens =
         tools.inputTokens === null || knowledgePlan.inputTokens === null
@@ -255,6 +272,7 @@ export async function executeAgentSnapshot(
           ? null
           : tools.outputTokens + knowledgePlan.outputTokens;
       const grounding =
+        skills.prompt +
         (sources.length ? groundedPrompt(sources, c.rag) : "") +
         tools.grounding;
       if (

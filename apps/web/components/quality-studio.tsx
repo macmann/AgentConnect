@@ -1,4 +1,5 @@
 "use client";
+import { QualityExamplesEditor } from "./quality-examples-editor";
 import { SettingsHint } from "./settings-help";
 import { MultilingualBenchmarkBuilder } from "./multilingual-benchmark-builder";
 import {
@@ -6,7 +7,6 @@ import {
   type MultilingualResults,
 } from "./multilingual-results";
 import { DocumentBenchmarkBuilder } from "./document-benchmark-builder";
-import { HelpTooltip } from "./help-tooltip";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { permitted, type Role } from "@agentconnect/schemas/foundation";
@@ -265,10 +265,7 @@ export function QualityStudio({
               </select>
             </label>
             {datasets.data?.length === 0 && (
-              <p>
-                No datasets yet. Create examples with a prompt and an expected
-                answer, required terms, forbidden terms or expected source IDs.
-              </p>
+              <p>No datasets yet. Add test questions to start evaluating.</p>
             )}
             {permitted(role, "quality:manage") && (
               <div className="button-row">
@@ -360,26 +357,10 @@ export function QualityStudio({
                     setExamples(JSON.stringify([...rows, example], null, 2));
                   }}
                 />
-                <label>
-                  Examples (JSON array)
-                  <textarea
-                    aria-label="Examples (JSON array)"
-                    rows={12}
-                    value={examples}
-                    onChange={(e) => setExamples(e.target.value)}
-                  />
-                </label>
-                <div className="setting-label-row">
-                  <span>
-                    Fields: input, expectedBehavior, optional expectedAnswer,
-                    contains, forbidden, expectedSourceIds, expectedCitations,
-                    documentChecks and tags.
-                  </span>
-                  <HelpTooltip>
-                    Example IDs are generated when omitted. Import by pasting a
-                    JSON array; copy the displayed dataset examples to export.
-                  </HelpTooltip>
-                </div>
+                <QualityExamplesEditor
+                  value={examples}
+                  onChange={setExamples}
+                />
                 <Button
                   disabled={busy || !name.trim()}
                   onClick={() =>

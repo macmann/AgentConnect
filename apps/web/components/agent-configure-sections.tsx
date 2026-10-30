@@ -42,7 +42,7 @@ export type SectionProps = {
   toolsError: Error | null;
   retryKnowledge: () => void;
   retryTools: () => void;
-  manage: (kind: "Knowledge" | "Tools" | "Models") => void;
+  manage: (kind: "Knowledge" | "Tools" | "Skills" | "Models") => void;
   canManage: boolean;
   rawPrompt: MutableRefObject<string>;
 };
@@ -97,6 +97,16 @@ export function OverviewSection(p: SectionProps) {
               `${c.rag.knowledgeBaseIds.length} knowledge base${c.rag.knowledgeBaseIds.length === 1 ? "" : "s"} attached`,
               `${c.rag.mode === "hybrid" ? "Hybrid vector + text" : "Vector retrieval"} · Citations ${c.rag.requireCitations ? "enabled" : "optional"}`,
               "knowledge",
+            ],
+            [
+              "Skills",
+              `${c.skills?.versionIds.length ?? 0} skill version${c.skills?.versionIds.length === 1 ? "" : "s"} attached`,
+              c.skills?.usageMode === "automatic"
+                ? "Selected when relevant"
+                : c.skills?.usageMode === "disabled"
+                  ? "Skill loading disabled"
+                  : "Reusable procedural instructions",
+              "skills",
             ],
             [
               "Tools",

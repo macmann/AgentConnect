@@ -31,6 +31,7 @@ type Reply = {
     model?: string;
     knowledge?: string[];
     tools?: string[];
+    skills?: string[];
     steps?: { label: string; agent: string; instructions: string }[];
   } | null;
 };
@@ -349,6 +350,10 @@ export function CreationAssistant({
                       <dd>
                         {reply?.summary?.knowledge?.join(", ") ||
                           "None attached"}
+                      </dd>
+                      <dt>Skills</dt>
+                      <dd>
+                        {reply?.summary?.skills?.join(", ") || "None attached"}
                       </dd>
                       <dt>Read-only tools</dt>
                       <dd>

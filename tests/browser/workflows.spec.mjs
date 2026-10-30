@@ -177,6 +177,9 @@ test("Visual workflow publishes, pauses for review and resumes two agent handoff
   await page
     .getByRole("button", { name: "Save workflow", exact: true })
     .click();
+  await expect(page.getByLabel("Current workflow")).toContainText(
+    "Launch review",
+  );
   await page.getByRole("button", { name: "Validate workflow" }).click();
   await expect(
     page.getByText("Workflow is valid and its dependencies are available.", {

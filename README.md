@@ -91,6 +91,8 @@ Compose versioned agent workflows and manage customer handoffs from the support 
 
 Published deployments expose copyable **iframe** and **floating widget** HTML under **Agents → Publish → Embed on your website**. Use iframe code for an inline chat or enable and configure the floating widget in **Channels**. See [website embedding](docs/user-guide.md#embed-a-published-agent).
 
+Agents support reusable **skills** from `SKILL.md` or ZIP bundles with text references. Upload in **Skills**, attach a version under **Agent Configure → Skills**, and choose Always, Automatic or Disabled loading. Versions stay pinned; public access and disable/archive controls apply live. Bundled scripts are not executed. Apply migration **0044**. See the [skills guide and example](docs/agent-skills.md).
+
 Agents and workflows offer **AI guide**, **AI-assisted draft**, and **Manual setup** creation paths. An administrator selects the assistant’s workspace model in **Settings**. Review generated settings before saving or publishing; workflow proposals chain existing published agents. Apply migration **0043**. See [AI-assisted creation](docs/ai-creation.md).
 
 Applications can access published agents and raw semantic/hybrid knowledge search through the [Platform REST API and MCP server](docs/platform-api.md), with resource-scoped keys and optional tool/RAG execution details.
@@ -239,7 +241,7 @@ See [validation](docs/validation.md) and scenario source files for prerequisites
 
 ## Documentation index
 
-- **Building agents:** [AI-assisted creation](docs/ai-creation.md), [Agent configuration](docs/agent-configure.md), [runtime](docs/agent-runtime.md), [RAG](docs/rag.md), [conversational retrieval and context selection](docs/conversational-rag.md), [tools](docs/tools.md), [model routing and retrieval](docs/model-routing-rag.md).
+- **Building agents:** [Skills](docs/agent-skills.md), [AI-assisted creation](docs/ai-creation.md), [Agent configuration](docs/agent-configure.md), [runtime](docs/agent-runtime.md), [RAG](docs/rag.md), [conversational retrieval and context selection](docs/conversational-rag.md), [tools](docs/tools.md), [model routing and retrieval](docs/model-routing-rag.md).
 - **Knowledge and integrations:** [connectors](docs/connectors.md), [integration scope](docs/integrations.md), [quality](docs/quality.md).
 - **Customer experience:** [channels and voice](docs/channels-voice.md), [customer engagement](docs/customer-engagement.md), [rich responses](docs/generative-experience.md), [human support](docs/human-support.md), [core banking AI](docs/bank-core-ai.md).
 - **Workflows and operations:** [workflows](docs/workflows.md), [operations](docs/operations.md), [customer insights and token controls](docs/customer-insights-context.md).
@@ -307,3 +309,7 @@ Set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` in both
 Agents support automatic response language matching or a fixed language under **Configure → Overview → Locale**. New studio agents match the user by default; existing agents retain their fixed setting. See the [response-language guide](docs/user-guide.md#response-language).
 
 Workflows support typed inputs, server-side API invocation and timezone-aware scheduled execution. Use the canvas Input node to define fields and **Triggers** to configure automation. Apply migration **0041** and restart API, worker and web. See the [workflow trigger guide](docs/workflow-triggers.md).
+
+### Console experience
+
+The console uses compact forms, accessible on-demand help, guided connector setup and a visual question editor in Quality Lab. Workflow selection stays compact, while canvas testing and expanded mode remain available. See [console UI conventions](docs/console-design.md) for layout, help and responsive behavior.

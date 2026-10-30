@@ -1,5 +1,6 @@
 "use client";
 
+import { HelpTooltip } from "./help-tooltip";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 export type WorkspaceSection = {
@@ -95,7 +96,11 @@ export function WorkspaceSections({
         </select>
       </label>
       {active && (
-        <p className="workspace-section-description">{active.description}</p>
+        <div className="workspace-section-description">
+          <HelpTooltip label={`About ${active.label.toLowerCase()}`}>
+            {active.description}
+          </HelpTooltip>
+        </div>
       )}
     </div>
   );

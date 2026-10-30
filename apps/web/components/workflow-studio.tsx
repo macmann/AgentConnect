@@ -1005,11 +1005,23 @@ export function WorkflowStudio({
       )}
       <div hidden={wizard}>
         <div className="workflow-picker">
-          {workflows.data?.map((w) => (
-            <Button className="secondary" key={w.id} onClick={() => open(w.id)}>
-              {w.name}
-            </Button>
-          ))}
+          <label className="workflow-selector">
+            Current workflow
+            <select
+              aria-label="Current workflow"
+              value={draft?.id ?? ""}
+              onChange={(event) => void open(event.target.value)}
+            >
+              <option value="" disabled>
+                Select a workflow
+              </option>
+              {workflows.data?.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         {build && (
           <details className="configure-group">

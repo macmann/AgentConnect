@@ -15,6 +15,7 @@ import {
 import { KnowledgeUploads, useKnowledgeUploads } from "./knowledge-uploads";
 import { ExtractionUsage } from "./extraction-usage";
 import { ExtractionReview, type ExtractionPage } from "./extraction-review";
+import { SettingsHint } from "./settings-help";
 import { HelpTooltip } from "./help-tooltip";
 import { websiteInput } from "@agentconnect/schemas/knowledge";
 import {
@@ -702,13 +703,11 @@ export function KnowledgeStudio({
                     required
                   />
                 </label>
-                <p className="muted">
-                  PDF, Office documents, CSV, text, Markdown, HTML and JSON.
-                  Select up to 100 files, maximum 10 MB each. Files upload
-                  gradually and queue for background ingestion. Enable OCR or AI
-                  extraction for scanned PDFs. Image uploads require AI
-                  extraction.
-                </p>
+                <SettingsHint label="Up to 100 files · 10 MB each">
+                  Supports PDF, Office, CSV, text, Markdown, HTML, JSON and
+                  images. Uploads queue for background ingestion. Scanned PDFs
+                  need OCR or AI extraction; images require AI extraction.
+                </SettingsHint>
                 <details className="source-metadata-editor">
                   <summary>Shared metadata for all selected files</summary>
                   <MetadataFields
@@ -1748,11 +1747,12 @@ export function KnowledgeStudio({
             ))}
           {tab === "settings" && (
             <div className="studio-form">
-              <p>
-                Embedding space: {base.dimensions} dimensions. Model and chunk
-                configuration are fixed; create a new knowledge base to change
-                them.
-              </p>
+              <SettingsHint
+                label={`Embedding space · ${base.dimensions} dimensions`}
+              >
+                Model and chunk configuration are fixed. Create a new knowledge
+                base to change them.
+              </SettingsHint>
               {canManage ? (
                 <form
                   key={base.revision}

@@ -613,10 +613,15 @@ export function ToolStudio({
                 {tools.data.map((t) => (
                   <tr key={t.id}>
                     <td>
-                      {t.name}
-                      <small className="block muted">
-                        {t.kind} · {t.description}
-                      </small>
+                      <div className="setting-label-row">
+                        {t.name}
+                        {t.description && (
+                          <HelpTooltip label={`About ${t.name}`}>
+                            {t.description}
+                          </HelpTooltip>
+                        )}
+                      </div>
+                      <small className="block muted">{t.kind}</small>
                     </td>
                     <td>
                       {t.enabled ? "Enabled" : "Disabled"} ·{" "}
