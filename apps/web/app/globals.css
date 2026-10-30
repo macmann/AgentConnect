@@ -7203,6 +7203,7 @@ fieldset {
   .quality-layout .studio-form .quality-example-row {
     padding: 12px;
   }
+}
 /* One canvas action surface, with drawers constrained to the canvas viewport. */
 .workflow-studio .workflow-editor {
   display: block;
