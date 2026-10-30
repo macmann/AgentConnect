@@ -107,6 +107,7 @@ test.afterAll(async () => {
       "workflow_runs",
       "workflow_versions",
       "workflows",
+      "tools",
       "agent_versions",
       "agents",
       "model_configurations",
@@ -379,7 +380,7 @@ test("node types use distinct shapes and Test mode cannot edit the graph", async
   }
   await expect(
     page.locator(".workflow-node.kind-condition .react-flow__handle"),
-  ).toHaveCount(3);
+  ).toHaveCount(6);
   await expect(page.locator(".workflow-node.kind-condition")).not.toHaveCSS(
     "transform",
     "rotate(45deg)",
@@ -700,13 +701,20 @@ test("workflow agents are created in a contained, minimizable canvas drawer", as
   await expect(
     drawer.getByLabel("Agent task prompt", { exact: true }),
   ).toHaveValue("Summarize the research for the workflow.");
-  await drawer
-    .getByRole("button", { name: "AI mode · describe the task" })
-    .click();
+  await expect(drawer.getByRole("button", { name: /AI mode/ })).toHaveCount(0);
+  const kbPicker = drawer.getByRole("region", {
+    name: "Knowledge bases",
+    exact: true,
+  });
+  await expect(kbPicker).toContainText("No knowledge bases available.");
   await expect(
-    drawer.getByRole("button", { name: /AI-assisted draft/ }),
-  ).toBeVisible();
-  await drawer.getByRole("button", { name: /Manual setup/ }).click();
+    kbPicker.getByRole("link", {
+      name: "Create knowledge base ↗",
+      exact: true,
+    }),
+  ).toHaveAttribute("target", "_blank");
+  const toolPicker = drawer.getByRole("region", { name: "Tools", exact: true });
+  await expect(toolPicker).toContainText("No enabled tools available.");
   await drawer.getByLabel("Also make a reusable copy in Agents").check();
   await drawer.getByRole("button", { name: "Save copy to Agents" }).click();
   await expect(drawer.getByRole("status")).toContainText(
@@ -756,5 +764,237 @@ test("workflow agents are created in a contained, minimizable canvas drawer", as
   expect(normalPanel.y).toBeGreaterThanOrEqual(normalCanvas.y);
   expect(normalPanel.y + normalPanel.height).toBeLessThanOrEqual(
     normalCanvas.y + normalCanvas.height,
+  );
+});
+
+test("canvas attachments support search, multiple additions and tool configuration links", async ({
+  page,
+  context,
+}) => {
+  const resourceIds = [randomUUID(), randomUUID()];
+  const toolIds = [];
+  for (const name of ["Canvas calculator", "Canvas comparison"]) {
+    toolIds.push(
+      (
+        await api(`/workspaces/${workspace}/tools`, {
+          name,
+          description: "Workflow attachment fixture",
+          config: { kind: "financial" },
+          readOnlyAcknowledged: true,
+        })
+      ).id,
+    );
+  }
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.route(`**/workspaces/${workspace}/knowledge-bases`, (route) =>
+    route.fulfill({
+      json: [
+        { id: resourceIds[0], name: "Product handbook" },
+        { id: resourceIds[1], name: "Support policies" },
+      ],
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create workflow", exact: true })
+    .click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
+  await page
+    .getByRole("button", { name: "Open canvas directly", exact: true })
+    .click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("Attachment workflow");
+  await page
+    .getByRole("button", { name: "Expand canvas", exact: true })
+    .click();
+  const canvas = page.getByRole("dialog", { name: "Expanded workflow canvas" });
+  await canvas
+    .getByRole("button", { name: "＋ Add nodes", exact: true })
+    .click();
+  await canvas.getByRole("button", { name: "Add agent", exact: true }).click();
+  const drawer = canvas.locator(".workflow-properties");
+  await drawer
+    .getByLabel("Runtime model", { exact: true })
+    .selectOption({ label: "Research" });
+  const kb = drawer.locator(".workflow-resource-picker").first();
+  await kb
+    .getByRole("button", { name: "＋ Add knowledge base", exact: true })
+    .click();
+  await kb
+    .getByLabel("Search knowledge bases", { exact: true })
+    .fill("handbook");
+  await expect(
+    kb.getByLabel("Select knowledge base", { exact: true }).locator("option"),
+  ).toHaveCount(2);
+  await kb
+    .getByLabel("Select knowledge base", { exact: true })
+    .selectOption(resourceIds[0]);
+  await kb
+    .getByRole("button", { name: "Add selected knowledge base", exact: true })
+    .click();
+  await kb
+    .getByLabel("Select knowledge base", { exact: true })
+    .selectOption(resourceIds[1]);
+  await kb
+    .getByRole("button", { name: "Add selected knowledge base", exact: true })
+    .click();
+  await expect(kb.locator("li")).toHaveCount(2);
+  await expect(kb.getByRole("checkbox")).toHaveCount(0);
+  await kb
+    .getByRole("button", { name: "Remove Product handbook", exact: true })
+    .click();
+  await expect(kb.locator("li")).toHaveCount(1);
+  const tools = drawer.locator(".workflow-resource-picker").nth(1);
+  await tools.getByRole("button", { name: "＋ Add tool", exact: true }).click();
+  for (const id of toolIds) {
+    await tools.getByLabel("Select tool", { exact: true }).selectOption(id);
+    await tools
+      .getByRole("button", { name: "Add selected tool", exact: true })
+      .click();
+  }
+  await expect(tools.locator("li")).toHaveCount(2);
+  const popupEvent = page.waitForEvent("popup");
+  await tools
+    .getByRole("link", { name: "Configure Canvas calculator", exact: true })
+    .click();
+  const popup = await popupEvent;
+  await expect(
+    popup.getByRole("heading", { name: "Edit tool", exact: true }),
+  ).toBeVisible();
+  await popup.close();
+  const order = await drawer.locator("summary").allTextContents();
+  expect(order.at(-1)).toBe("Failure recovery");
+  await canvas.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(
+    canvas.getByRole("status", { name: "Draft save status" }),
+  ).toHaveText("Saved");
+  const [stored] =
+    await sql`SELECT draft_graph FROM workflows WHERE workspace_id=${workspace} AND name='Attachment workflow'`;
+  const agent = stored.draft_graph.nodes.find((n) => n.type === "agent").data
+    .inlineAgent;
+  expect(agent.rag.knowledgeBaseIds).toEqual([resourceIds[1]]);
+  expect(agent.tools.toolIds).toEqual(toolIds);
+});
+
+test("canvas deletes nodes and connections and persists connections on multiple sides", async ({
+  page,
+  context,
+}) => {
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create workflow", exact: true })
+    .click();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
+  await page
+    .getByRole("button", { name: "Open canvas directly", exact: true })
+    .click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("Connection edits");
+  await page
+    .getByRole("button", { name: "Expand canvas", exact: true })
+    .click();
+  const canvas = page.getByRole("dialog", { name: "Expanded workflow canvas" });
+  await canvas.getByRole("button", { name: "Minimize canvas panel" }).click();
+  async function selectEdge() {
+    const point = await canvas
+      .locator(".react-flow__edge-path")
+      .first()
+      .evaluate((path) => {
+        const p = path.getPointAtLength(path.getTotalLength() / 2);
+        const q = new DOMPoint(p.x, p.y).matrixTransform(path.getScreenCTM());
+        return { x: q.x, y: q.y };
+      });
+    await page.mouse.click(point.x, point.y);
+  }
+  await selectEdge();
+  await canvas
+    .getByRole("button", { name: "Delete selected", exact: true })
+    .click();
+  await expect(canvas.locator(".react-flow__edge")).toHaveCount(0);
+  await expect(canvas.locator(".react-flow__node")).toHaveCount(2);
+  await canvas.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(canvas.locator(".react-flow__edge")).toHaveCount(1);
+  await selectEdge();
+  await page.keyboard.press("Delete");
+  await expect(canvas.locator(".react-flow__edge")).toHaveCount(0);
+  await canvas.locator('.react-flow__node[data-id="output"]').click();
+  await canvas
+    .getByRole("button", { name: "Delete selected", exact: true })
+    .click();
+  await expect(canvas.locator(".react-flow__node")).toHaveCount(1);
+  await canvas.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(canvas.locator(".react-flow__node")).toHaveCount(2);
+  await canvas
+    .getByRole("button", { name: "＋ Add nodes", exact: true })
+    .click();
+  await canvas.getByRole("button", { name: "Add tool", exact: true }).click();
+  await canvas.getByRole("button", { name: "Minimize canvas panel" }).click();
+  const tool = canvas
+    .locator(".react-flow__node")
+    .filter({ has: page.locator(".kind-tool") });
+  const input = canvas.locator('.react-flow__node[data-id="input"]');
+  const output = canvas.locator('.react-flow__node[data-id="output"]');
+  async function connect(from, to) {
+    const a = await from.boundingBox(),
+      b = await to.boundingBox();
+    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 });
+    await page.mouse.up();
+  }
+  await connect(
+    input.locator('[data-handleid="out-bottom"]'),
+    tool.locator('[data-handleid="in-top"]'),
+  );
+  await expect(canvas.locator(".react-flow__edge")).toHaveCount(1);
+  await connect(
+    tool.locator('[data-handleid="out-top"]'),
+    output.locator('[data-handleid="in-bottom"]'),
+  );
+  await expect(canvas.locator(".react-flow__edge")).toHaveCount(2);
+  await canvas.locator(".react-flow__edge").first().focus();
+  await page.keyboard.press("Enter");
+  await connect(
+    canvas.locator(
+      ".react-flow__edge.selected .react-flow__edgeupdater-target",
+    ),
+    tool.locator('[data-handleid="in-right"]'),
+  );
+  await expect(canvas.locator(".react-flow__edge")).toHaveCount(2);
+  await canvas.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(
+    canvas.getByRole("status", { name: "Draft save status" }),
+  ).toHaveText("Saved");
+  const [stored] =
+    await sql`SELECT draft_graph FROM workflows WHERE workspace_id=${workspace} AND name='Connection edits'`;
+  expect(
+    stored.draft_graph.edges.map((e) => [e.sourcePort, e.targetPort]),
+  ).toEqual(
+    expect.arrayContaining([
+      ["out-bottom", "in-right"],
+      ["out-top", "in-bottom"],
+    ]),
   );
 });

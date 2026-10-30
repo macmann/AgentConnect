@@ -61,6 +61,8 @@ export const workflowEdge = z.object({
   source: nodeId,
   target: nodeId,
   sourceHandle: z.enum(["true", "false"]).nullable().optional(),
+  sourcePort: z.enum(["out-top", "out-bottom", "out-left"]).optional(),
+  targetPort: z.enum(["in-top", "in-bottom", "in-right"]).optional(),
 });
 export const workflowInputField = z.object({
   name: z

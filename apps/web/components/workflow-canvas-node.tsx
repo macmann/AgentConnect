@@ -39,6 +39,46 @@ function CanvasItem({ data, selected, isConnectable }: NodeProps<CanvasNode>) {
           position={Position.Left}
         />
       )}
+      {data.kind !== "input" &&
+        [
+          { id: "in-top", position: Position.Top, style: { left: "35%" } },
+          {
+            id: "in-bottom",
+            position: Position.Bottom,
+            style: { left: "35%" },
+          },
+          { id: "in-right", position: Position.Right, style: { top: "35%" } },
+        ].map((port) => (
+          <Handle
+            key={port.id}
+            id={port.id}
+            type="target"
+            position={port.position}
+            style={port.style}
+            isConnectable={isConnectable}
+            aria-label={`Connect into ${data.label} at ${port.id.slice(3)}`}
+          />
+        ))}
+      {!["output", "router", "condition"].includes(data.kind) &&
+        [
+          { id: "out-top", position: Position.Top, style: { left: "65%" } },
+          {
+            id: "out-bottom",
+            position: Position.Bottom,
+            style: { left: "65%" },
+          },
+          { id: "out-left", position: Position.Left, style: { top: "75%" } },
+        ].map((port) => (
+          <Handle
+            key={port.id}
+            id={port.id}
+            type="source"
+            position={port.position}
+            style={port.style}
+            isConnectable={isConnectable}
+            aria-label={`Connect from ${data.label} at ${port.id.slice(4)}`}
+          />
+        ))}
       <Icon className="workflow-node-icon" size={18} aria-hidden="true" />
       <small>{data.kind}</small>
       <strong>{data.label}</strong>

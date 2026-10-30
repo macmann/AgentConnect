@@ -17,6 +17,8 @@ export function WorkflowCanvasToolbar({
   canUndo,
   canRedo,
   canDuplicate,
+  canDelete,
+  onDelete,
 }: {
   disabled: boolean;
   canAdd: boolean;
@@ -28,6 +30,8 @@ export function WorkflowCanvasToolbar({
   canUndo: boolean;
   canRedo: boolean;
   canDuplicate: boolean;
+  canDelete: boolean;
+  onDelete: () => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -75,6 +79,13 @@ export function WorkflowCanvasToolbar({
           onClick={duplicate}
         >
           Duplicate node
+        </Button>
+        <Button
+          className="secondary"
+          disabled={disabled || !canDelete}
+          onClick={onDelete}
+        >
+          Delete selected
         </Button>
         <Button className="secondary" disabled={disabled} onClick={layout}>
           Auto layout
