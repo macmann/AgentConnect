@@ -1,3 +1,4 @@
+import { registerWorkflowAssistant } from "./workflow-assistant.js";
 import { registerAgentSkills } from "./agent-skills.js";
 import { registerCreationAssistant } from "./creation-assistant.js";
 import { registerPlatformApi } from "./platform-api.js";
@@ -821,6 +822,7 @@ export async function buildApp(
   );
   await registerAgentSkills(app);
   await registerCreationAssistant(app, options.providerFactory);
+  await registerWorkflowAssistant(app, options.providerFactory);
   await registerPlatformApi(
     app,
     options.providerFactory,

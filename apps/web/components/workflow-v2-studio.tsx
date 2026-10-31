@@ -33,6 +33,7 @@ import { requestJson, apiBase } from "./agent-client";
 import { Button } from "./button";
 import { WorkflowResult } from "./workflow-result";
 import { WorkflowActionConnections } from "./workflow-action-connections";
+import { WorkflowAssistant } from "./workflow-assistant";
 import { WorkflowTriggers } from "./workflow-triggers";
 type Step = WorkflowDefinitionV2["execution"]["nodes"][number];
 type VNode = Node<
@@ -277,6 +278,10 @@ export function WorkflowV2Studio({
     [name, setName] = useState("New workflow"),
     [revision, setRevision] = useState(1),
     [description, setDescription] = useState("");
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantPreview, setAssistantPreview] =
+    useState<WorkflowDefinitionV2 | null>(null);
+  const canvasEditable = editable && !assistantPreview;
   const [selectedEdges, setSelectedEdges] = useState<string[]>([]);
   const [selected, setSelected] = useState("input"),
     [minimized, setMinimized] = useState(false),
@@ -472,10 +477,11 @@ export function WorkflowV2Studio({
             { id: "default", label: "Default" },
           ]
         : [];
-  const nodes: VNode[] = definition.execution.nodes.map((n, i) => ({
+  const canvasDefinition = assistantPreview ?? definition;
+  const nodes: VNode[] = canvasDefinition.execution.nodes.map((n, i) => ({
     id: n.id,
     type: "v2",
-    position: definition.editor?.nodes[n.id] ?? { x: i * 250, y: 150 },
+    position: canvasDefinition.editor?.nodes[n.id] ?? { x: i * 250, y: 150 },
     selected: selected === n.id,
     data: {
       label: n.label,
@@ -488,8 +494,8 @@ export function WorkflowV2Studio({
     },
   }));
   const controlEdges = [
-    ...definition.execution.edges,
-    ...definition.execution.nodes
+    ...canvasDefinition.execution.edges,
+    ...canvasDefinition.execution.nodes
       .filter((n) => n.onError)
       .map((n) => ({
         id: "error_" + n.id,
@@ -503,8 +509,10 @@ export function WorkflowV2Studio({
     source: e.source,
     target: e.target,
     sourceHandle:
-      e.branch ?? definition.editor?.edges[e.id]?.sourcePort ?? "out-right",
-    targetHandle: definition.editor?.edges[e.id]?.targetPort ?? "in-left",
+      e.branch ??
+      canvasDefinition.editor?.edges[e.id]?.sourcePort ??
+      "out-right",
+    targetHandle: canvasDefinition.editor?.edges[e.id]?.targetPort ?? "in-left",
     selected: selectedEdges.includes(e.id),
     label: e.branch,
   }));
@@ -793,9 +801,9 @@ export function WorkflowV2Studio({
                 edges={edges}
                 fitView
                 fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
-                nodesDraggable={editable}
-                nodesConnectable={editable}
-                deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
+                nodesDraggable={!!canvasEditable}
+                nodesConnectable={!!canvasEditable}
+                deleteKeyCode={canvasEditable ? ["Backspace", "Delete"] : null}
                 onNodeClick={(_, n) => {
                   setSelected(n.id);
                   setSelectedEdges([]);
@@ -807,7 +815,7 @@ export function WorkflowV2Studio({
                   setSelected("");
                 }}
                 onNodesChange={(changes) => {
-                  if (!editable) return;
+                  if (!canvasEditable) return;
                   const removed = changes
                     .filter((c) => c.type === "remove")
                     .map((c) => c.id);
@@ -826,16 +834,20 @@ export function WorkflowV2Studio({
                   });
                 }}
                 onEdgesChange={(changes) => {
-                  if (editable) {
+                  if (canvasEditable) {
                     const removed = changes
                       .filter((c) => c.type === "remove")
                       .map((c) => c.id);
                     if (removed.length) remove([], removed);
                   }
                 }}
-                onConnect={(connection) => connect(connection)}
-                onReconnect={(old, connection) => connect(connection, old.id)}
-                edgesReconnectable={editable}
+                onConnect={(connection) => {
+                  if (canvasEditable) connect(connection);
+                }}
+                onReconnect={(old, connection) => {
+                  if (canvasEditable) connect(connection, old.id);
+                }}
+                edgesReconnectable={!!canvasEditable}
               >
                 <Background />
                 <Controls />
@@ -844,7 +856,7 @@ export function WorkflowV2Studio({
                     <select
                       aria-label="Node type"
                       value={kind}
-                      disabled={!editable}
+                      disabled={!canvasEditable}
                       onChange={(e) => setKind(e.target.value as typeof kind)}
                     >
                       {kinds.map((k) => (
@@ -855,14 +867,15 @@ export function WorkflowV2Studio({
                     </select>
                     <Button
                       disabled={
-                        !editable || definition.execution.nodes.length >= 40
+                        !canvasEditable ||
+                        definition.execution.nodes.length >= 40
                       }
                       onClick={add}
                     >
                       + Add node
                     </Button>
                     <Button
-                      disabled={!editable || busy}
+                      disabled={!canvasEditable || busy}
                       onClick={() =>
                         void task(async () => {
                           await save();
@@ -872,7 +885,7 @@ export function WorkflowV2Studio({
                       Save draft
                     </Button>
                     <Button
-                      disabled={!editable || busy || !!errors.length}
+                      disabled={!canvasEditable || busy || !!errors.length}
                       onClick={() =>
                         void task(async () => {
                           const saved =
@@ -898,6 +911,8 @@ export function WorkflowV2Studio({
                     </Button>
                     <Button
                       onClick={() => {
+                        setAssistantOpen(false);
+                        setAssistantPreview(null);
                         setTestOpen(!testOpen);
                         setMinimized(false);
                       }}
@@ -906,6 +921,8 @@ export function WorkflowV2Studio({
                     </Button>
                     <Button
                       onClick={() => {
+                        setAssistantOpen(false);
+                        setAssistantPreview(null);
                         setSelected("");
                         setTestOpen(false);
                         setMinimized(false);
@@ -915,7 +932,7 @@ export function WorkflowV2Studio({
                     </Button>
                     <Button
                       disabled={
-                        !editable || (!selectedEdges.length && !selected)
+                        !canvasEditable || (!selectedEdges.length && !selected)
                       }
                       onClick={() => {
                         remove(selected ? [selected] : [], selectedEdges);
@@ -925,7 +942,23 @@ export function WorkflowV2Studio({
                     >
                       Delete selected
                     </Button>
-                    <span>{dirty ? "Unsaved" : "Saved"}</span>
+                    <Button
+                      onClick={() => {
+                        setAssistantOpen(!assistantOpen);
+                        setAssistantPreview(null);
+                        setTestOpen(false);
+                        setMinimized(false);
+                      }}
+                    >
+                      AI assistant
+                    </Button>
+                    <span>
+                      {assistantPreview
+                        ? "AI preview · not applied"
+                        : dirty
+                          ? "Unsaved"
+                          : "Saved"}
+                    </span>
                   </div>
                 </Panel>
               </ReactFlow>
@@ -936,12 +969,34 @@ export function WorkflowV2Studio({
               >
                 {minimized ? "‹ Restore panel" : "› Minimize panel"}
               </Button>
-              {!minimized && (
+              {(!minimized || assistantOpen) && (
                 <aside
+                  hidden={minimized}
                   className="v2-properties"
-                  aria-label={testOpen ? "Workflow testing" : "Node properties"}
+                  aria-label={
+                    assistantOpen
+                      ? "Workflow AI assistant"
+                      : testOpen
+                        ? "Workflow testing"
+                        : "Node properties"
+                  }
                 >
-                  {testOpen ? (
+                  {assistantOpen ? (
+                    <WorkflowAssistant
+                      workspaceId={workspaceId}
+                      workflowId={id}
+                      definition={definition}
+                      selectedNodeId={selected}
+                      editable={editable}
+                      onPreview={setAssistantPreview}
+                      onApply={(next) => {
+                        change(next);
+                        setNotice(
+                          "AI proposal applied. Save draft when ready.",
+                        );
+                      }}
+                    />
+                  ) : testOpen ? (
                     <>
                       <h3>Test workflow</h3>
                       <label>

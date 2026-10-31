@@ -57,6 +57,63 @@ async function ownedRun(
   await workspaceAccess(u.id, run.workspace_id, cap);
   return { u, run };
 }
+export async function workflowCatalog(
+  workspaceId: string,
+  organizationId: string,
+  userId: string,
+) {
+  const w = { id: workspaceId, organization_id: organizationId },
+    u = { id: userId };
+  const { inputSchemaFor, validateToolIds } = await import("./tool-runtime.js");
+  const ctx = {
+    workspaceId: w.id,
+    organizationId: w.organization_id,
+    userId: u.id,
+  };
+  const models =
+    await sql`SELECT id,name,provider,model_id FROM model_configurations WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL ORDER BY name`;
+  const agents =
+    await sql`SELECT v.id,v.agent_id,a.name,v.version,v.public_description,v.model_snapshot->>'provider' AS provider,v.model_snapshot->>'modelId' AS model,COALESCE(jsonb_array_length(v.config->'rag'->'knowledgeBaseIds'),0) AS knowledge_count,COALESCE(jsonb_array_length(v.config->'tools'->'toolIds'),0) AS tool_count FROM agent_versions v JOIN agents a ON a.id=v.agent_id WHERE v.workspace_id=${w.id} AND v.organization_id=${w.organization_id} AND a.archived_at IS NULL ORDER BY a.name,v.version DESC`;
+  const registered =
+    await sql`SELECT id FROM tools WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND enabled=true AND archived_at IS NULL ORDER BY name`;
+  const actions = [];
+  for (const entry of registered) {
+    try {
+      const [tool] = await validateToolIds([entry.id], ctx);
+      if (!tool) continue;
+      actions.push({
+        id: tool.id,
+        name: tool.name,
+        connector:
+          tool.config.kind === "mcp" ? "agentconnect.mcp" : "agentconnect.tool",
+        operation: "execute",
+        connectionId:
+          tool.config.kind === "mcp"
+            ? tool.config.connectorId
+            : "secretId" in tool.config
+              ? (tool.config.secretId ?? undefined)
+              : undefined,
+        inputSchema: await inputSchemaFor(tool.config, ctx),
+        timeoutMs: tool.timeout_ms,
+      });
+    } catch {
+      actions.push({
+        id: entry.id,
+        name: "Unavailable integration",
+        unavailable: true,
+      });
+    }
+  }
+  const workflows =
+    await sql`SELECT v.id,v.workflow_id,v.version,v.name FROM workflow_versions v JOIN workflows w ON w.id=v.workflow_id WHERE v.workspace_id=${w.id} AND v.organization_id=${w.organization_id} AND w.archived_at IS NULL ORDER BY v.name,v.version DESC`;
+  return {
+    models,
+    agents,
+    actions,
+    workflows,
+    connections: await actionConnectionCatalog(w.id, w.organization_id),
+  };
+}
 export async function registerWorkflowRoutes(app: FastifyInstance) {
   const workflowInput = workflowInputV1.extend({ graph: workflowDefinition });
   const workflowUpdate = workflowInput.extend({
@@ -104,58 +161,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
       id(params(r).workspaceId),
       "workflow:read",
     );
-    const { inputSchemaFor, validateToolIds } =
-      await import("./tool-runtime.js");
-    const ctx = {
-      workspaceId: w.id,
-      organizationId: w.organization_id,
-      userId: u.id,
-    };
-    const models =
-      await sql`SELECT id,name,provider,model_id FROM model_configurations WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND archived_at IS NULL ORDER BY name`;
-    const agents =
-      await sql`SELECT v.id,v.agent_id,a.name,v.version,v.public_description,v.model_snapshot->>'provider' AS provider,v.model_snapshot->>'modelId' AS model,COALESCE(jsonb_array_length(v.config->'rag'->'knowledgeBaseIds'),0) AS knowledge_count,COALESCE(jsonb_array_length(v.config->'tools'->'toolIds'),0) AS tool_count FROM agent_versions v JOIN agents a ON a.id=v.agent_id WHERE v.workspace_id=${w.id} AND v.organization_id=${w.organization_id} AND a.archived_at IS NULL ORDER BY a.name,v.version DESC`;
-    const registered =
-      await sql`SELECT id FROM tools WHERE workspace_id=${w.id} AND organization_id=${w.organization_id} AND enabled=true AND archived_at IS NULL ORDER BY name`;
-    const actions = [];
-    for (const entry of registered) {
-      try {
-        const [tool] = await validateToolIds([entry.id], ctx);
-        if (!tool) continue;
-        actions.push({
-          id: tool.id,
-          name: tool.name,
-          connector:
-            tool.config.kind === "mcp"
-              ? "agentconnect.mcp"
-              : "agentconnect.tool",
-          operation: "execute",
-          connectionId:
-            tool.config.kind === "mcp"
-              ? tool.config.connectorId
-              : "secretId" in tool.config
-                ? (tool.config.secretId ?? undefined)
-                : undefined,
-          inputSchema: await inputSchemaFor(tool.config, ctx),
-          timeoutMs: tool.timeout_ms,
-        });
-      } catch {
-        actions.push({
-          id: entry.id,
-          name: "Unavailable integration",
-          unavailable: true,
-        });
-      }
-    }
-    const workflows =
-      await sql`SELECT v.id,v.workflow_id,v.version,v.name FROM workflow_versions v JOIN workflows w ON w.id=v.workflow_id WHERE v.workspace_id=${w.id} AND v.organization_id=${w.organization_id} AND w.archived_at IS NULL ORDER BY v.name,v.version DESC`;
-    return {
-      models,
-      agents,
-      actions,
-      workflows,
-      connections: await actionConnectionCatalog(w.id, w.organization_id),
-    };
+    return workflowCatalog(w.id, w.organization_id, u.id);
   });
   app.post(
     "/workspaces/:workspaceId/workflows",

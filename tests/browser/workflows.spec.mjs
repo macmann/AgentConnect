@@ -11,6 +11,7 @@ const org = randomUUID(),
   user = randomUUID(),
   session = randomUUID();
 const calls = [];
+let workflowAIOutput = null;
 const fixture = createServer(async (req, res) => {
   let raw = "";
   for await (const chunk of req) raw += chunk;
@@ -19,9 +20,11 @@ const fixture = createServer(async (req, res) => {
   if (data.model === "research")
     await new Promise((resolve) => setTimeout(resolve, 4000));
   const text =
-    data.model === "research"
-      ? "Research findings: assess the proposed launch."
-      : "Final report: " + data.messages.at(-1).content;
+    data.model === "workflow-ai"
+      ? JSON.stringify(workflowAIOutput)
+      : data.model === "research"
+        ? "Research findings: assess the proposed launch."
+        : "Final report: " + data.messages.at(-1).content;
   res.writeHead(200, { "content-type": "text/event-stream" });
   res.end(
     "data: " +
@@ -113,6 +116,7 @@ test.afterAll(async () => {
       "tools",
       "agent_versions",
       "agents",
+      "workspace_creation_settings",
       "model_configurations",
       "memberships",
       "workspaces",
@@ -1587,4 +1591,234 @@ test("V2 native HTTP Actions and authenticated webhook triggers are configurable
     await sql`SELECT name,token_hash FROM workflow_webhooks WHERE workflow_id=${workflow.id}`;
   expect(hook.name).toBe("Browser webhook");
   expect(hook.token_hash).not.toContain("acwh_");
+});
+
+test("Workflow AI previews mutations on the canvas, cancels without changes, applies explicitly and explains actual definitions", async ({
+  page,
+  context,
+}) => {
+  const model = await api(`/workspaces/${workspace}/models`, {
+    name: "Workflow AI",
+    provider: "openai-compatible",
+    modelId: "workflow-ai",
+    baseUrl: "http://127.0.0.1:4548/v1",
+    contextWindow: 131072,
+    maxOutputTokens: 16384,
+  });
+  await sql`INSERT INTO workspace_creation_settings(workspace_id,organization_id,enabled,model_id,revision) VALUES (${workspace},${org},true,${model.id},1)`;
+  const source = {
+    schemaVersion: 2,
+    execution: {
+      nodes: [
+        { id: "start", kind: "input", label: "API input", config: {} },
+        { id: "end", kind: "output", label: "Complete", config: {} },
+      ],
+      edges: [{ id: "next", source: "start", target: "end" }],
+    },
+    editor: {
+      nodes: { start: { x: 40, y: 120 }, end: { x: 650, y: 120 } },
+      edges: {},
+    },
+  };
+  const workflow = await api(`/workspaces/${workspace}/workflows`, {
+    name: "AI preview workflow",
+    graph: source,
+  });
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByLabel("Current workflow", { exact: true })
+    .selectOption(workflow.id);
+  await page.getByRole("button", { name: "AI assistant", exact: true }).click();
+  const assistant = page.getByRole("complementary", {
+    name: "Workflow AI assistant",
+    exact: true,
+  });
+  workflowAIOutput = {
+    kind: "mutations",
+    message: "Review adding a durable wait before completion.",
+    operations: [
+      { op: "disconnect", edgeId: "next" },
+      {
+        op: "addNode",
+        nearNodeId: "start",
+        node: {
+          id: "wait",
+          kind: "wait",
+          label: "Wait 24 hours",
+          config: { mode: "duration", seconds: 86400 },
+        },
+      },
+      { op: "connect", edge: { id: "a", source: "start", target: "wait" } },
+      { op: "connect", edge: { id: "b", source: "wait", target: "end" } },
+    ],
+  };
+  await assistant
+    .getByLabel("Workflow AI instructions", { exact: true })
+    .fill("Wait 24 hours before completing.");
+  await assistant
+    .getByRole("button", { name: "Propose changes", exact: true })
+    .click();
+  await expect(
+    assistant.getByRole("button", { name: "Apply proposal", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.react-flow__node[data-id="wait"]')).toHaveCount(
+    1,
+  );
+  await expect(
+    page.getByRole("button", { name: "Save draft", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "› Minimize panel", exact: true })
+    .click();
+  await expect(assistant).not.toBeVisible();
+  await page
+    .getByRole("button", { name: "‹ Restore panel", exact: true })
+    .click();
+  await expect(
+    assistant.getByRole("button", { name: "Apply proposal", exact: true }),
+  ).toBeVisible();
+  let [stored] =
+    await sql`SELECT draft_graph,revision FROM workflows WHERE id=${workflow.id}`;
+  expect(stored.draft_graph.execution.nodes).toHaveLength(2);
+  expect(stored.revision).toBe(1);
+  await assistant
+    .getByRole("button", { name: "Cancel proposal", exact: true })
+    .click();
+  await expect(page.locator('.react-flow__node[data-id="wait"]')).toHaveCount(
+    0,
+  );
+  await assistant
+    .getByRole("button", { name: "Propose changes", exact: true })
+    .click();
+  await assistant
+    .getByRole("button", { name: "Apply proposal", exact: true })
+    .click();
+  await expect(assistant.getByRole("status")).toContainText(
+    "Proposal applied to the canvas",
+  );
+  [stored] =
+    await sql`SELECT draft_graph FROM workflows WHERE id=${workflow.id}`;
+  expect(stored.draft_graph.execution.nodes).toHaveLength(2);
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByRole("status").first()).toContainText("Draft saved");
+  [stored] =
+    await sql`SELECT draft_graph FROM workflows WHERE id=${workflow.id}`;
+  expect(stored.draft_graph.execution.nodes).toHaveLength(3);
+  expect(stored.draft_graph.editor.nodes.start).toEqual(
+    source.editor.nodes.start,
+  );
+  expect(stored.draft_graph.editor.nodes.end).toEqual(source.editor.nodes.end);
+  workflowAIOutput = {
+    kind: "explanation",
+    message:
+      "API input starts the workflow. It waits durably for 24 hours, then completes. No external systems are modified; no human approval gates are configured.",
+  };
+  await assistant
+    .getByLabel("Assistant task", { exact: true })
+    .selectOption("explain");
+  await assistant
+    .getByRole("button", { name: "Explain workflow", exact: true })
+    .click();
+  await expect(
+    assistant.getByText(workflowAIOutput.message, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    assistant.getByRole("button", { name: "Apply proposal", exact: true }),
+  ).toHaveCount(0);
+  workflowAIOutput = {
+    kind: "mutations",
+    message: "Invalid executable code",
+    operations: [{ op: "eval", code: "alert(1)" }],
+  };
+  await assistant
+    .getByLabel("Assistant task", { exact: true })
+    .selectOption("modify");
+  await assistant
+    .getByRole("button", { name: "Propose changes", exact: true })
+    .click();
+  await expect(assistant.getByRole("alert")).toContainText(
+    "No changes were applied",
+  );
+  await expect(
+    assistant.getByRole("button", { name: "Apply proposal", exact: true }),
+  ).toHaveCount(0);
+  workflowAIOutput = {
+    kind: "mutations",
+    message:
+      "Review a high-risk delete operation. It is only a proposal and will not run.",
+    operations: [
+      { op: "disconnect", edgeId: "b" },
+      {
+        op: "upsertAction",
+        action: {
+          id: "delete",
+          name: "Delete invoice",
+          connector: "agentconnect.http",
+          operation: "DELETE",
+          http: {
+            method: "DELETE",
+            url: {
+              type: "literal",
+              value: "https://api.openai.com/v1/invoices",
+            },
+          },
+          sideEffect: "delete",
+          riskLevel: "high",
+          allowSideEffects: true,
+          idempotency: "unsupported",
+        },
+      },
+      {
+        op: "addNode",
+        nearNodeId: "wait",
+        node: {
+          id: "delete",
+          kind: "action",
+          label: "Delete invoice",
+          config: { actionId: "delete" },
+        },
+      },
+      {
+        op: "connect",
+        edge: { id: "before_delete", source: "wait", target: "delete" },
+      },
+      {
+        op: "connect",
+        edge: { id: "after_delete", source: "delete", target: "end" },
+      },
+    ],
+  };
+  await assistant
+    .getByRole("button", { name: "Propose changes", exact: true })
+    .click();
+  await expect(assistant.getByText(/HIGH RISK: Delete invoice/)).toBeVisible();
+  await expect(
+    assistant.getByRole("button", { name: "Apply proposal", exact: true }),
+  ).toBeDisabled();
+  await assistant
+    .getByLabel("I reviewed the warnings and side effects", { exact: true })
+    .check();
+  await expect(
+    assistant.getByRole("button", { name: "Apply proposal", exact: true }),
+  ).toBeEnabled();
+  await assistant
+    .getByRole("button", { name: "Cancel proposal", exact: true })
+    .click();
+  await expect(page.locator('.react-flow__node[data-id="delete"]')).toHaveCount(
+    0,
+  );
+  await page.screenshot({
+    path: "test-results/workflow-ai-preview.png",
+    fullPage: true,
+  });
 });
