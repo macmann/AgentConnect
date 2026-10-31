@@ -1,3 +1,4 @@
+import { config } from "./config.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { sql } from "./db.js";
@@ -99,7 +100,7 @@ export async function suspensionFor(
       { workflow_id: string; id: string; depth: number }[]
     >`WITH RECURSIVE lineage AS (SELECT id,workflow_id,parent_run_id,0 AS depth FROM workflow_runs WHERE id=${run.id} UNION ALL SELECT r.id,r.workflow_id,r.parent_run_id,l.depth+1 FROM workflow_runs r JOIN lineage l ON r.id=l.parent_run_id WHERE l.depth<4) SELECT id,workflow_id,depth FROM lineage`;
     if (
-      ancestry.length >= 4 ||
+      ancestry.length >= config.WORKFLOW_MAX_DEPTH ||
       ancestry.some((a) => a.workflow_id === resource.workflowId)
     )
       throw new WorkflowControlError("SUBWORKFLOW_RECURSION_LIMIT");
@@ -126,7 +127,7 @@ export async function suspensionFor(
       if (
         Math.max(0, collection.length - node.config.startIndex) >
           node.config.maxItems ||
-        collection.length > 100
+        collection.length > config.WORKFLOW_MAX_ITERATIONS
       )
         throw new WorkflowControlError("FOR_EACH_LIMIT_EXCEEDED");
       items = collection.slice(node.config.startIndex);
@@ -242,7 +243,10 @@ export async function wakeWorkflowSuspensions() {
                 },
               },
         );
-        if (Buffer.byteLength(JSON.stringify(result)) > 128000)
+        if (
+          Buffer.byteLength(JSON.stringify(result)) >
+          config.WORKFLOW_OUTPUT_BYTES
+        )
           await tx`UPDATE workflow_suspensions SET status='ready',error_code='WORKFLOW_OUTPUT_LIMIT' WHERE id=${s.id}`;
         else
           await tx`UPDATE workflow_suspensions SET status='ready',result=${tx.json(result as never)} WHERE id=${s.id}`;

@@ -89,6 +89,24 @@ test.beforeAll(async () => {
     await api(`/agents/${a.id}/publish`, { revision: 1 });
   }
 });
+test.beforeEach(async () => {
+  // Respect the real API limit during the complete browser suite, including polling.
+  const probe = await fetch(
+    `http://localhost:4000/workspaces/${workspace}/workflows`,
+    { headers: { cookie: "session=" + session } },
+  );
+  const remaining = Number(probe.headers.get("x-ratelimit-remaining") ?? 300);
+  if (probe.status === 429 || remaining < 100) {
+    const reset = Number(
+      probe.headers.get("retry-after") ??
+        probe.headers.get("x-ratelimit-reset") ??
+        1,
+    );
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(59000, Math.max(1000, reset * 1000 + 500))),
+    );
+  }
+});
 test.afterAll(async () => {
   fixture.closeAllConnections();
   await new Promise((r) => fixture.close(r));
@@ -114,6 +132,7 @@ test.afterAll(async () => {
       "workflow_mcp_action_grants",
       "workflow_http_connections",
       "tools",
+      "mcp_connectors",
       "agent_versions",
       "agents",
       "workspace_creation_settings",
@@ -1249,7 +1268,7 @@ test("V2 creates structured schemas and deterministic Actions from canvas proper
   await page.goto("/");
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
   await page
-    .getByRole("button", { name: "Create V2 workflow", exact: true })
+    .getByRole("button", { name: "Blank workflow", exact: true })
     .click();
   await page
     .getByLabel("Node type", { exact: true })
@@ -1821,4 +1840,294 @@ test("Workflow AI previews mutations on the canvas, cancels without changes, app
     path: "test-results/workflow-ai-preview.png",
     fullPage: true,
   });
+});
+
+test("Document database starter configures generic schemas, mappings and read-back rules without JSON", async ({
+  page,
+  context,
+}) => {
+  const connector = randomUUID();
+  const record = {
+    type: "object",
+    properties: { recordId: { type: "string" }, text: { type: "string" } },
+    required: ["recordId", "text"],
+    additionalProperties: false,
+  };
+  await sql`INSERT INTO mcp_connectors(id,workspace_id,organization_id,name,url,capabilities) VALUES (${connector},${workspace},${org},'Production DB MCP','http://127.0.0.1:4548/mcp',${sql.json(
+    {
+      tools: [
+        {
+          name: "insert_record",
+          inputSchema: record,
+          annotations: { readOnlyHint: false, destructiveHint: false },
+        },
+        {
+          name: "read_record",
+          inputSchema: {
+            type: "object",
+            properties: { recordId: { type: "string" } },
+            required: ["recordId"],
+          },
+          outputSchema: record,
+          annotations: { readOnlyHint: true },
+        },
+      ],
+    },
+  )})`;
+  await api(`/workspaces/${workspace}/mcp-action-grants`, {
+    connectorId: connector,
+    operation: "insert_record",
+    sideEffect: "write",
+    riskLevel: "medium",
+    allowWrites: true,
+  });
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Document → Database template", exact: true })
+    .click();
+  const [model] =
+    await sql`SELECT id FROM model_configurations WHERE workspace_id=${workspace} ORDER BY name LIMIT 1`;
+  await page
+    .getByLabel("Template model", { exact: true })
+    .selectOption(model.id);
+  await page
+    .getByLabel("Template MCP connection", { exact: true })
+    .selectOption(connector);
+  await page
+    .getByLabel("Template write operation", { exact: true })
+    .selectOption("insert_record");
+  await page
+    .getByLabel("Template read operation", { exact: true })
+    .selectOption("read_record");
+  await page
+    .getByLabel("insert_record mapping recordId", { exact: true })
+    .selectOption("recordId");
+  await page
+    .getByLabel("insert_record mapping text", { exact: true })
+    .selectOption("text");
+  await page
+    .getByLabel("read_record mapping recordId", { exact: true })
+    .selectOption("recordId");
+  await page.getByRole("checkbox", { name: "recordId", exact: true }).check();
+  await page.getByRole("checkbox", { name: "text", exact: true }).check();
+  await page.getByLabel(/I reviewed the schema, mappings/).check();
+  await page
+    .getByRole("button", {
+      name: "Create template and publish reviewed body",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: /Document → Structured Database · Workflow V2/,
+    }),
+  ).toBeVisible();
+  const [parent] =
+    await sql`SELECT id,draft_graph FROM workflows WHERE workspace_id=${workspace} AND name='Document → Structured Database'`;
+  expect(
+    parent.draft_graph.execution.nodes.some((n) => n.kind === "for-each"),
+  ).toBe(true);
+  const body = parent.draft_graph.execution.resources.body;
+  const [version] =
+    await sql`SELECT graph FROM workflow_versions WHERE id=${body.versionId}`;
+  expect(
+    version.graph.execution.nodes.filter((n) => n.kind === "condition"),
+  ).toHaveLength(2);
+  await page.getByRole("button", { name: "Test / runs", exact: true }).click();
+  await page
+    .getByLabel("Upload documents (text / native PDF)", { exact: true })
+    .setInputFiles([
+      {
+        name: "first.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("First sample record"),
+      },
+      {
+        name: "second.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Second record"),
+      },
+    ]);
+  await expect(page.getByRole("status").first()).toContainText(
+    "2 documents ready",
+  );
+});
+test("Human Tasks inbox reviews configured fields, submits Process and queues the existing run", async ({
+  page,
+  context,
+}) => {
+  const workflow = await api(`/workspaces/${workspace}/workflows`, {
+    name: "Operations review fixture",
+    graph: {
+      schemaVersion: 2,
+      execution: {
+        nodes: [
+          { id: "start", kind: "input", label: "Input", config: {} },
+          {
+            id: "review",
+            kind: "human-task",
+            label: "Review record",
+            config: {
+              mode: "review-edit",
+              prompt: "Correct the record",
+              approveLabel: "Process",
+              outputSchema: {
+                type: "object",
+                properties: { recordId: { type: "string" } },
+                required: ["recordId"],
+              },
+            },
+          },
+          { id: "end", kind: "output", label: "Complete", config: {} },
+        ],
+        edges: [
+          { id: "a", source: "start", target: "review" },
+          { id: "b", source: "review", target: "end" },
+        ],
+      },
+    },
+  });
+  const run = await api(`/workflows/${workflow.id}/runs`, {
+    input: { recordId: "sample" },
+    revision: 1,
+  });
+  await expect
+    .poll(
+      async () => {
+        const [current] =
+          await sql`SELECT status FROM workflow_runs WHERE id=${run.id}`;
+        return current.status;
+      },
+      { timeout: 15000 },
+    )
+    .toBe("waiting");
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Human Tasks", exact: true }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Operations review fixture · Review record",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByLabel("recordId *", { exact: true }).fill("corrected");
+  await page.getByRole("button", { name: "Process", exact: true }).click();
+  await expect(page.getByRole("status").first()).toContainText(
+    "Decision recorded",
+  );
+  const [approval] =
+    await sql`SELECT edited_input FROM workflow_approvals WHERE run_id=${run.id}`;
+  expect(approval.edited_input.recordId).toBe("corrected");
+  const [queued] =
+    await sql`SELECT status FROM workflow_runs WHERE id=${run.id}`;
+  expect(["queued", "running", "completed"]).toContain(queued.status);
+  await page
+    .getByRole("button", { name: "Workflow runs", exact: true })
+    .click();
+  await page
+    .getByRole("button", {
+      name: `Inspect run ${run.id.slice(0, 8)}`,
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByLabel("Run inspection", { exact: true }),
+  ).toBeVisible();
+});
+
+test("validation selects and highlights the affected workflow node before publication", async ({
+  page,
+  context,
+}) => {
+  const workflow = await api(`/workspaces/${workspace}/workflows`, {
+    name: "Fix missing Action",
+    graph: {
+      schemaVersion: 2,
+      execution: {
+        nodes: [
+          { id: "start", kind: "input", label: "Input", config: {} },
+          {
+            id: "broken",
+            kind: "action",
+            label: "Unconfigured operation",
+            config: { actionId: "missing" },
+          },
+          { id: "end", kind: "output", label: "Complete", config: {} },
+        ],
+        edges: [
+          { id: "a", source: "start", target: "broken" },
+          { id: "b", source: "broken", target: "end" },
+        ],
+      },
+    },
+  });
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByLabel("Current workflow", { exact: true })
+    .selectOption(workflow.id);
+  await page.getByRole("button", { name: /Validation ·/ }).click();
+  await page
+    .getByRole("button", { name: "broken: action unavailable", exact: true })
+    .click();
+  await expect(
+    page.locator('.react-flow__node[data-id="broken"] .workflow-node.selected'),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Step properties", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Publish", exact: true }),
+  ).toBeDisabled();
+});
+
+test("Create with workflow AI opens a blank canvas in Create mode", async ({
+  page,
+  context,
+}) => {
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create with workflow AI", exact: true })
+    .click();
+  await expect(page.getByLabel("Assistant task", { exact: true })).toHaveValue(
+    "create",
+  );
+  await expect(page.locator(".react-flow__node")).toHaveCount(2);
 });

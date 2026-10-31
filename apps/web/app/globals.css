@@ -7500,3 +7500,33 @@ fieldset {
   color: var(--ink);
   background: var(--surface);
 }
+
+/* Keep workflow controls in one compact row; narrow canvases scroll the row. */
+.v2-studio .react-flow__panel.top.left {
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  margin: 0;
+  max-width: calc(100% - 24px);
+}
+.v2-topbar {
+  max-width: 100%;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.v2-topbar > * {
+  flex-shrink: 0;
+}
+@media (max-width: 700px) {
+  .v2-properties {
+    top: 108px;
+  }
+  .v2-minimize {
+    top: 72px;
+  }
+}
+.workflow-run-row {
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}

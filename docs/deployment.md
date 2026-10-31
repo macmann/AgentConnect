@@ -107,3 +107,7 @@ AI tagging is optional and disabled by default. Its selected registered workspac
 ## Workflow automation upgrade
 
 Workflow API keys and schedules require migration **0041** and matching API, worker and web releases. Run `pnpm db:migrate` before restarting services. There is no additional cron service or environment key: the worker executes the `workflow_schedule` task and queues runs into the existing durable workflow runner. Include that task in worker-health checks. See [workflow trigger operation](workflow-triggers.md#operation-and-troubleshooting) for skip policies, access failures and deduplication behavior.
+
+### Workflow module deployment
+
+Workflows retain the existing API/worker/PostgreSQL checkpoint queue; no extra service is required. Deploy API, worker and web together with migrations through 0046. The configurable `WORKFLOW_*` ceilings, private integration host forwarding, native PDF/text preparation behavior and compatibility implications are listed in [the integrated workflow platform guide](agentconnect-workflow-platform.md#self-hosted-deployment-and-configurable-ceilings). Defaults preserve the previous execution limits. For standalone images, set matching API/worker values in `RUNTIME_ENV_FILE`; Coolify forwards them through its shared runtime configuration.

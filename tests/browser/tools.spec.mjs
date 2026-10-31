@@ -29,7 +29,10 @@ const fixture = createServer(async (req, res) => {
   const system = data.messages[0].content;
   if (system.startsWith("Choose useful read-only tools")) {
     plans++;
-    const tools = JSON.parse(system.slice(system.lastIndexOf("\n") + 1));
+    const catalogLine = system
+      .split("\n")
+      .find((line) => line.startsWith("[") && line.includes('"toolId"'));
+    const tools = JSON.parse(catalogLine ?? "[]");
     text = JSON.stringify({
       calls: [{ toolId: tools[0].toolId, arguments: { city: "Yangon" } }],
     });

@@ -1,3 +1,4 @@
+import { config } from "./config.js";
 import { z } from "zod";
 import {
   workflowGraph,
@@ -212,7 +213,7 @@ export async function executeStructuredAI(
   })) {
     if (event.type === "token") {
       text += event.text;
-      if (text.length > 128000)
+      if (Buffer.byteLength(text) > config.WORKFLOW_AI_OUTPUT_BYTES)
         throw new ToolError("STRUCTURED_AI_OUTPUT_LIMIT");
     }
     if (event.type === "usage") {

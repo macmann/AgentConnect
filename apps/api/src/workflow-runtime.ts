@@ -1,3 +1,4 @@
+import { HttpError } from "./http-error.js";
 import { executeWorkflowNodeAction } from "./workflow-action-runtime.js";
 import {
   suspensionFor,
@@ -120,13 +121,66 @@ export async function validateWorkflowDependencies(
   graph: WorkflowGraph,
   ctx: ToolContext,
   runtime = false,
+  tree?: { depth: number; path: Set<string>; budget: { count: number } },
 ) {
+  if (graph.nodes.length > config.WORKFLOW_MAX_NODES)
+    throw new WorkflowError("WORKFLOW_NODE_LIMIT");
   const analysis = analyzeWorkflow(graph);
   if (analysis.errors.length) throw new WorkflowError("WORKFLOW_GRAPH_INVALID");
   await validateV2Resources(graph, ctx);
   for (const n of graph.nodes) {
     if (n.type === "agent") await workflowNodeAgent(n, ctx, runtime);
     if (n.type === "tool") await validateToolIds([n.data.toolId!], ctx);
+  }
+  if (!runtime) {
+    const traversal = tree ?? {
+      depth: 0,
+      path: new Set(ctx.workflowId ? [ctx.workflowId] : []),
+      budget: { count: 0 },
+    };
+    if (++traversal.budget.count > 40)
+      throw new HttpError(
+        400,
+        "Workflow dependency inspection exceeds 40 definitions",
+      );
+    const program = workflowV2Program(graph);
+    for (const node of program?.nodes ?? []) {
+      if (node.kind !== "for-each" && node.kind !== "subworkflow") continue;
+      const resource = program!.resources[node.config.resource];
+      if (resource?.kind !== "workflow") continue;
+      if (
+        traversal.path.has(resource.workflowId) ||
+        traversal.depth + 1 >= config.WORKFLOW_MAX_DEPTH
+      )
+        throw new HttpError(
+          400,
+          `${node.id}: recursive subworkflow or nested depth limit exceeded`,
+        );
+      const [version] =
+        await sql`SELECT v.graph FROM workflow_versions v JOIN workflows w ON w.id=v.workflow_id WHERE v.workflow_id=${resource.workflowId} AND v.workspace_id=${ctx.workspaceId} AND v.organization_id=${ctx.organizationId} AND w.archived_at IS NULL AND (${resource.versionBehavior}='latest-published' OR v.id=${resource.versionId ?? null}) ORDER BY v.version DESC LIMIT 1`;
+      if (!version)
+        throw new HttpError(
+          400,
+          `${node.id}: published child workflow unavailable`,
+        );
+      try {
+        await validateWorkflowDependencies(
+          storedWorkflowGraph(version.graph),
+          { ...ctx, workflowId: resource.workflowId },
+          false,
+          {
+            depth: traversal.depth + 1,
+            path: new Set([...traversal.path, resource.workflowId]),
+            budget: traversal.budget,
+          },
+        );
+      } catch (error) {
+        throw new HttpError(
+          400,
+          `${node.id}: child workflow unavailable or invalid (${error instanceof HttpError ? error.message : error instanceof WorkflowError ? error.code : "dependency validation failed"})`,
+        );
+      }
+    }
   }
   return analysis;
 }
@@ -511,7 +565,10 @@ export async function compileWorkflow(
             output = redact(output);
             if (variableUpdate && definitionNode?.kind === "set-variable")
               variableUpdate = { [definitionNode.config.name]: output };
-            if (Buffer.byteLength(JSON.stringify(output)) > 128000)
+            if (
+              Buffer.byteLength(JSON.stringify(output)) >
+              config.WORKFLOW_OUTPUT_BYTES
+            )
               throw new WorkflowError("WORKFLOW_OUTPUT_LIMIT");
             signal.throwIfAborted();
             await sql`UPDATE workflow_node_runs SET status='completed',retry_at=NULL,output=${sql.json(output as never)},input_tokens=${inputTokens},output_tokens=${outputTokens},citations=${sql.json(citations as never)},duration_ms=${Math.round(performance.now() - started)},finished_at=now() WHERE run_id=${run.id} AND node_id=${node.id}`;
@@ -652,7 +709,10 @@ export async function processWorkflowRun(
       async (span) => {
         observationContent(span, "input", redact(run.input), true);
         const controller = new AbortController(),
-          deadline = setTimeout(() => controller.abort(), 300000);
+          deadline = setTimeout(
+            () => controller.abort(),
+            config.WORKFLOW_ACTIVE_TIMEOUT_MS,
+          );
         deadline.unref();
         const heartbeat = setInterval(() => {
           void sql`UPDATE workflow_runs SET lease_expires_at=now()+interval '120 seconds' WHERE id=${run.id} AND lease_owner=${run.lease_owner} AND status='running' AND cancel_requested=false RETURNING id`

@@ -953,3 +953,138 @@ test("mapping inspection ignores literal payloads that happen to resemble refere
     assistantMappingWarnings(d).some((w) => w.includes("JSON Pointer")),
   );
 });
+
+test("template customization requests keep extraction/review schemas aligned and clarify unavailable capabilities", async () => {
+  const baseSchema = {
+    type: "object",
+    properties: {
+      invoiceNumber: { type: "string" },
+      currency: { type: "string" },
+      total: { type: "number" },
+    },
+    required: ["invoiceNumber", "currency", "total"],
+    additionalProperties: false,
+  };
+  const source = workflowDefinitionV2.parse({
+    schemaVersion: 2,
+    execution: {
+      resources: { model: { kind: "model", id: model } },
+      nodes: [
+        { id: "start", kind: "input", label: "Document", config: {} },
+        {
+          id: "extract",
+          kind: "structured-ai",
+          label: "Extract record",
+          config: {
+            resource: "model",
+            instruction: "Extract configured fields",
+            outputSchema: baseSchema,
+          },
+        },
+        {
+          id: "review",
+          kind: "human-task",
+          label: "Review schema fields",
+          config: {
+            mode: "review-edit",
+            prompt: "Review record",
+            input: reference("steps.extract.output"),
+            outputSchema: baseSchema,
+          },
+        },
+        {
+          id: "end",
+          kind: "output",
+          label: "Complete",
+          config: { input: reference("steps.review.output") },
+        },
+      ],
+      edges: [
+        { id: "a", source: "start", target: "extract" },
+        { id: "b", source: "extract", target: "review" },
+        { id: "c", source: "review", target: "end" },
+      ],
+    },
+  });
+  const count = (
+    await sql`SELECT id FROM workflows WHERE organization_id=${org}`
+  ).length;
+  for (const [prompt, field, remove] of [
+    ["Add purchaseOrderNumber.", "purchaseOrderNumber", false],
+    ["Remove currency.", "currency", true],
+    ["Store supplier email too.", "supplierEmail", false],
+  ] as const) {
+    const schema = structuredClone(baseSchema) as {
+      type: string;
+      properties: Record<string, { type: string }>;
+      required: string[];
+      additionalProperties: boolean;
+    };
+    if (remove) {
+      delete schema.properties[field];
+      schema.required = schema.required.filter((k) => k !== field);
+    } else schema.properties[field] = { type: "string" };
+    const nodes = source.execution.nodes
+      .filter((n) => n.kind === "structured-ai" || n.kind === "human-task")
+      .map((n) => ({ ...n, config: { ...n.config, outputSchema: schema } }));
+    output = {
+      kind: "mutations",
+      message:
+        "Review the aligned extraction and review fields; configure storage separately if its operation does not expose this field.",
+      operations: nodes.map((node) => ({
+        op: "updateNode",
+        nodeId: node.id,
+        node,
+      })),
+    };
+    const result = await call(endpoint, {
+      ...request("modify", source),
+      prompt,
+    });
+    assert.equal(result.statusCode, 200, result.body);
+    assert.equal(
+      Object.hasOwn(
+        result.json().definition.execution.nodes[1].config.outputSchema
+          .properties,
+        field,
+      ),
+      !remove,
+    );
+    assert.deepEqual(
+      result.json().definition.execution.nodes[1].config.outputSchema,
+      result.json().definition.execution.nodes[2].config.outputSchema,
+    );
+  }
+  for (const [prompt, message] of [
+    [
+      "Process 5 documents in parallel.",
+      "For Each currently executes sequentially. Use explicit fixed Parallel branches or keep sequential iteration.",
+    ],
+    [
+      "Use my Production DB MCP connection.",
+      "No enabled Production DB MCP connection is available in this workspace. Configure and grant an existing operation first.",
+    ],
+    [
+      "Use my Invoice Extraction Agent instead of Structured AI.",
+      "Publish the Invoice Extraction Agent first; no matching published Agent is available in this workspace.",
+    ],
+  ]) {
+    output = { kind: "clarification", message };
+    const result = await call(endpoint, {
+      ...request("modify", source),
+      prompt,
+    });
+    assert.equal(result.statusCode, 200, result.body);
+    assert.equal(result.json().definition, null);
+    assert.equal(result.json().message, message);
+  }
+  assert.ok(
+    requests
+      .at(-1)!
+      .system.includes("For Each currently runs sequentially only"),
+  );
+  assert.equal(
+    (await sql`SELECT id FROM workflows WHERE organization_id=${org}`).length,
+    count,
+  );
+});

@@ -1,4 +1,5 @@
 "use client";
+import { WorkflowDocumentTemplate } from "./workflow-document-template";
 import { WorkflowV2Studio } from "./workflow-v2-studio";
 import { WorkflowAgentEditor } from "./workflow-agent-editor";
 import { WorkflowMappingEditor } from "./workflow-mapping-editor";
@@ -177,6 +178,7 @@ export function WorkflowStudio({
   role: string;
   onSettings: () => void;
 }) {
+  const [startWithAI, setStartWithAI] = useState(false);
   const [v2Workflow, setV2Workflow] = useState<string | null>(null);
   const cache = useQueryClient(),
     build = ["owner", "org_admin", "workspace_admin", "builder"].includes(role),
@@ -994,6 +996,7 @@ export function WorkflowStudio({
 
     setManualWizard(false);
   }
+  const [documentTemplate, setDocumentTemplate] = useState(false);
   if (v2Workflow !== null)
     return (
       <WorkflowV2Studio
@@ -1001,9 +1004,22 @@ export function WorkflowStudio({
         workspaceId={workspaceId}
         workflowId={v2Workflow}
         role={role}
+        startWithAI={startWithAI}
         onBack={() => {
           setV2Workflow(null);
+          setStartWithAI(false);
           void workflows.refetch();
+        }}
+      />
+    );
+  if (documentTemplate)
+    return (
+      <WorkflowDocumentTemplate
+        workspaceId={workspaceId}
+        onCancel={() => setDocumentTemplate(false)}
+        onCreated={(id) => {
+          setDocumentTemplate(false);
+          setV2Workflow(id);
         }}
       />
     );
@@ -1020,6 +1036,21 @@ export function WorkflowStudio({
         {build && (
           <Button
             onClick={() => {
+              setStartWithAI(true);
+              setV2Workflow("");
+            }}
+          >
+            Create with workflow AI
+          </Button>
+        )}
+        {build && (
+          <Button onClick={() => setDocumentTemplate(true)}>
+            Document → Database template
+          </Button>
+        )}
+        {build && (
+          <Button
+            onClick={() => {
               if (
                 !dirty ||
                 window.confirm(
@@ -1029,7 +1060,7 @@ export function WorkflowStudio({
                 setV2Workflow("");
             }}
           >
-            Create V2 workflow
+            Blank workflow
           </Button>
         )}
         {build && (
@@ -1056,7 +1087,14 @@ export function WorkflowStudio({
         </p>
       )}
       {notice && <p role="status">{notice}</p>}
-      {workflows.error && <p className="error">{workflows.error.message}</p>}
+      {workflows.error && (
+        <p role="alert" className="error">
+          {workflows.error.message}{" "}
+          <Button onClick={() => void workflows.refetch()}>
+            Retry workflows
+          </Button>
+        </p>
+      )}
       {wizard && !manualWizard && (
         <CreationAssistant
           workspaceId={workspaceId}

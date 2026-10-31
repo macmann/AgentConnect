@@ -26,6 +26,7 @@ export function WorkflowAssistant({
   definition,
   selectedNodeId,
   editable,
+  initialMode = "modify",
   onPreview,
   onApply,
 }: {
@@ -34,6 +35,7 @@ export function WorkflowAssistant({
   definition: WorkflowDefinitionV2;
   selectedNodeId: string;
   editable: boolean;
+  initialMode?: "create" | "modify";
   onPreview: (definition: WorkflowDefinitionV2 | null) => void;
   onApply: (definition: WorkflowDefinitionV2) => void;
 }) {
@@ -45,7 +47,7 @@ export function WorkflowAssistant({
       ),
   });
   const [mode, setMode] = useState<WorkflowAssistantRequest["mode"]>(
-      editable ? "modify" : "explain",
+      editable ? initialMode : "explain",
     ),
     [prompt, setPrompt] = useState(""),
     [busy, setBusy] = useState(false),

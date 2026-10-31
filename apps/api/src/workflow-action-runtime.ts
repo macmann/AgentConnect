@@ -1,3 +1,4 @@
+import { config } from "./config.js";
 import { randomUUID } from "node:crypto";
 import type { WorkflowAction } from "@agentconnect/schemas/workflow-actions";
 import {
@@ -431,6 +432,7 @@ async function executeResolvedWorkflowAction(
         body,
         combined,
         http.method,
+        config.WORKFLOW_ACTION_RESPONSE_BYTES,
       );
       if (response.status < 200 || response.status >= 300)
         throw new ToolError(
@@ -498,7 +500,9 @@ async function executeResolvedWorkflowAction(
     }
     result = redact(result, secrets);
     assertWorkflowValue(result);
-    if (Buffer.byteLength(JSON.stringify(result)) > 128000)
+    if (
+      Buffer.byteLength(JSON.stringify(result)) > config.WORKFLOW_OUTPUT_BYTES
+    )
       throw new ToolError("ACTION_OUTPUT_LIMIT");
     if (!schemaValidator(action.outputSchema)(result))
       throw new ToolError("ACTION_OUTPUT_INVALID");

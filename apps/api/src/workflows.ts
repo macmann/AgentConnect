@@ -1,3 +1,5 @@
+import { redact } from "./tool-runtime.js";
+import { registerWorkflowOperations } from "./workflow-operations.js";
 import {
   workflowDefinition,
   compileWorkflowDefinition,
@@ -56,6 +58,16 @@ async function ownedRun(
   if (!run) throw new HttpError(404, "Run unavailable");
   await workspaceAccess(u.id, run.workspace_id, cap);
   return { u, run };
+}
+function safeRunValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    try {
+      return JSON.stringify(redact(JSON.parse(value)));
+    } catch {
+      return value;
+    }
+  }
+  return redact(value);
 }
 export async function workflowCatalog(
   workspaceId: string,
@@ -119,6 +131,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
   const workflowUpdate = workflowInput.extend({
     revision: z.number().int().min(1),
   });
+  await registerWorkflowOperations(app);
   await registerWorkflowComponentRoutes(app);
   await registerWorkflowTriggers(app);
   await registerWorkflowEvents(app);
@@ -486,16 +499,30 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
     delete visible.lease_owner;
     delete visible.lease_expires_at;
     const suspensions =
-      await sql`SELECT id,node_id,kind,status,due_at,error_code,resumed_at,payload->>'eventName' AS event_name FROM workflow_suspensions WHERE run_id=${run.id} ORDER BY created_at`;
+      await sql`SELECT id,node_id,kind,status,due_at,error_code,resumed_at,payload->>'eventName' AS event_name, CASE WHEN kind='children' THEN jsonb_array_length(payload->'inputs') ELSE NULL END AS total_items FROM workflow_suspensions WHERE run_id=${run.id} ORDER BY created_at`;
     const children =
       await sql`SELECT id,workflow_id,version_id,parent_node_id,iteration_index,status,error_code,created_at,finished_at FROM workflow_runs WHERE parent_run_id=${run.id} ORDER BY parent_node_id,iteration_index`;
     const actionExecutions =
       await sql`SELECT e.id,e.node_id,e.action_id,e.connector,e.operation,e.connection_id,e.side_effect,e.risk_level,e.idempotency,e.status,e.attempts,e.error_code,e.duration_ms,e.created_at,e.finished_at,COALESCE((SELECT jsonb_agg(jsonb_build_object('attempt',a.attempt,'status',a.status,'error_code',a.error_code,'duration_ms',a.duration_ms) ORDER BY a.attempt) FROM workflow_action_attempts a WHERE a.execution_id=e.id),'[]'::jsonb) AS attempt_history FROM workflow_action_executions e WHERE e.run_id=${run.id} ORDER BY e.created_at`;
     return {
       ...visible,
-      nodes,
-      approvals,
-      tools,
+      input: safeRunValue(visible.input),
+      output: safeRunValue(visible.output),
+      nodes: nodes.map((n) => ({
+        ...n,
+        input: safeRunValue(n.input),
+        output: safeRunValue(n.output),
+      })),
+      approvals: approvals.map((a) => ({
+        ...a,
+        input: redact(a.input),
+        edited_input: redact(a.edited_input),
+      })),
+      tools: tools.map((t) => ({
+        ...t,
+        arguments: redact(t.arguments),
+        result: redact(t.result),
+      })),
       suspensions,
       children,
       actionExecutions,
