@@ -249,6 +249,31 @@ const kinds = [
   "wait-for-event",
   "subworkflow",
 ] as const;
+const coreKinds = new Set<string>([
+  "agent",
+  "structured-ai",
+  "action",
+  "human-task",
+  "condition",
+]);
+const stepLabels: Record<string, string> = {
+  agent: "Agent",
+  "structured-ai": "AI Task",
+  action: "Action",
+  "human-task": "Human Task",
+  condition: "Condition",
+  "for-each": "For Each",
+  wait: "Wait",
+  "wait-for-event": "Wait for Event",
+  subworkflow: "Subworkflow",
+  "set-variable": "Set Variable",
+  transform: "Transform",
+  switch: "Switch",
+  parallel: "Parallel",
+  merge: "Merge",
+  input: "Input",
+  output: "Output",
+};
 const outputSchema = {
   type: "object",
   properties: {},
@@ -306,6 +331,8 @@ export function WorkflowV2Studio({
     [dirty, setDirty] = useState(false),
     [ready, setReady] = useState(!workflowId),
     [serverErrors, setServerErrors] = useState<string[]>([]);
+  const [showMoreSteps, setShowMoreSteps] = useState(false);
+  const [uploadField, setUploadField] = useState("");
   const [kind, setKind] = useState<(typeof kinds)[number]>("agent"),
     [variableName, setVariableName] = useState(""),
     [testOpen, setTestOpen] = useState(false),
@@ -754,6 +781,10 @@ export function WorkflowV2Studio({
     (versionId
       ? versions.data?.find((v) => v.id === versionId)?.graph.inputFields
       : undefined) ?? definition.execution.inputFields;
+  const fileFields = testFields.filter((f) => f.type === "json");
+  const fileInputField = fileFields.some((f) => f.name === uploadField)
+    ? uploadField
+    : fileFields[0]?.name;
   const resultNode = run.data?.graph_snapshot.programV2?.execution.nodes.find(
     (n) => n.kind === "output",
   );
@@ -879,12 +910,37 @@ export function WorkflowV2Studio({
                       disabled={!canvasEditable}
                       onChange={(e) => setKind(e.target.value as typeof kind)}
                     >
-                      {kinds.map((k) => (
-                        <option key={k} value={k}>
-                          {k.replaceAll("-", " ")}
-                        </option>
-                      ))}
+                      <optgroup label="Core steps">
+                        {kinds
+                          .filter((k) => coreKinds.has(k))
+                          .map((k) => (
+                            <option key={k} value={k}>
+                              {stepLabels[k]}
+                            </option>
+                          ))}
+                      </optgroup>
+                      {showMoreSteps && (
+                        <optgroup label="Flow control and data">
+                          {kinds
+                            .filter((k) => !coreKinds.has(k))
+                            .map((k) => (
+                              <option key={k} value={k}>
+                                {stepLabels[k]}
+                              </option>
+                            ))}
+                        </optgroup>
+                      )}
                     </select>
+                    <Button
+                      aria-expanded={showMoreSteps}
+                      onClick={() => {
+                        setShowMoreSteps(!showMoreSteps);
+                        if (showMoreSteps && !coreKinds.has(kind))
+                          setKind("agent");
+                      }}
+                    >
+                      {showMoreSteps ? "Fewer steps" : "More steps"}
+                    </Button>
                     <Button
                       disabled={
                         !canvasEditable ||
@@ -1045,7 +1101,23 @@ export function WorkflowV2Studio({
                           ))}
                         </select>
                       </label>
-                      {testFields.some((f) => f.name === "documents") && (
+                      {!!fileFields.length && (
+                        <label>
+                          Load files into input field
+                          <select
+                            aria-label="File input field"
+                            value={fileInputField ?? ""}
+                            onChange={(e) => setUploadField(e.target.value)}
+                          >
+                            {fileFields.map((f) => (
+                              <option key={f.name} value={f.name}>
+                                {f.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                      {fileInputField && (
                         <label>
                           Upload documents (text / native PDF)
                           <input
@@ -1093,7 +1165,14 @@ export function WorkflowV2Studio({
                                   "POST",
                                   { files: encoded },
                                 );
-                                setInput(parsed);
+                                setInput((previous: unknown) => ({
+                                  ...(previous &&
+                                  typeof previous === "object" &&
+                                  !Array.isArray(previous)
+                                    ? (previous as Record<string, unknown>)
+                                    : {}),
+                                  [fileInputField]: parsed.documents,
+                                }));
                                 setNotice(
                                   `${parsed.documents.length} documents ready. Review the input, then Run workflow.`,
                                 );

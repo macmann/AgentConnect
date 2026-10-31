@@ -1,5 +1,4 @@
 "use client";
-import { WorkflowDocumentTemplate } from "./workflow-document-template";
 import { WorkflowV2Studio } from "./workflow-v2-studio";
 import { WorkflowAgentEditor } from "./workflow-agent-editor";
 import { WorkflowMappingEditor } from "./workflow-mapping-editor";
@@ -996,7 +995,6 @@ export function WorkflowStudio({
 
     setManualWizard(false);
   }
-  const [documentTemplate, setDocumentTemplate] = useState(false);
   if (v2Workflow !== null)
     return (
       <WorkflowV2Studio
@@ -1009,17 +1007,6 @@ export function WorkflowStudio({
           setV2Workflow(null);
           setStartWithAI(false);
           void workflows.refetch();
-        }}
-      />
-    );
-  if (documentTemplate)
-    return (
-      <WorkflowDocumentTemplate
-        workspaceId={workspaceId}
-        onCancel={() => setDocumentTemplate(false)}
-        onCreated={(id) => {
-          setDocumentTemplate(false);
-          setV2Workflow(id);
         }}
       />
     );
@@ -1041,11 +1028,6 @@ export function WorkflowStudio({
             }}
           >
             Create with workflow AI
-          </Button>
-        )}
-        {build && (
-          <Button onClick={() => setDocumentTemplate(true)}>
-            Document → Database template
           </Button>
         )}
         {build && (

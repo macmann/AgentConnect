@@ -6,7 +6,7 @@ AgentConnect remains a platform for independently managed Agents, Knowledge, Too
 
 The workspace keeps its existing modules and adds integrated **Connections**, **Workflow runs** and **Human Tasks** entry points. Build contains Agents, Workflows, models, Knowledge and reusable skills. Integrations contains Tools (including the existing MCP UI), saved Action Connections and source Connectors. Workflow runs and Human Tasks join the existing Operations, conversations and audit log. Customer Human Support remains separate from workflow Human Tasks.
 
-Workflows offer **Blank workflow**, **Document → Database template**, **Create with workflow AI**, and existing Agent-chain templates. The V2 canvas supports existing published Agents, deterministic Actions, Human Tasks, conditions/switches, visual field mappings, For Each, waits/events and published subworkflows. Publishing validates the graph/resources; execution uses published versions or explicitly saved draft tests. Validation messages highlight/select the affected node and move the canvas to it. Global errors remain visible when no single node can resolve them.
+Workflows offer **Blank workflow**, **Create with workflow AI**, and existing generic Agent-chain starting points. Business scenarios such as OCR-to-database are examples of compositions users can build, not shipped templates or specialized node types. The picker starts with five core steps (Agent, AI Task, Action, Human Task, Condition); **More steps** exposes the existing flow-control and data primitives. The V2 canvas supports existing published Agents, deterministic Actions, Human Tasks, conditions/switches, visual field mappings, For Each, waits/events and published subworkflows. Publishing validates the graph/resources; execution uses published versions or explicitly saved draft tests. Validation messages highlight/select the affected node and move the canvas to it. Global errors remain visible when no single node can resolve them.
 
 ## Architecture
 
@@ -44,20 +44,13 @@ Structured AI uses an existing model/provider registration and a bounded output 
 
 For Each runs a published child body sequentially and collects results. It can fail the workflow or continue with recorded item failures. Parallel/Merge supports bounded explicit fan-out/fan-in; dynamic five-way parallel For Each is not implemented. Wait persists a due timestamp and releases the worker. Wait for Event uses scoped, expiring/rotatable bearer correlation tokens and schema validation. Subworkflows pin a published version per invocation, track parent/child history and reject recursive ancestry. Publication now checks the referenced definition tree and configured depth ceiling too. Node `onError` exposes sanitized code/message/node/attempt context to a controlled error route; it never exposes raw credential/provider messages.
 
-## Document → Structured Database starter
+## Example compositions, not product templates
 
-This starter is schema-driven rather than invoice-specific:
+OCR-to-database, purchase-order processing, approvals and similar scenarios describe capabilities to compose with general-purpose steps. They are not separate product templates, node types or automatically published child workflows. Users build from a blank canvas or ask the AI assistant to propose a reviewed V2 definition.
 
-1. Choose a model or a published JSON-producing Agent.
-2. Define extracted/human-review fields visually and write the processing instruction.
-3. Select an existing enabled MCP server, explicitly permitted write operation and read operation.
-4. Map each operation input from declared extracted fields using dropdowns.
-5. Select one or more extracted fields and their read-back paths (including nested records/arrays) to compare. Every selected equality must pass before automatic success.
-6. Explicitly review side effects and publish the reusable per-document body; the parent remains a draft for review/test/publication.
+The document-processing example remains solely in `apps/api/test/fixtures/document-processing.ts` as orchestration coverage: extract a sample, review it, iterate remaining items through a published body, write/read using configured Actions, and route validation failures to review. No business-specific builder ships in the web UI or public schema package. Existing saved workflow definitions and published versions continue to run using the same primitives.
 
-The generated parent accepts `documents` through API/webhook input or file preparation, extracts/reviews the first sample with a **Process** gate, then iterates remaining documents using the approved sample as guidance. The body extracts each record, writes it, reads it back, and chains validation conditions. Failed validation reaches Human Error Review; an operator must reconcile externally before approving, or Reject to record the child as failed. Parent aggregation checks failed children and routes failures to a batch review gate. Human approval is an explicit reconciliation override, not proof that the database changed.
-
-The sample is guidance and is **not persisted** by the starter. Choose read-back paths from the operation output schema when the database returns different names or nested rows; use a Transform for additional normalization. Validation is equality by default; conditions remain configurable on the generated canvas. Partial setup failures retain the body draft/version and let users retry or revise settings. The UI never republishes the parent automatically.
+File preparation is general-purpose: select any JSON workflow input field to receive the files. No reserved `documents` field or predefined diagram is required. Other input fields are retained when files are loaded.
 
 File preparation accepts up to 25 `.pdf`, `.txt` or `.md` files, 5 MB total, with a 30-second parsing deadline per file and the workflow payload budget. Data is parsed in memory, not retained as a second document store. Native PDF text uses the existing parser. Scanned PDFs need OCR preprocessing through existing knowledge/integration facilities; no automatic OCR service is invented or deployed. API callers can supply preprocessed records directly. A failed parse or oversized batch is rejected before run creation.
 
@@ -65,14 +58,14 @@ File preparation accepts up to 25 `.pdf`, `.txt` or `.md` files, 5 MB total, wit
 
 AI proposals use the same canonical definition, explicit mutations, actual connector schemas and live resource policy as the manual canvas. Nothing runs, saves or publishes automatically. All structural edits require preview and Apply; warnings/side effects require acknowledgement. The workspace's existing AI creation opt-in/model setting remains in control.
 
-| Request                                                            | Supported behavior / boundary                                                                                                                                                |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Add `purchaseOrderNumber`, remove `currency`, store supplier email | Edit the extraction/review schema and affected mappings; required database fields cannot simply disappear. The builder is generic and tests use purchase-order/email fields. |
-| Send failed records to review                                      | Configure `onError` or a false condition route to Human Task, inserting Merge where routes converge.                                                                         |
-| Process 5 documents in parallel                                    | Explain that For Each is sequential. Do not invent a concurrency property. Explicit fixed Parallel branches are a separate supported pattern.                                |
-| Use Production DB MCP                                              | Select that existing server ID and an allowed discovered operation; never copy credentials or create write grants.                                                           |
-| Validate identifier and amount after insertion                     | Read back and chain typed conditions for both fields, routing failures to review.                                                                                            |
-| Use my extraction Agent instead                                    | Reference an existing published Agent/version; JSON output is required and legacy pointers can parse JSON-string results.                                                    |
+| Request                                                            | Supported behavior / boundary                                                                                                                                                                   |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add `purchaseOrderNumber`, remove `currency`, store supplier email | Edit the extraction/review schema and affected mappings; required database fields cannot simply disappear. The canvas edits generic schemas, and test examples use purchase-order/email fields. |
+| Send failed records to review                                      | Configure `onError` or a false condition route to Human Task, inserting Merge where routes converge.                                                                                            |
+| Process 5 documents in parallel                                    | Explain that For Each is sequential. Do not invent a concurrency property. Explicit fixed Parallel branches are a separate supported pattern.                                                   |
+| Use Production DB MCP                                              | Select that existing server ID and an allowed discovered operation; never copy credentials or create write grants.                                                                              |
+| Validate identifier and amount after insertion                     | Read back and chain typed conditions for both fields, routing failures to review.                                                                                                               |
+| Use my extraction Agent instead                                    | Reference an existing published Agent/version; JSON output is required and legacy pointers can parse JSON-string results.                                                                       |
 
 A parent cannot silently edit an immutable published child body. Open the body workflow, review/apply changes, publish a new version, then explicitly retarget the parent. The assistant names missing resources/permissions/OCR/body prerequisites rather than fabricating them. These are enforced schema/resource boundaries; model quality still depends on the selected provider/model.
 

@@ -3096,9 +3096,9 @@ test("deployment workflow ceilings can be lowered without rewriting published ve
     config.WORKFLOW_MAX_NODES = original;
   }
 });
-test("Document → Structured Database template is generic, schema driven and preserves published Agent references", async () => {
-  const { documentDatabaseTemplate } =
-    await import("@agentconnect/schemas/workflow-document-template");
+test("Document processing example is generic, schema driven and preserves published Agent references", async () => {
+  const { documentProcessingFixture } =
+    await import("./fixtures/document-processing.js");
   const schema = {
     type: "object",
     properties: {
@@ -3133,7 +3133,7 @@ test("Document → Structured Database template is generic, schema driven and pr
     },
   });
   for (const useAgent of [false, true]) {
-    const template = documentDatabaseTemplate({
+    const template = documentProcessingFixture({
       name: "Purchase order records",
       modelId: useAgent ? undefined : modelId,
       agent: useAgent ? { agentId, versionId } : undefined,
@@ -3198,9 +3198,9 @@ test("operations pagination keeps every run when timestamps are identical down t
   assert.ok(remaining.every((r: { id: string }) => !seen.has(r.id)));
 });
 
-test("generated document template executes multiple read-back rules and routes failed validation through item and batch review", async () => {
-  const { documentDatabaseTemplate } =
-    await import("@agentconnect/schemas/workflow-document-template");
+test("document processing example executes multiple read-back rules and routes failed validation through item and batch review", async () => {
+  const { documentProcessingFixture } =
+    await import("./fixtures/document-processing.js");
   const created = await call(
     "POST",
     `/workspaces/${workspace}/mcp-connectors`,
@@ -3264,7 +3264,7 @@ test("generated document template executes multiple read-back rules and routes f
     },
     outputSchema: schema,
   });
-  const template = documentDatabaseTemplate({
+  const template = documentProcessingFixture({
     name: "Configured records",
     modelId,
     outputSchema: schema,
@@ -3377,15 +3377,15 @@ test("generated document template executes multiple read-back rules and routes f
   }
 });
 
-test("document validation mappings support a database read returning a root array", async () => {
-  const { documentDatabaseTemplate } =
-    await import("@agentconnect/schemas/workflow-document-template");
+test("example validation mappings support a database read returning a root array", async () => {
+  const { documentProcessingFixture } =
+    await import("./fixtures/document-processing.js");
   const schema = {
     type: "object",
     properties: { recordId: { type: "string" } },
     required: ["recordId"],
   };
-  const template = documentDatabaseTemplate({
+  const template = documentProcessingFixture({
     name: "Array records",
     modelId,
     outputSchema: schema,

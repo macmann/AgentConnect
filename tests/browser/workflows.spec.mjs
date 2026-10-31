@@ -1842,44 +1842,41 @@ test("Workflow AI previews mutations on the canvas, cancels without changes, app
   });
 });
 
-test("Document database starter configures generic schemas, mappings and read-back rules without JSON", async ({
+test("workflows expose core steps first and load files into a user-chosen input field", async ({
   page,
   context,
 }) => {
-  const connector = randomUUID();
-  const record = {
-    type: "object",
-    properties: { recordId: { type: "string" }, text: { type: "string" } },
-    required: ["recordId", "text"],
-    additionalProperties: false,
-  };
-  await sql`INSERT INTO mcp_connectors(id,workspace_id,organization_id,name,url,capabilities) VALUES (${connector},${workspace},${org},'Production DB MCP','http://127.0.0.1:4548/mcp',${sql.json(
-    {
-      tools: [
-        {
-          name: "insert_record",
-          inputSchema: record,
-          annotations: { readOnlyHint: false, destructiveHint: false },
-        },
-        {
-          name: "read_record",
-          inputSchema: {
-            type: "object",
-            properties: { recordId: { type: "string" } },
-            required: ["recordId"],
+  const workflow = await api(`/workspaces/${workspace}/workflows`, {
+    name: "General workflow",
+    graph: {
+      schemaVersion: 2,
+      execution: {
+        inputFields: [
+          {
+            name: "files",
+            label: "Source files",
+            type: "json",
+            required: true,
           },
-          outputSchema: record,
-          annotations: { readOnlyHint: true },
-        },
-      ],
+          {
+            name: "batchLabel",
+            label: "Batch label",
+            type: "text",
+            defaultValue: "keep me",
+          },
+        ],
+        nodes: [
+          { id: "start", kind: "input", label: "Input", config: {} },
+          {
+            id: "end",
+            kind: "output",
+            label: "Output",
+            config: { input: { type: "reference", path: "input.files" } },
+          },
+        ],
+        edges: [{ id: "a", source: "start", target: "end" }],
+      },
     },
-  )})`;
-  await api(`/workspaces/${workspace}/mcp-action-grants`, {
-    connectorId: connector,
-    operation: "insert_record",
-    sideEffect: "write",
-    riskLevel: "medium",
-    allowWrites: true,
   });
   await context.addCookies([
     {
@@ -1892,76 +1889,54 @@ test("Document database starter configures generic schemas, mappings and read-ba
   ]);
   await page.goto("/");
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Document → Database template", exact: true })
-    .click();
-  const [model] =
-    await sql`SELECT id FROM model_configurations WHERE workspace_id=${workspace} ORDER BY name LIMIT 1`;
-  await page
-    .getByLabel("Template model", { exact: true })
-    .selectOption(model.id);
-  await page
-    .getByLabel("Template MCP connection", { exact: true })
-    .selectOption(connector);
-  await page
-    .getByLabel("Template write operation", { exact: true })
-    .selectOption("insert_record");
-  await page
-    .getByLabel("Template read operation", { exact: true })
-    .selectOption("read_record");
-  await page
-    .getByLabel("insert_record mapping recordId", { exact: true })
-    .selectOption("recordId");
-  await page
-    .getByLabel("insert_record mapping text", { exact: true })
-    .selectOption("text");
-  await page
-    .getByLabel("read_record mapping recordId", { exact: true })
-    .selectOption("recordId");
-  await page.getByRole("checkbox", { name: "recordId", exact: true }).check();
-  await page.getByRole("checkbox", { name: "text", exact: true }).check();
-  await page.getByLabel(/I reviewed the schema, mappings/).check();
-  await page
-    .getByRole("button", {
-      name: "Create template and publish reviewed body",
-      exact: true,
-    })
-    .click();
   await expect(
-    page.getByRole("heading", {
-      name: /Document → Structured Database · Workflow V2/,
+    page.getByRole("button", {
+      name: "Document → Database template",
+      exact: true,
     }),
-  ).toBeVisible();
-  const [parent] =
-    await sql`SELECT id,draft_graph FROM workflows WHERE workspace_id=${workspace} AND name='Document → Structured Database'`;
-  expect(
-    parent.draft_graph.execution.nodes.some((n) => n.kind === "for-each"),
-  ).toBe(true);
-  const body = parent.draft_graph.execution.resources.body;
-  const [version] =
-    await sql`SELECT graph FROM workflow_versions WHERE id=${body.versionId}`;
-  expect(
-    version.graph.execution.nodes.filter((n) => n.kind === "condition"),
-  ).toHaveLength(2);
+  ).toHaveCount(0);
+  await page
+    .getByLabel("Current workflow", { exact: true })
+    .selectOption(workflow.id);
+  const picker = page.getByLabel("Node type", { exact: true });
+  await expect(picker.locator("option")).toHaveCount(5);
+  await expect(picker.locator('option[value="wait"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "More steps", exact: true }).click();
+  await expect(picker.locator('option[value="wait"]')).toHaveCount(1);
+  await expect(picker.locator('option[value="for-each"]')).toHaveCount(1);
+  await page.getByRole("button", { name: "Fewer steps", exact: true }).click();
+  await expect(picker.locator("option")).toHaveCount(5);
   await page.getByRole("button", { name: "Test / runs", exact: true }).click();
+  await expect(
+    page.getByLabel("File input field", { exact: true }),
+  ).toHaveValue("files");
+  await page.getByLabel("batchLabel", { exact: true }).fill("User batch");
   await page
     .getByLabel("Upload documents (text / native PDF)", { exact: true })
     .setInputFiles([
       {
-        name: "first.txt",
+        name: "note.txt",
         mimeType: "text/plain",
-        buffer: Buffer.from("First sample record"),
-      },
-      {
-        name: "second.txt",
-        mimeType: "text/plain",
-        buffer: Buffer.from("Second record"),
+        buffer: Buffer.from("User-provided source content"),
       },
     ]);
   await expect(page.getByRole("status").first()).toContainText(
-    "2 documents ready",
+    "1 documents ready",
   );
+  const pending = page.waitForRequest(
+    (r) =>
+      r.url().endsWith(`/workflows/${workflow.id}/runs`) &&
+      r.method() === "POST",
+  );
+  await page.getByRole("button", { name: "Run workflow", exact: true }).click();
+  const request = await pending;
+  expect(request.postDataJSON().input.files[0].text).toBe(
+    "User-provided source content",
+  );
+  expect(request.postDataJSON().input.documents).toBeUndefined();
+  expect(request.postDataJSON().input.batchLabel).toBe("User batch");
 });
+
 test("Human Tasks inbox reviews configured fields, submits Process and queues the existing run", async ({
   page,
   context,

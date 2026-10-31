@@ -1,3 +1,4 @@
+// Example composition for orchestration tests only; not a shipped product template.
 import {
   workflowDefinitionV2,
   compileWorkflowDefinition,
@@ -8,7 +9,7 @@ import {
   type WorkflowAction,
 } from "@agentconnect/schemas/workflow-actions";
 import type { WorkflowExpression } from "@agentconnect/schemas/workflow-values";
-export type DocumentTemplateOptions = {
+export type DocumentProcessingOptions = {
   name: string;
   modelId?: string;
   agent?: { agentId: string; versionId: string };
@@ -23,7 +24,7 @@ export type DocumentTemplateOptions = {
   maxItems: number;
 };
 const ref = (path: string): WorkflowExpression => ({ type: "reference", path });
-export function documentDatabaseTemplate(options: DocumentTemplateOptions) {
+export function documentProcessingFixture(options: DocumentProcessingOptions) {
   const { outputSchema, instruction } = options;
   const fields = (outputSchema.properties ?? {}) as Record<string, unknown>;
   if (
