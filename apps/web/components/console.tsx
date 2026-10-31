@@ -1,4 +1,6 @@
 "use client";
+import { WorkflowActionConnections } from "./workflow-action-connections";
+import { WorkflowOperations } from "./workflow-operations";
 import { SkillsStudio } from "./skills-studio";
 import { CreationAssistantSettings } from "./creation-assistant-settings";
 import { ProductBrand } from "./product-brand";
@@ -76,7 +78,9 @@ type Audit = { id: string; action: string; created_at: string };
 const navigationGroups: Record<string, string> = {
   Overview: "Workspace",
   Agents: "Build",
+  Tools: "Integrations",
   "Human Support": "Support",
+  "Workflow runs": "Operate",
   Conversations: "Monitor",
   Members: "Manage",
 };
@@ -87,8 +91,13 @@ const pageDescriptions: Record<string, string> = {
     "Configure assistants, connect knowledge and tools, then test and publish.",
   Models: "Manage model providers, credentials and connection settings.",
   Knowledge: "Add sources and build knowledge bases for grounded answers.",
-  Tools: "Register approved tools your agents can use.",
-  Workflows: "Build and test workflows that coordinate your agents.",
+  Tools: "Manage Agent Tools and existing MCP servers and operations.",
+  Connections:
+    "Manage reusable workflow HTTP connections and explicit MCP Action permissions.",
+  Workflows:
+    "Build no-code orchestration with Agents, Actions and human review.",
+  "Workflow runs": "Inspect workflow execution, waits, retries and failures.",
+  "Human Tasks": "Review and complete pending workflow decisions.",
   Settings: "Configure workspace AI creation assistance.",
   Skills: "Upload reusable instructions and manage skill versions for agents.",
   Connectors: "Connect external services and manage synchronized sources.",
@@ -584,12 +593,15 @@ function Studio() {
           { label: "Overview", icon: LayoutDashboard },
           { label: "Workspaces", icon: FolderKanban },
           { label: "Agents", icon: Sparkles },
+          { label: "Workflows", icon: Workflow },
           { label: "Models", icon: Boxes },
           { label: "Knowledge", icon: BookOpen },
-          { label: "Connectors", icon: Cable },
           { label: "Tools", icon: Wrench },
+          { label: "Connections", icon: Cable },
+          { label: "Connectors", icon: Cable },
           { label: "Skills", icon: Sparkles },
-          { label: "Workflows", icon: Workflow },
+          { label: "Workflow runs", icon: Workflow },
+          { label: "Human Tasks", icon: UserRoundCheck },
           { label: "Human Support", icon: UserRoundCheck },
           { label: "Conversations", icon: MessagesSquare },
           { label: "Operations", icon: ChartNoAxesColumn },
@@ -801,6 +813,9 @@ function Studio() {
             "Tools",
             "Skills",
             "Workflows",
+            "Workflow runs",
+            "Human Tasks",
+            "Connections",
           ].includes(view) &&
             (!wid ? (
               <p className="empty">Choose or create a workspace first.</p>
@@ -858,6 +873,28 @@ function Studio() {
                 key={wid}
                 workspaceId={wid}
                 role={currentWorkspace?.role ?? "viewer"}
+              />
+            ) : view === "Connections" ? (
+              <section className="panel">
+                <h2>Connections</h2>
+                <p>
+                  Reuse encrypted Secrets for workflow HTTP authentication and
+                  explicit MCP Action grants. MCP servers and Agent Tools remain
+                  managed in Tools.
+                </p>
+                <WorkflowActionConnections
+                  workspaceId={wid}
+                  canManage={["owner", "org_admin", "workspace_admin"].includes(
+                    currentWorkspace?.role ?? "",
+                  )}
+                />
+              </section>
+            ) : view === "Workflow runs" || view === "Human Tasks" ? (
+              <WorkflowOperations
+                key={wid + view}
+                workspaceId={wid}
+                role={currentWorkspace?.role ?? "viewer"}
+                tasks={view === "Human Tasks"}
               />
             ) : view === "Workflows" ? (
               <WorkflowStudio

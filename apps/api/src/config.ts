@@ -1,5 +1,32 @@
 import { z } from "zod";
 const schema = z.object({
+  WORKFLOW_MAX_NODES: z.coerce.number().int().min(2).max(40).default(40),
+  WORKFLOW_MAX_ITERATIONS: z.coerce.number().int().min(1).max(100).default(100),
+  WORKFLOW_MAX_DEPTH: z.coerce.number().int().min(1).max(4).default(4),
+  WORKFLOW_OUTPUT_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .max(128000)
+    .default(128000),
+  WORKFLOW_ACTION_RESPONSE_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .max(262144)
+    .default(262144),
+  WORKFLOW_AI_OUTPUT_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .max(128000)
+    .default(128000),
+  WORKFLOW_ACTIVE_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1000)
+    .max(300000)
+    .default(300000),
   QUERY_REWRITE_ENABLED: z
     .enum(["true", "false"])
     .default("true")

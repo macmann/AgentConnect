@@ -1471,12 +1471,11 @@ test("Subworkflow pins a published version, maps results, and prevents recursive
   });
   assert.equal(revision.statusCode, 200, revision.body);
   const a2 = await call("POST", `/workflows/${a}/publish`, { revision: 2 });
-  assert.equal(a2.statusCode, 201, a2.body);
-  const circular = await run(a, "recursion", a2.json().id);
-  assert.equal((await pump(circular)).error_code, "SUBWORKFLOW_FAILED");
-  const [child] =
-    await sql`SELECT error_code FROM workflow_runs WHERE parent_run_id=${circular}`;
-  assert.equal(child!.error_code, "SUBWORKFLOW_RECURSION_LIMIT");
+  assert.equal(a2.statusCode, 400, a2.body);
+  assert.match(a2.body, /recursive subworkflow/);
+  const [versions] =
+    await sql`SELECT count(*)::int AS count FROM workflow_versions WHERE workflow_id=${a}`;
+  assert.equal(versions!.count, 1);
 });
 
 test("node error routing reaches Human Task with sanitized error context and skips the success route", async () => {
@@ -2956,4 +2955,460 @@ test("native HTTP timeout and input validation persist sanitized Action failures
       JSON.stringify(result.actionExecutions),
     );
   }
+});
+
+test("workspace Human Tasks inbox completes review/edit and resumes durable work; Runs remains tenant scoped and redacted", async () => {
+  const definition = chain([
+    {
+      id: "human",
+      kind: "human-task",
+      label: "Review record",
+      config: {
+        mode: "review-edit",
+        prompt: "Check the record",
+        approveLabel: "Process",
+        outputSchema: {
+          type: "object",
+          properties: { value: { type: "string" } },
+          required: ["value"],
+        },
+      },
+    },
+  ]);
+  const id = await create(definition),
+    rid = await run(id, { value: "sample" });
+  await processWorkflowRun();
+  const tasks = await call(
+    "GET",
+    `/workspaces/${workspace}/workflow-operations?view=tasks`,
+  );
+  assert.equal(tasks.statusCode, 200, tasks.body);
+  const task = tasks.json().find((t: { run_id: string }) => t.run_id === rid);
+  assert.ok(task);
+  assert.equal(task.task, "Review record");
+  assert.equal(task.config.approveLabel, "Process");
+  assert.equal(task.graph_snapshot, undefined);
+  const forbidden = await call(
+    "GET",
+    `/workspaces/${workspace}/workflow-operations?view=tasks`,
+    undefined,
+    viewerToken,
+  );
+  assert.equal(forbidden.statusCode, 403);
+  const foreignTasks = await call(
+    "GET",
+    `/workspaces/${foreign}/workflow-operations?view=tasks`,
+  );
+  assert.ok(!foreignTasks.body.includes(rid));
+  const decision = await call("POST", `/workflow-runs/${rid}/approval`, {
+    nodeId: "human",
+    decision: "approved",
+    editedInput: { value: "corrected" },
+  });
+  assert.equal(decision.statusCode, 200, decision.body);
+  await closeWorkflowSaver();
+  await processWorkflowRun();
+  assert.equal((await inspect(rid)).status, "completed");
+  assert.ok(
+    !(
+      await call(
+        "GET",
+        `/workspaces/${workspace}/workflow-operations?view=tasks`,
+      )
+    ).body.includes(rid),
+  );
+  const listed = await call(
+    "GET",
+    `/workspaces/${workspace}/workflow-operations?view=runs`,
+  );
+  assert.ok(listed.json().some((r: { id: string }) => r.id === rid));
+  await sql`UPDATE workflow_runs SET input=${JSON.stringify({ password: "fixture-inbox-secret" })},output=${sql.json({ authorization: "fixture-inbox-secret" })} WHERE id=${rid}`;
+  assert.ok(!(await inspect(rid)).input.includes("fixture-inbox-secret"));
+  assert.ok(
+    !JSON.stringify(await inspect(rid)).includes("fixture-inbox-secret"),
+  );
+});
+test("document uploads reuse bounded native parsers and reject unsupported or oversized input", async () => {
+  const payload = {
+    files: [
+      {
+        name: "record.txt",
+        data: Buffer.from("A purchase order with an address").toString(
+          "base64",
+        ),
+      },
+    ],
+  };
+  const result = await call(
+    "POST",
+    `/workspaces/${workspace}/workflow-documents/parse`,
+    payload,
+  );
+  assert.equal(result.statusCode, 200, result.body);
+  assert.equal(
+    result.json().documents[0].text,
+    "A purchase order with an address",
+  );
+  assert.equal(
+    (
+      await call("POST", `/workspaces/${workspace}/workflow-documents/parse`, {
+        files: [{ name: "script.exe", data: "AAAA" }],
+      })
+    ).statusCode,
+    400,
+  );
+  assert.equal(
+    (
+      await call(
+        "POST",
+        `/workspaces/${workspace}/workflow-documents/parse`,
+        payload,
+        viewerToken,
+      )
+    ).statusCode,
+    403,
+  );
+});
+test("deployment workflow ceilings can be lowered without rewriting published versions", async () => {
+  const original = config.WORKFLOW_MAX_NODES;
+  const definition = chain([
+    {
+      id: "wait",
+      kind: "wait",
+      label: "Wait",
+      config: { mode: "duration", seconds: 1 },
+    },
+  ]);
+  const id = await create(definition),
+    version = await publish(id);
+  try {
+    config.WORKFLOW_MAX_NODES = 2;
+    const blocked = await call("POST", `/workflows/${id}/runs`, {
+      input: "bounded",
+      versionId: version,
+    });
+    assert.equal(blocked.statusCode, 400, blocked.body);
+    assert.match(blocked.body, /WORKFLOW_NODE_LIMIT/);
+    const [persisted] =
+      await sql`SELECT graph FROM workflow_versions WHERE id=${version}`;
+    assert.equal(persisted!.graph.execution.nodes.length, 3);
+  } finally {
+    config.WORKFLOW_MAX_NODES = original;
+  }
+});
+test("Document → Structured Database template is generic, schema driven and preserves published Agent references", async () => {
+  const { documentDatabaseTemplate } =
+    await import("@agentconnect/schemas/workflow-document-template");
+  const schema = {
+    type: "object",
+    properties: {
+      purchaseOrderNumber: { type: "string" },
+      supplierEmail: { type: "string" },
+    },
+    required: ["purchaseOrderNumber", "supplierEmail"],
+    additionalProperties: false,
+  };
+  const write = workflowAction.parse({
+    ...httpAction("POST"),
+    id: "write",
+    mappedInputs: {},
+    http: {
+      method: "POST",
+      url: literal("http://127.0.0.1:4549/actions/echo"),
+    },
+    inputSchema: {
+      type: "object",
+      properties: { key: { type: "string" }, email: { type: "string" } },
+      required: ["key", "email"],
+    },
+  });
+  const read = workflowAction.parse({
+    ...httpAction("GET"),
+    id: "read",
+    mappedInputs: {},
+    inputSchema: {
+      type: "object",
+      properties: { key: { type: "string" } },
+      required: ["key"],
+    },
+  });
+  for (const useAgent of [false, true]) {
+    const template = documentDatabaseTemplate({
+      name: "Purchase order records",
+      modelId: useAgent ? undefined : modelId,
+      agent: useAgent ? { agentId, versionId } : undefined,
+      outputSchema: schema,
+      instruction: "Extract purchase orders",
+      write,
+      read,
+      writeMappings: { key: "purchaseOrderNumber", email: "supplierEmail" },
+      readMappings: { key: "purchaseOrderNumber" },
+      validationFields: ["purchaseOrderNumber", "supplierEmail"],
+      maxItems: 5,
+    });
+    const child = await create(template.body);
+    const version = await publish(child);
+    const parent = template.parent(child, version);
+    const root = await create(parent);
+    await publish(root);
+    assert.ok(
+      parent.execution.nodes.some(
+        (n) => n.kind === "for-each" && n.config.maxItems === 5,
+      ),
+    );
+    assert.equal(
+      template.body.execution.nodes.filter((n) => n.kind === "condition")
+        .length,
+      2,
+    );
+    assert.ok(!JSON.stringify(parent).includes("currency"));
+    if (useAgent)
+      assert.equal(parent.execution.resources.extractor!.kind, "agent");
+  }
+});
+
+test("operations pagination keeps every run when timestamps are identical down to microseconds", async () => {
+  const definition = chain([]),
+    workflow = await create(definition),
+    snapshot = storedWorkflowGraph(definition);
+  await sql`INSERT INTO workflow_runs(id,workflow_id,workspace_id,organization_id,user_id,graph_snapshot,input,status,created_at,finished_at) SELECT gen_random_uuid(),${workflow},${workspace},${org},${owner},${sql.json(snapshot)},'input','completed','2030-01-01T00:00:00.123456Z'::timestamptz,now() FROM generate_series(1,105)`;
+  const first = await call(
+    "GET",
+    `/workspaces/${workspace}/workflow-operations?view=runs`,
+  );
+  assert.equal(first.statusCode, 200, first.body);
+  assert.equal(first.json().length, 100);
+  const cursor = first.json().at(-1);
+  assert.equal(cursor.cursor_time, "2030-01-01T00:00:00.123456Z");
+  const query = new URLSearchParams({
+    view: "runs",
+    before: cursor.cursor_time,
+    beforeId: cursor.id,
+  });
+  const second = await call(
+    "GET",
+    `/workspaces/${workspace}/workflow-operations?${query}`,
+  );
+  assert.equal(second.statusCode, 200, second.body);
+  const remaining = second
+    .json()
+    .filter((r: { workflow_id: string }) => r.workflow_id === workflow);
+  assert.equal(remaining.length, 5);
+  const seen = new Set(first.json().map((r: { id: string }) => r.id));
+  assert.ok(remaining.every((r: { id: string }) => !seen.has(r.id)));
+});
+
+test("generated document template executes multiple read-back rules and routes failed validation through item and batch review", async () => {
+  const { documentDatabaseTemplate } =
+    await import("@agentconnect/schemas/workflow-document-template");
+  const created = await call(
+    "POST",
+    `/workspaces/${workspace}/mcp-connectors`,
+    {
+      name: "Template record database",
+      url: "http://127.0.0.1:4549/actions/mcp",
+    },
+  );
+  assert.equal(created.statusCode, 201, created.body);
+  const connectorId = created.json().id;
+  assert.equal(
+    (await call("POST", `/mcp-connectors/${connectorId}/discover`)).statusCode,
+    200,
+  );
+  const grant = await call(
+    "POST",
+    `/workspaces/${workspace}/mcp-action-grants`,
+    {
+      connectorId,
+      operation: "insert_invoice",
+      sideEffect: "write",
+      riskLevel: "medium",
+      allowWrites: true,
+      idempotencyArgument: "requestId",
+    },
+  );
+  assert.equal(grant.statusCode, 200, grant.body);
+  const schema = {
+    type: "object",
+    properties: {
+      invoiceNumber: { type: "string" },
+      supplier: { type: "string" },
+      total: { type: "number" },
+    },
+    required: ["invoiceNumber", "supplier", "total"],
+    additionalProperties: false,
+  };
+  const write = workflowAction.parse({
+    id: "write",
+    name: "Write configured record",
+    connector: "agentconnect.mcp-operation",
+    operation: "insert_invoice",
+    connectionId: connectorId,
+    inputSchema: mcpInvoiceSchema,
+    allowSideEffects: true,
+    sideEffect: "write",
+    riskLevel: "medium",
+    idempotency: "key",
+    idempotencyArgument: "requestId",
+  });
+  const read = workflowAction.parse({
+    id: "read",
+    name: "Read configured record",
+    connector: "agentconnect.mcp-operation",
+    operation: "read_invoice",
+    connectionId: connectorId,
+    inputSchema: {
+      type: "object",
+      properties: { invoiceNumber: { type: "string" } },
+      required: ["invoiceNumber"],
+    },
+    outputSchema: schema,
+  });
+  const template = documentDatabaseTemplate({
+    name: "Configured records",
+    modelId,
+    outputSchema: schema,
+    instruction: "Extract records using the reviewed example",
+    write,
+    read,
+    writeMappings: {
+      invoiceNumber: "invoiceNumber",
+      supplier: "supplier",
+      total: "total",
+    },
+    readMappings: { invoiceNumber: "invoiceNumber" },
+    validationFields: ["total", "invoiceNumber", "supplier"],
+    maxItems: 10,
+  });
+  const body = await create(template.body),
+    bodyVersion = await publish(body),
+    parent = await create(template.parent(body, bodyVersion)),
+    version = await publish(parent);
+  try {
+    for (const invalid of [false, true]) {
+      staleRead = invalid;
+      const record = {
+        invoiceNumber: invalid ? "TEMPLATE-FAIL" : "TEMPLATE-OK",
+        supplier: "Example supplier",
+        total: 27,
+      };
+      const factory = extractionProvider(record);
+      const rid = await run(
+        parent,
+        { documents: ["sample OCR", "remaining OCR"] },
+        version,
+      );
+      await processWorkflowRun({ providerFactory: factory });
+      assert.equal((await inspect(rid)).status, "waiting");
+      const approval = await call("POST", `/workflow-runs/${rid}/approval`, {
+        nodeId: "review",
+        decision: "approved",
+        editedInput: { ...record, total: 31 },
+      });
+      assert.equal(approval.statusCode, 200, approval.body);
+      if (!invalid) {
+        const result = await pump(rid, { providerFactory: factory });
+        assert.equal(result.status, "completed", JSON.stringify(result));
+        assert.equal(result.children.length, 1);
+        assert.equal(result.children[0].status, "completed");
+      } else {
+        let childId = "";
+        for (let i = 0; i < 30; i++) {
+          await processWorkflowRun({ providerFactory: factory });
+          const parentRun = await inspect(rid);
+          childId = parentRun.children[0]?.id ?? "";
+          if (
+            childId &&
+            (await inspect(childId)).approvals.some(
+              (a: { node_id: string; decision: string }) =>
+                a.node_id === "error" && a.decision === "pending",
+            )
+          )
+            break;
+        }
+        assert.ok(childId);
+        const child = await inspect(childId);
+        assert.equal(child.status, "waiting", JSON.stringify(child));
+        assert.ok(
+          child.approvals.some(
+            (a: { node_id: string }) => a.node_id === "error",
+          ),
+        );
+        assert.equal(
+          (
+            await call("POST", `/workflow-runs/${childId}/approval`, {
+              nodeId: "error",
+              decision: "rejected",
+            })
+          ).statusCode,
+          200,
+        );
+        let batch = await inspect(rid);
+        for (let i = 0; i < 30; i++) {
+          await processWorkflowRun({ providerFactory: factory });
+          batch = await inspect(rid);
+          if (
+            batch.approvals.some(
+              (a: { node_id: string; decision: string }) =>
+                a.node_id === "error" && a.decision === "pending",
+            )
+          )
+            break;
+        }
+        assert.equal(batch.status, "waiting", JSON.stringify(batch));
+        assert.ok(
+          batch.approvals.some(
+            (a: { node_id: string }) => a.node_id === "error",
+          ),
+        );
+        assert.equal(
+          (
+            await call("POST", `/workflow-runs/${rid}/approval`, {
+              nodeId: "error",
+              decision: "rejected",
+            })
+          ).statusCode,
+          200,
+        );
+      }
+    }
+  } finally {
+    staleRead = false;
+  }
+});
+
+test("document validation mappings support a database read returning a root array", async () => {
+  const { documentDatabaseTemplate } =
+    await import("@agentconnect/schemas/workflow-document-template");
+  const schema = {
+    type: "object",
+    properties: { recordId: { type: "string" } },
+    required: ["recordId"],
+  };
+  const template = documentDatabaseTemplate({
+    name: "Array records",
+    modelId,
+    outputSchema: schema,
+    instruction: "Extract record IDs",
+    write: workflowAction.parse({ ...httpAction("POST"), mappedInputs: {} }),
+    read: workflowAction.parse({
+      ...httpAction("GET"),
+      mappedInputs: {},
+      outputSchema: { type: "array", items: schema },
+    }),
+    writeMappings: {},
+    readMappings: {},
+    validationFields: ["recordId"],
+    validationMappings: { recordId: "[0].recordId" },
+    maxItems: 2,
+  });
+  const check = template.body.execution.nodes.find(
+    (n) => n.kind === "condition",
+  );
+  assert.equal(check!.kind, "condition");
+  if (check!.kind === "condition")
+    assert.deepEqual(
+      check!.config.condition.left,
+      reference("steps.read.output[0].recordId"),
+    );
 });

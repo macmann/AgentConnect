@@ -173,6 +173,22 @@ function pdfFixture(text) {
   );
   return Buffer.from(parts.join(""));
 }
+async function respectApiBudget(minimum = 150) {
+  const response = await fetch("http://localhost:4000/auth/me");
+  if (
+    response.status === 429 ||
+    Number(response.headers.get("x-ratelimit-remaining") ?? 300) < minimum
+  ) {
+    const reset = Number(
+      response.headers.get("retry-after") ??
+        response.headers.get("x-ratelimit-reset") ??
+        60,
+    );
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(59000, Math.max(1000, reset * 1000 + 500))),
+    );
+  }
+}
 test.beforeAll(async () => {
   const budget = await fetch("http://localhost:4000/auth/me");
   if (Number(budget.headers.get("x-ratelimit-remaining") ?? 300) < 200) {
@@ -245,6 +261,7 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   context,
   browser,
 }) => {
+  test.setTimeout(180000);
   await context.addCookies([
     {
       name: "session",
@@ -584,6 +601,7 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   await page
     .getByRole("button", { name: "Upload document", exact: true })
     .click();
+  await respectApiBudget(200);
   await page.getByLabel("Document files").setInputFiles({
     name: "financial-statement.html",
     mimeType: "text/html",
@@ -651,6 +669,7 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   await page
     .getByRole("button", { name: "Retrieval playground", exact: true })
     .click();
+  await respectApiBudget(80);
   await page.getByLabel("Retrieval query").fill("Revenue 125,000 2026 Company");
   await page
     .getByRole("button", { name: "Search knowledge", exact: true })

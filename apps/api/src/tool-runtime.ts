@@ -136,6 +136,7 @@ export async function boundedHttp(
   body: unknown,
   signal: AbortSignal,
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET",
+  responseLimit = 262144,
 ) {
   const response = await safeHttpTransport(
     hosts(config.TOOL_ALLOWED_HOSTS),
@@ -146,7 +147,7 @@ export async function boundedHttp(
     const parts: Uint8Array[] = [];
     for await (const part of response.body) {
       size += part.byteLength;
-      if (size > 262144) throw new ToolError("TOOL_RESPONSE_LIMIT");
+      if (size > responseLimit) throw new ToolError("TOOL_RESPONSE_LIMIT");
       parts.push(part);
     }
     return {

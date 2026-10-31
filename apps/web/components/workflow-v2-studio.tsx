@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
+import { WorkflowRunDetail, type RunDetail } from "./workflow-operations";
+import { useEffect, useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ReactFlow,
@@ -13,6 +14,7 @@ import {
   Handle,
   Position,
   type NodeProps,
+  type ReactFlowInstance,
   useUpdateNodeInternals,
 } from "@xyflow/react";
 import {
@@ -47,6 +49,7 @@ type VNode = Node<
   "v2"
 >;
 type Run = {
+  input?: unknown;
   actionExecutions?: {
     id: string;
     node_id: string;
@@ -207,6 +210,15 @@ function connectionPorts(
   };
 }
 
+function errorAffectsNode(node: Step, error: string) {
+  return (
+    error.startsWith(node.id + ":") ||
+    error.startsWith(node.label + ":") ||
+    ("resource" in node.config &&
+      error.startsWith(node.config.resource + ":")) ||
+    ("actionId" in node.config && error.startsWith(node.config.actionId + ":"))
+  );
+}
 const initial = (): WorkflowDefinitionV2 =>
   workflowDefinitionV2.parse({
     schemaVersion: 2,
@@ -248,12 +260,15 @@ export function WorkflowV2Studio({
   workflowId,
   role,
   onBack,
+  startWithAI = false,
 }: {
   workspaceId: string;
   workflowId: string;
   role: string;
   onBack: () => void;
+  startWithAI?: boolean;
 }) {
+  const flow = useRef<ReactFlowInstance<VNode> | null>(null);
   const editable = [
     "owner",
     "org_admin",
@@ -278,7 +293,7 @@ export function WorkflowV2Studio({
     [name, setName] = useState("New workflow"),
     [revision, setRevision] = useState(1),
     [description, setDescription] = useState("");
-  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(startWithAI);
   const [assistantPreview, setAssistantPreview] =
     useState<WorkflowDefinitionV2 | null>(null);
   const canvasEditable = editable && !assistantPreview;
@@ -488,9 +503,7 @@ export function WorkflowV2Studio({
       kind: n.kind,
       routes: routes(n),
       errorCapable: errorCapable(n.kind),
-      invalid: errors.some(
-        (e) => e.startsWith(n.id + ":") || e.startsWith(n.label + ":"),
-      ),
+      invalid: errors.some((e) => errorAffectsNode(n, e)),
     },
   }));
   const controlEdges = [
@@ -796,6 +809,9 @@ export function WorkflowV2Studio({
               style={{ height: "min(78vh, 900px)", minHeight: 600 }}
             >
               <ReactFlow<VNode>
+                onInit={(instance) => {
+                  flow.current = instance;
+                }}
                 nodeTypes={nodeTypes}
                 nodes={nodes}
                 edges={edges}
@@ -852,7 +868,11 @@ export function WorkflowV2Studio({
                 <Background />
                 <Controls />
                 <Panel position="top-left">
-                  <div className="v2-topbar">
+                  <div
+                    className="v2-topbar"
+                    role="toolbar"
+                    aria-label="Canvas controls"
+                  >
                     <select
                       aria-label="Node type"
                       value={kind}
@@ -952,6 +972,17 @@ export function WorkflowV2Studio({
                     >
                       AI assistant
                     </Button>
+                    <Button
+                      onClick={() => {
+                        setSelected("");
+                        setTestOpen(false);
+                        setAssistantOpen(false);
+                        setAssistantPreview(null);
+                        setMinimized(false);
+                      }}
+                    >
+                      Validation · {errors.length} issues
+                    </Button>
                     <span>
                       {assistantPreview
                         ? "AI preview · not applied"
@@ -983,6 +1014,7 @@ export function WorkflowV2Studio({
                 >
                   {assistantOpen ? (
                     <WorkflowAssistant
+                      initialMode={startWithAI && !id ? "create" : "modify"}
                       workspaceId={workspaceId}
                       workflowId={id}
                       definition={definition}
@@ -1013,6 +1045,63 @@ export function WorkflowV2Studio({
                           ))}
                         </select>
                       </label>
+                      {testFields.some((f) => f.name === "documents") && (
+                        <label>
+                          Upload documents (text / native PDF)
+                          <input
+                            type="file"
+                            multiple
+                            accept=".pdf,.txt,.md"
+                            onChange={(e) => {
+                              const files = Array.from(e.target.files ?? []);
+                              void task(async () => {
+                                if (
+                                  files.length > 25 ||
+                                  files.reduce((n, f) => n + f.size, 0) >
+                                    5000000
+                                )
+                                  throw new Error(
+                                    "Upload at most 25 files and 5 MB",
+                                  );
+                                const encoded = await Promise.all(
+                                  files.map(async (file) => {
+                                    const bytes = new Uint8Array(
+                                      await file.arrayBuffer(),
+                                    );
+                                    let binary = "";
+                                    for (
+                                      let offset = 0;
+                                      offset < bytes.length;
+                                      offset += 8192
+                                    )
+                                      binary += String.fromCharCode(
+                                        ...bytes.subarray(
+                                          offset,
+                                          offset + 8192,
+                                        ),
+                                      );
+                                    return {
+                                      name: file.name,
+                                      data: btoa(binary),
+                                    };
+                                  }),
+                                );
+                                const parsed = await requestJson<{
+                                  documents: unknown[];
+                                }>(
+                                  `/workspaces/${workspaceId}/workflow-documents/parse`,
+                                  "POST",
+                                  { files: encoded },
+                                );
+                                setInput(parsed);
+                                setNotice(
+                                  `${parsed.documents.length} documents ready. Review the input, then Run workflow.`,
+                                );
+                              });
+                            }}
+                          />
+                        </label>
+                      )}
                       {testFields.length ? (
                         <StructuredFields
                           schema={fieldSchema}
@@ -1219,6 +1308,13 @@ export function WorkflowV2Studio({
                               ))}
                             </details>
                           )}
+                          <details>
+                            <summary>Execution overview and step data</summary>
+                            <WorkflowRunDetail
+                              run={run.data as unknown as RunDetail}
+                              onChild={setRunId}
+                            />
+                          </details>
                           {run.data.error_code && (
                             <p role="alert">{run.data.error_code}</p>
                           )}
@@ -1538,7 +1634,38 @@ export function WorkflowV2Studio({
                       <h4>Resolve before publishing</h4>
                       <ul>
                         {[...new Set(errors)].map((e, i) => (
-                          <li key={i}>{e}</li>
+                          <li key={i}>
+                            <Button
+                              className="secondary"
+                              onClick={() => {
+                                const matched = definition.execution.nodes.find(
+                                  (n) => errorAffectsNode(n, e),
+                                );
+                                if (matched) {
+                                  void flow.current?.fitView({
+                                    nodes: [{ id: matched.id }],
+                                    duration: 200,
+                                    padding: 0.5,
+                                    maxZoom: 1,
+                                  });
+                                  setSelected(matched.id);
+                                  setTestOpen(false);
+                                  setAssistantOpen(false);
+                                  setAssistantPreview(null);
+                                  setMinimized(false);
+                                  requestAnimationFrame(() =>
+                                    document
+                                      .querySelector<HTMLElement>(
+                                        ".v2-properties input, .v2-properties select",
+                                      )
+                                      ?.focus(),
+                                  );
+                                }
+                              }}
+                            >
+                              {e}
+                            </Button>
+                          </li>
                         ))}
                       </ul>
                     </div>
