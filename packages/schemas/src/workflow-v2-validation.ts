@@ -26,7 +26,7 @@ export function validateV2Mappings(
                 f.type === "text"
                   ? "string"
                   : f.type === "json"
-                    ? "object"
+                    ? undefined
                     : f.type,
             },
           ]),
@@ -65,6 +65,21 @@ export function validateV2Mappings(
       if (source?.kind === "action")
         schema = execution.actions.find((a) => a.id === source.config.actionId)
           ?.outputSchema as Schema;
+      if (source?.kind === "wait-for-event")
+        schema = source.config.outputSchema as Schema;
+      if (source?.kind === "for-each")
+        schema =
+          parts[2] === "summary"
+            ? {
+                type: "object",
+                properties: {
+                  total: { type: "number" },
+                  completed: { type: "number" },
+                  failed: { type: "number" },
+                },
+                additionalProperties: false,
+              }
+            : { type: "array", items: { type: "object" } };
       if (source?.kind === "input") schema = input;
       if (source?.kind === "transform")
         schema = {
@@ -113,6 +128,16 @@ export function validateV2Mappings(
   for (const node of execution.nodes) {
     if ("input" in node.config && node.config.input)
       infer(node.config.input, node.id);
+    if (node.kind === "for-each") {
+      const type = infer(node.config.collection, node.id)?.type;
+      if (type && type !== "array")
+        errors.push(`${node.id}: For Each requires an array`);
+      Object.values(node.config.itemInputs).forEach((value) =>
+        infer(value, node.id),
+      );
+    }
+    if (node.kind === "wait" && node.config.until)
+      checkType(node.config.until, { type: "string" }, node.id);
     if (node.kind === "transform")
       Object.values(node.config.fields).forEach((value) =>
         infer(value, node.id),

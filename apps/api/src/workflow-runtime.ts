@@ -1,4 +1,10 @@
 import {
+  suspensionFor,
+  wakeWorkflowSuspensions,
+  WorkflowControlError,
+} from "./workflow-control.js";
+import { selectWorkflowField } from "@agentconnect/schemas/workflow-mapping";
+import {
   storedWorkflowGraph,
   workflowV2Program,
   validateV2Resources,
@@ -69,6 +75,7 @@ export type WorkflowRun = {
   workflow_id: string;
   version_id?: string | null;
   scheduled_for?: Date | string | null;
+  parent_run_id?: string | null;
   workspace_id: string;
   organization_id: string;
   user_id: string | null;
@@ -133,6 +140,12 @@ const State = Annotation.Root({
     },
     default: () => ({}),
   }),
+  errors: Annotation<
+    Record<
+      string,
+      { code: string; message: string; nodeId: string; attempt: number }
+    >
+  >({ reducer: (a, b) => ({ ...a, ...b }), default: () => ({}) }),
   variables: Annotation<Record<string, unknown>>({
     reducer: (a, b) => {
       const merged = { ...a, ...b };
@@ -176,11 +189,38 @@ export async function compileWorkflow(
     organizationId: run.organization_id,
     userId: run.user_id ?? undefined,
     workflowRunId: run.id,
+    workflowId: run.workflow_id,
     publicAccess: !!run.customer_action_id,
   };
   const program = workflowV2Program(graph);
   if (program) await validateV2Resources(graph, ctx);
-  const dataContext = (state: GraphState): WorkflowDataContext => {
+  const dataContext = (
+    state: GraphState,
+    nodeId: string,
+  ): WorkflowDataContext => {
+    let currentError: unknown = {
+      code: null,
+      message: null,
+      nodeId: null,
+      attempt: 0,
+    };
+    const pending = [nodeId],
+      seen = new Set<string>();
+    while (pending.length) {
+      const id = pending.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (state.errors?.[id]) {
+        currentError = state.errors[id];
+        break;
+      }
+      pending.push(
+        ...graph.edges
+          .filter((e) => e.target === id)
+          .map((e) => e.source)
+          .sort(),
+      );
+    }
     let input: unknown = state.input;
     if (program) {
       try {
@@ -202,7 +242,23 @@ export async function compileWorkflow(
       },
       input,
       steps: Object.fromEntries(
-        Object.entries(state.outputs).map(([id, output]) => [id, { output }]),
+        Object.entries(state.outputs).map(([id, output]) => [
+          id,
+          {
+            output,
+            ...(program?.nodes.find((n) => n.id === id)?.kind === "for-each" &&
+            Array.isArray(output)
+              ? {
+                  summary: {
+                    total: output.length,
+                    failed: output.filter((v) => v?.status === "failed").length,
+                    completed: output.filter((v) => v?.status === "completed")
+                      .length,
+                  },
+                }
+              : {}),
+          },
+        ]),
       ),
       variables: { ...program?.variables, ...state.variables },
       workflow: {
@@ -211,7 +267,9 @@ export async function compileWorkflow(
         runId: run.id,
         schemaVersion: program ? 2 : 1,
       },
-      error: { code: null, nodeId: null },
+      error: currentError,
+      item: graph.programV2?.scope?.item,
+      iteration: graph.programV2?.scope?.iteration,
     };
   };
   const builder = new StateGraph<
@@ -233,7 +291,7 @@ export async function compileWorkflow(
         },
         async (span) => {
           signal.throwIfAborted();
-          if (run.api_key_id || run.schedule_id) {
+          if (run.api_key_id || run.schedule_id || run.parent_run_id) {
             if (!run.user_id)
               throw new WorkflowError("WORKFLOW_ACCESS_REVOKED");
             try {
@@ -262,7 +320,7 @@ export async function compileWorkflow(
           await sql`INSERT INTO workflow_node_runs(run_id,node_id,workspace_id,organization_id,label,kind,status,input) VALUES (${run.id},${node.id},${run.workspace_id},${run.organization_id},${node.data.label},${program?.nodes.find((n) => n.id === node.id)?.kind ?? node.type},'running',NULL) ON CONFLICT(run_id,node_id) DO UPDATE SET status='running',input=NULL,error_code=NULL,finished_at=NULL`;
           try {
             const definitionNode = program?.nodes.find((n) => n.id === node.id);
-            const context = dataContext(state);
+            const context = dataContext(state, node.id);
             const expression =
               definitionNode && "input" in definitionNode.config
                 ? definitionNode.config.input
@@ -281,6 +339,34 @@ export async function compileWorkflow(
               outputTokens: number | null = null,
               citations: unknown[] = [];
             const nodeCtx = { ...ctx, workflowNodeId: node.id };
+            if (
+              definitionNode &&
+              ["for-each", "subworkflow", "wait", "wait-for-event"].includes(
+                definitionNode.kind,
+              )
+            ) {
+              const suspension = await suspensionFor(
+                run,
+                definitionNode,
+                input,
+                context,
+              );
+              await sql`UPDATE workflow_node_runs SET status='waiting' WHERE run_id=${run.id} AND node_id=${node.id}`;
+              interrupt<{ nodeId: string }, { ready: boolean }>({
+                nodeId: node.id,
+              });
+              if (suspension.status !== "ready")
+                throw new WorkflowControlError("WORKFLOW_RESUME_NOT_READY");
+              if (suspension.error_code)
+                throw new WorkflowControlError(suspension.error_code);
+              output =
+                definitionNode.kind === "subworkflow"
+                  ? selectWorkflowField(
+                      (suspension.result as unknown[])[0],
+                      definitionNode.config.outputPath,
+                    )
+                  : suspension.result;
+            }
             if (definitionNode?.kind === "structured-ai") {
               const resource =
                 program!.resources[definitionNode.config.resource]!;
@@ -430,12 +516,33 @@ export async function compileWorkflow(
               ...(variableUpdate ? { variables: variableUpdate } : {}),
               ...(branch !== undefined
                 ? { decisions: { [node.id]: branch } }
-                : {}),
+                : definitionNode?.onError
+                  ? { decisions: { [node.id]: "success" } }
+                  : {}),
             };
           } catch (e) {
             if (isGraphInterrupt(e)) throw e;
             const code = signal.aborted ? "WORKFLOW_CANCELLED" : errorCode(e);
             await sql`UPDATE workflow_node_runs SET status=${signal.aborted ? "cancelled" : "failed"},retry_at=NULL,error_code=${code},duration_ms=${Math.round(performance.now() - started)},finished_at=now() WHERE run_id=${run.id} AND node_id=${node.id}`;
+            const definitionNode = program?.nodes.find((n) => n.id === node.id);
+            if (!signal.aborted && definitionNode?.onError) {
+              const [trace] =
+                await sql`SELECT attempts FROM workflow_node_runs WHERE run_id=${run.id} AND node_id=${node.id}`;
+              const safe = {
+                code: /^[A-Z][A-Z0-9_]{0,80}$/.test(code)
+                  ? code
+                  : "WORKFLOW_EXECUTION_FAILED",
+                message: "This step could not be completed.",
+                nodeId: node.id,
+                attempt: Math.max(1, Math.min(3, Number(trace?.attempts ?? 1))),
+              };
+              observationError(span, { code: safe.code });
+              return {
+                outputs: { [node.id]: safe },
+                errors: { [node.id]: safe },
+                decisions: { [node.id]: "error" },
+              };
+            }
             throw e;
           }
         },
@@ -454,19 +561,21 @@ export async function compileWorkflow(
     if (
       node.type === "router" ||
       node.type === "condition" ||
-      node.type === "switch"
+      node.type === "switch" ||
+      !!program?.nodes.find((n) => n.id === node.id)?.onError
     ) {
       const edges = graph.edges.filter((e) => e.source === node.id);
       builder.addConditionalEdges(
         "node_" + node.id,
         (state) =>
-          node.type === "switch"
+          node.type === "switch" ||
+          program?.nodes.find((n) => n.id === node.id)?.onError
             ? String(state.decisions[node.id])
             : state.decisions[node.id]
               ? "true"
               : "false",
         Object.fromEntries(
-          edges.map((e) => [e.sourceHandle!, "node_" + e.target]),
+          edges.map((e) => [e.sourceHandle ?? "success", "node_" + e.target]),
         ),
       );
     } else
@@ -483,7 +592,8 @@ export async function compileWorkflow(
   return builder.compile({ checkpointer: await workflowSaver() });
 }
 function errorCode(e: unknown) {
-  return e instanceof WorkflowValueError ||
+  return e instanceof WorkflowControlError ||
+    e instanceof WorkflowValueError ||
     e instanceof WorkflowMappingError ||
     e instanceof WorkflowError ||
     e instanceof ToolError ||
@@ -511,6 +621,7 @@ export async function processWorkflowRun(
     embeddingFactory?: EmbeddingFactory;
   } = {},
 ) {
+  await wakeWorkflowSuspensions();
   const run = await claimWorkflowRun();
   if (!run) return false;
   return context.with(workflowTraceContext(run.id), () =>
@@ -561,32 +672,43 @@ export async function processWorkflowRun(
               maxConcurrency: 4,
             };
           const before = await graph.getState(executionConfig);
-          const interrupted = before.tasks
-            .flatMap((t) => t.interrupts ?? [])
-            .map((i) => (i.value as { nodeId?: string })?.nodeId)
-            .filter(Boolean);
-          const [approval] =
-            interrupted.length === 1
-              ? await sql`SELECT decision,edited_input,edited_input IS NOT NULL AS has_edit FROM workflow_approvals WHERE run_id=${run.id} AND node_id=${interrupted[0]!}`
-              : [];
-          let initial: GraphUpdate | Command | null = before.createdAt
-            ? null
-            : { input: run.input, outputs: {}, decisions: {}, variables: {} };
-          if (
-            approval?.decision === "approved" &&
-            before.tasks.some((t) => t.interrupts?.length)
-          )
-            initial = new Command({
-              resume: {
-                decision: "approved",
-                ...(approval.has_edit
-                  ? { editedInput: approval.edited_input }
-                  : {}),
-              },
-            });
+          const resume: Record<string, unknown> = {};
+          for (const task of before.tasks)
+            for (const interruption of task.interrupts ?? []) {
+              const nodeId = (interruption.value as { nodeId?: string })
+                ?.nodeId;
+              if (!nodeId || !interruption.id) continue;
+              const [approval] =
+                await sql`SELECT edited_input,edited_input IS NOT NULL AS has_edit FROM workflow_approvals WHERE run_id=${run.id} AND node_id=${nodeId} AND decision='approved'`;
+              const [suspension] =
+                await sql`SELECT id FROM workflow_suspensions WHERE run_id=${run.id} AND node_id=${nodeId} AND status='ready'`;
+              if (approval)
+                resume[interruption.id] = {
+                  decision: "approved",
+                  ...(approval.has_edit
+                    ? { editedInput: approval.edited_input }
+                    : {}),
+                };
+              else if (suspension) resume[interruption.id] = { ready: true };
+            }
+          const initial: GraphUpdate | Command | null = !before.createdAt
+            ? {
+                input: run.input,
+                outputs: {},
+                decisions: {},
+                variables: {},
+                errors: {},
+              }
+            : Object.keys(resume).length
+              ? new Command({ resume })
+              : null;
           const result = await graph.invoke(initial, executionConfig);
           const snapshot = await graph.getState(executionConfig);
           const waiting = snapshot.tasks.some((t) => t.interrupts?.length);
+          const remaining = snapshot.tasks
+            .flatMap((t) => t.interrupts ?? [])
+            .map((i) => (i.value as { nodeId: string }).nodeId);
+          await sql`UPDATE workflow_suspensions SET resumed_at=now(),token_hash=NULL WHERE run_id=${run.id} AND status='ready' AND resumed_at IS NULL AND NOT (node_id=ANY(${remaining}))`;
           const outputNode = run.graph_snapshot.nodes.find(
             (n) => n.type === "output",
           )!;

@@ -485,7 +485,7 @@ test("V2 node schemas reject inline resources, arbitrary transforms and invalid 
   );
 });
 
-test("Switch requires every distinct case and exactly one default; mutable state and HITL cannot race in parallel branches", () => {
+test("Switch requires every distinct case and exactly one default; mutable state cannot race and V2 HITL can pause parallel branches", () => {
   const base = definition();
   const switchDefinition = {
     ...base,
@@ -564,8 +564,107 @@ test("Switch requires every distinct case and exactly one default; mutable state
         ].map(([source, target], i) => ({ id: "e_" + i, source, target })),
       },
     };
-    assert.ok(
+    assert.equal(
       validateWorkflowDefinition(parallel).some((e) => e.includes("parallel")),
+      kind === "set-variable",
     );
   }
+});
+
+test("controlled primitives keep graphs acyclic, scope references safe and iteration/wait limits bounded", () => {
+  const base = definition();
+  const make = (kind: string, config: unknown) => ({
+    schemaVersion: 2,
+    execution: {
+      resources: {
+        body: {
+          kind: "workflow",
+          workflowId: randomUUID(),
+          versionId: randomUUID(),
+        },
+      },
+      nodes: [
+        base.execution.nodes[0],
+        { id: "work", label: "Work", kind, config },
+        base.execution.nodes[1],
+      ],
+      edges: [
+        { id: "a", source: "start", target: "work" },
+        { id: "b", source: "work", target: "end" },
+      ],
+    },
+  });
+  assert.equal(
+    validateWorkflowDefinition(
+      make("for-each", {
+        resource: "body",
+        collection: reference("input.documents"),
+        maxItems: 10,
+        itemInputs: {
+          file: reference("item"),
+          index: reference("iteration.index"),
+        },
+      }),
+    ).length,
+    0,
+  );
+  for (const config of [
+    { resource: "body", collection: literal([]) },
+    { resource: "body", collection: reference("input.files"), maxItems: 101 },
+    { resource: "body", collection: reference("input.files"), concurrency: 50 },
+  ])
+    assert.equal(
+      workflowDefinitionV2.safeParse(make("for-each", config)).success,
+      false,
+    );
+  assert.equal(
+    workflowDefinitionV2.safeParse(
+      make("wait", { mode: "duration", seconds: 2592001 }),
+    ).success,
+    false,
+  );
+  assert.ok(
+    validateWorkflowDefinition(make("wait", { mode: "until" })).some((e) =>
+      e.includes("timestamp"),
+    ),
+  );
+  assert.ok(
+    !workflowExpression.safeParse({
+      type: "reference",
+      path: "item.__proto__.password",
+    }).success,
+  );
+  assert.ok(
+    !workflowExpression.safeParse({
+      type: "reference",
+      path: "iteration.constructor",
+    }).success,
+  );
+  assert.ok(
+    workflowExpression.safeParse(reference("item.files[0].text")).success,
+  );
+  const circular = make("wait", { mode: "duration", seconds: 1 });
+  circular.execution.nodes[1] = {
+    ...circular.execution.nodes[1],
+    onError: "start",
+  } as never;
+  assert.ok(
+    validateWorkflowDefinition(circular).some((e) => e.includes("Cycles")),
+  );
+  const jsonInput = make("for-each", {
+    resource: "body",
+    collection: reference("input.files"),
+  });
+  const withFields = {
+    ...jsonInput,
+    execution: {
+      ...jsonInput.execution,
+      inputFields: [{ name: "files", label: "Files", type: "json" }],
+    },
+  };
+  assert.equal(
+    validateWorkflowDefinition(withFields).length,
+    0,
+    "JSON fields may hold arrays; runtime checks the collection type",
+  );
 });

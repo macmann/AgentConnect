@@ -29,7 +29,7 @@ import {
   StructuredFields,
   type ValueSchema,
 } from "./workflow-v2-fields";
-import { requestJson } from "./agent-client";
+import { requestJson, apiBase } from "./agent-client";
 import { Button } from "./button";
 import { WorkflowResult } from "./workflow-result";
 import { WorkflowTriggers } from "./workflow-triggers";
@@ -40,16 +40,33 @@ type VNode = Node<
     kind: string;
     routes: { id: string; label: string }[];
     invalid: boolean;
+    errorCapable: boolean;
   },
   "v2"
 >;
 type Run = {
+  parent_run_id?: string;
+  suspensions?: {
+    id: string;
+    node_id: string;
+    kind: string;
+    status: string;
+    due_at: string;
+    event_name?: string;
+    resumed_at?: string;
+  }[];
+  children?: {
+    id: string;
+    parent_node_id: string;
+    iteration_index: number;
+    status: string;
+  }[];
   id: string;
   status: string;
   output: unknown;
   error_code?: string;
   graph_snapshot: {
-    programV2: { execution: WorkflowDefinitionV2["execution"] };
+    programV2?: { execution: WorkflowDefinitionV2["execution"] };
   };
   approvals: {
     node_id: string;
@@ -94,6 +111,16 @@ function StepNode({ id, data, selected, isConnectable }: NodeProps<VNode>) {
             />
           ),
         )}
+      {data.errorCapable && (
+        <Handle
+          id="error"
+          type="source"
+          position={Position.Bottom}
+          isConnectable={isConnectable}
+          style={{ left: "85%", background: "var(--danger)" }}
+          aria-label={`Error route from ${data.label}`}
+        />
+      )}
       {data.kind !== "output" &&
         (data.routes.length
           ? data.routes.map((route, i) => (
@@ -125,6 +152,17 @@ function StepNode({ id, data, selected, isConnectable }: NodeProps<VNode>) {
     </div>
   );
 }
+const errorCapable = (kind: string) =>
+  ![
+    "input",
+    "output",
+    "parallel",
+    "merge",
+    "condition",
+    "switch",
+    "approval",
+    "human-task",
+  ].includes(kind);
 const nodeTypes = { v2: StepNode };
 function connectionPorts(
   connection: Connection,
@@ -174,6 +212,10 @@ const kinds = [
   "merge",
   "input",
   "output",
+  "for-each",
+  "wait",
+  "wait-for-event",
+  "subworkflow",
 ] as const;
 const outputSchema = {
   type: "object",
@@ -296,9 +338,24 @@ export function WorkflowV2Studio({
       active = false;
     };
   }, [workflowId]);
-  const pending = run.data?.approvals.find((a) => a.decision === "pending");
+  const [pendingNode, setPendingNode] = useState("");
+  const [eventCredentials, setEventCredentials] = useState<{
+    token: string;
+    callbackPath: string;
+    expiresAt: string;
+    eventName: string;
+  } | null>(null);
+  useEffect(() => {
+    setEventCredentials(null);
+    setPendingNode("");
+  }, [runId]);
+  const pendingApprovals =
+    run.data?.approvals.filter((a) => a.decision === "pending") ?? [];
+  const pending =
+    pendingApprovals.find((a) => a.node_id === pendingNode) ??
+    pendingApprovals[0];
   const taskNode = pending
-    ? run.data?.graph_snapshot.programV2.execution.nodes.find(
+    ? run.data?.graph_snapshot.programV2?.execution.nodes.find(
         (n) => n.id === pending.node_id,
       )
     : undefined;
@@ -376,12 +433,24 @@ export function WorkflowV2Studio({
       label: n.label,
       kind: n.kind,
       routes: routes(n),
+      errorCapable: errorCapable(n.kind),
       invalid: errors.some(
         (e) => e.startsWith(n.id + ":") || e.startsWith(n.label + ":"),
       ),
     },
   }));
-  const edges: Edge[] = definition.execution.edges.map((e) => ({
+  const controlEdges = [
+    ...definition.execution.edges,
+    ...definition.execution.nodes
+      .filter((n) => n.onError)
+      .map((n) => ({
+        id: "error_" + n.id,
+        source: n.id,
+        target: n.onError!,
+        branch: "error",
+      })),
+  ];
+  const edges: Edge[] = controlEdges.map((e) => ({
     id: e.id,
     source: e.source,
     target: e.target,
@@ -425,51 +494,63 @@ export function WorkflowV2Studio({
     const nodeId =
       kind.replaceAll("-", "_") + "_" + crypto.randomUUID().slice(0, 8);
     const config =
-      kind === "agent"
-        ? { resource: "agent_" + nodeId }
-        : kind === "structured-ai"
-          ? {
-              resource: "model_" + nodeId,
-              instruction: "Extract the requested fields.",
-              outputSchema,
-            }
-          : kind === "action"
-            ? { actionId: "action_" + nodeId }
-            : kind === "human-task"
-              ? {
-                  mode: "review-edit",
-                  prompt: "Review the result before continuing.",
-                  outputSchema,
-                }
-              : kind === "transform"
-                ? { fields: {} }
-                : kind === "set-variable"
+      kind === "for-each"
+        ? {
+            resource: "body_" + nodeId,
+            collection: { type: "reference", path: "input.files" },
+          }
+        : kind === "subworkflow"
+          ? { resource: "body_" + nodeId }
+          : kind === "wait"
+            ? { mode: "duration", seconds: 60 }
+            : kind === "wait-for-event"
+              ? { eventName: "completed" }
+              : kind === "agent"
+                ? { resource: "agent_" + nodeId }
+                : kind === "structured-ai"
                   ? {
-                      name:
-                        Object.keys(definition.execution.variables)[0] ??
-                        "value",
-                      value: { type: "literal", value: "" },
+                      resource: "model_" + nodeId,
+                      instruction: "Extract the requested fields.",
+                      outputSchema,
                     }
-                  : kind === "condition"
-                    ? {
-                        condition: {
-                          operator: "equals",
-                          left: { type: "reference", path: "input" },
-                          right: { type: "literal", value: "" },
-                        },
-                      }
-                    : kind === "switch"
+                  : kind === "action"
+                    ? { actionId: "action_" + nodeId }
+                    : kind === "human-task"
                       ? {
-                          value: { type: "reference", path: "input" },
-                          cases: [
-                            {
-                              id: "case_one",
-                              label: "First route",
-                              value: "high",
-                            },
-                          ],
+                          mode: "review-edit",
+                          prompt: "Review the result before continuing.",
+                          outputSchema,
                         }
-                      : {};
+                      : kind === "transform"
+                        ? { fields: {} }
+                        : kind === "set-variable"
+                          ? {
+                              name:
+                                Object.keys(
+                                  definition.execution.variables,
+                                )[0] ?? "value",
+                              value: { type: "literal", value: "" },
+                            }
+                          : kind === "condition"
+                            ? {
+                                condition: {
+                                  operator: "equals",
+                                  left: { type: "reference", path: "input" },
+                                  right: { type: "literal", value: "" },
+                                },
+                              }
+                            : kind === "switch"
+                              ? {
+                                  value: { type: "reference", path: "input" },
+                                  cases: [
+                                    {
+                                      id: "case_one",
+                                      label: "First route",
+                                      value: "high",
+                                    },
+                                  ],
+                                }
+                              : {};
     const step = workflowDefinitionV2.shape.execution.shape.nodes.element.parse(
       { id: nodeId, label: kind.replaceAll("-", " "), kind, config },
     );
@@ -494,8 +575,57 @@ export function WorkflowV2Studio({
     setSelected(nodeId);
     setMinimized(false);
   }
+  function connect(connection: Connection, replacing?: string) {
+    if (!editable || !connection.source || !connection.target) return;
+    let nodes = definition.execution.nodes.map((n) =>
+      replacing === "error_" + n.id ? { ...n, onError: undefined } : n,
+    );
+    const source = nodes.find((n) => n.id === connection.source);
+    const isError = connection.sourceHandle === "error";
+    if (isError && !errorCapable(source?.kind ?? "input")) return;
+    const edgeId = isError
+      ? "error_" + connection.source
+      : (replacing ?? "edge_" + crypto.randomUUID().slice(0, 8));
+    const edges = definition.execution.edges.filter((e) => e.id !== replacing);
+    if (isError)
+      nodes = nodes.map((n) =>
+        n.id === connection.source ? { ...n, onError: connection.target! } : n,
+      );
+    else
+      edges.push({
+        id: edgeId,
+        source: connection.source,
+        target: connection.target,
+        ...((source?.kind === "condition" || source?.kind === "switch") &&
+        connection.sourceHandle
+          ? { branch: connection.sourceHandle }
+          : {}),
+      });
+    change({
+      ...definition,
+      execution: { ...definition.execution, nodes, edges },
+      editor: {
+        nodes: definition.editor?.nodes ?? {},
+        edges: {
+          ...Object.fromEntries(
+            Object.entries(definition.editor?.edges ?? {}).filter(
+              ([key]) => key !== replacing,
+            ),
+          ),
+          [edgeId]: connectionPorts(connection),
+        },
+      },
+    });
+  }
   function remove(ids: string[], edgeIds: string[] = []) {
-    const nodes = definition.execution.nodes.filter((n) => !ids.includes(n.id));
+    const nodes = definition.execution.nodes
+      .filter((n) => !ids.includes(n.id))
+      .map((n) =>
+        n.onError &&
+        (ids.includes(n.onError) || edgeIds.includes("error_" + n.id))
+          ? { ...n, onError: undefined }
+          : n,
+      );
     const edges = definition.execution.edges.filter(
       (e) =>
         !ids.includes(e.source) &&
@@ -541,8 +671,10 @@ export function WorkflowV2Studio({
               ),
             ),
             edges: Object.fromEntries(
-              Object.entries(definition.editor.edges).filter(([key]) =>
-                edges.some((e) => e.id === key),
+              Object.entries(definition.editor.edges).filter(
+                ([key]) =>
+                  edges.some((e) => e.id === key) ||
+                  nodes.some((n) => n.onError && key === "error_" + n.id),
               ),
             ),
           }
@@ -553,7 +685,7 @@ export function WorkflowV2Studio({
     (versionId
       ? versions.data?.find((v) => v.id === versionId)?.graph.inputFields
       : undefined) ?? definition.execution.inputFields;
-  const resultNode = run.data?.graph_snapshot.programV2.execution.nodes.find(
+  const resultNode = run.data?.graph_snapshot.programV2?.execution.nodes.find(
     (n) => n.kind === "output",
   );
   const fieldSchema: ValueSchema = {
@@ -653,74 +785,8 @@ export function WorkflowV2Studio({
                     if (removed.length) remove([], removed);
                   }
                 }}
-                onConnect={(connection) => {
-                  if (!editable || !connection.source || !connection.target)
-                    return;
-                  const source = definition.execution.nodes.find(
-                    (n) => n.id === connection.source,
-                  );
-                  const edgeId = "edge_" + crypto.randomUUID().slice(0, 8);
-                  change({
-                    ...definition,
-                    editor: {
-                      nodes: definition.editor?.nodes ?? {},
-                      edges: {
-                        ...definition.editor?.edges,
-                        [edgeId]: connectionPorts(connection),
-                      },
-                    },
-                    execution: {
-                      ...definition.execution,
-                      edges: [
-                        ...definition.execution.edges,
-                        {
-                          id: edgeId,
-                          source: connection.source,
-                          target: connection.target,
-                          ...((source?.kind === "condition" ||
-                            source?.kind === "switch") &&
-                          connection.sourceHandle
-                            ? { branch: connection.sourceHandle }
-                            : {}),
-                        },
-                      ],
-                    },
-                  });
-                }}
-                onReconnect={(old, connection) => {
-                  if (!editable || !connection.source || !connection.target)
-                    return;
-                  const source = definition.execution.nodes.find(
-                    (n) => n.id === connection.source,
-                  );
-                  change({
-                    ...definition,
-                    editor: {
-                      nodes: definition.editor?.nodes ?? {},
-                      edges: {
-                        ...definition.editor?.edges,
-                        [old.id]: connectionPorts(connection),
-                      },
-                    },
-                    execution: {
-                      ...definition.execution,
-                      edges: definition.execution.edges.map((e) =>
-                        e.id === old.id
-                          ? {
-                              ...e,
-                              source: connection.source!,
-                              target: connection.target!,
-                              branch:
-                                source?.kind === "condition" ||
-                                source?.kind === "switch"
-                                  ? (connection.sourceHandle ?? undefined)
-                                  : undefined,
-                            }
-                          : e,
-                      ),
-                    },
-                  });
-                }}
+                onConnect={(connection) => connect(connection)}
+                onReconnect={(old, connection) => connect(connection, old.id)}
                 edgesReconnectable={editable}
               >
                 <Background />
@@ -901,6 +967,129 @@ export function WorkflowV2Studio({
                       {run.data && (
                         <>
                           <h4>{run.data.status}</h4>
+                          {run.data.parent_run_id && (
+                            <Button
+                              onClick={() => setRunId(run.data!.parent_run_id!)}
+                            >
+                              Back to parent run
+                            </Button>
+                          )}
+                          {run.data.children?.length ? (
+                            <details open>
+                              <summary>Child runs / iterations</summary>
+                              {run.data.children.map((child) => (
+                                <p key={child.id}>
+                                  <Button onClick={() => setRunId(child.id)}>
+                                    {child.parent_node_id} · item{" "}
+                                    {child.iteration_index + 1} · {child.status}
+                                  </Button>
+                                </p>
+                              ))}
+                            </details>
+                          ) : null}
+                          {run.data.suspensions
+                            ?.filter((s) => s.status === "pending")
+                            .map((s) => (
+                              <fieldset key={s.id}>
+                                <legend>
+                                  {s.node_id} ·{" "}
+                                  {s.kind === "children"
+                                    ? "Waiting for child results"
+                                    : s.kind === "event"
+                                      ? "Waiting for event"
+                                      : "Durable wait"}
+                                </legend>
+                                {s.due_at && (
+                                  <p>
+                                    {s.kind === "event" ? "Expires" : "Resumes"}
+                                    : {new Date(s.due_at).toLocaleString()}
+                                  </p>
+                                )}
+                                {s.kind === "event" && canExecute && (
+                                  <Button
+                                    disabled={
+                                      busy || run.data!.status !== "waiting"
+                                    }
+                                    onClick={() =>
+                                      void task(async () => {
+                                        const issued = await requestJson<{
+                                          token: string;
+                                          callbackPath: string;
+                                          expiresAt: string;
+                                          eventName: string;
+                                        }>(
+                                          `/workflow-runs/${runId}/event-token`,
+                                          "POST",
+                                          { nodeId: s.node_id },
+                                        );
+                                        setEventCredentials(issued);
+                                        setNotice(
+                                          "Scoped callback token issued. Issuing another token invalidates the previous one.",
+                                        );
+                                      })
+                                    }
+                                  >
+                                    Issue / rotate callback token
+                                  </Button>
+                                )}
+                              </fieldset>
+                            ))}
+                          {eventCredentials && (
+                            <fieldset>
+                              <legend>External callback</legend>
+                              <p>
+                                POST {apiBase}
+                                {eventCredentials.callbackPath}
+                              </p>
+                              <p>Event name: {eventCredentials.eventName}</p>
+                              <label>
+                                Bearer token
+                                <input
+                                  type="password"
+                                  readOnly
+                                  value={eventCredentials.token}
+                                />
+                              </label>
+                              <Button
+                                onClick={() =>
+                                  void task(async () => {
+                                    await navigator.clipboard.writeText(
+                                      eventCredentials.token,
+                                    );
+                                    setNotice("Callback token copied");
+                                  })
+                                }
+                              >
+                                Copy callback token
+                              </Button>
+                              <p>
+                                Keep the token private. It authorizes this event
+                                once and expires at{" "}
+                                {new Date(
+                                  eventCredentials.expiresAt,
+                                ).toLocaleString()}
+                                .
+                              </p>
+                            </fieldset>
+                          )}
+                          {pendingApprovals.length > 1 && (
+                            <label>
+                              Pending human task
+                              <select
+                                value={pending?.node_id ?? ""}
+                                onChange={(event) =>
+                                  setPendingNode(event.target.value)
+                                }
+                              >
+                                {pendingApprovals.map((a) => (
+                                  <option key={a.node_id} value={a.node_id}>
+                                    {a.prompt}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )}
+
                           {run.data.error_code && (
                             <p role="alert">{run.data.error_code}</p>
                           )}
@@ -909,7 +1098,7 @@ export function WorkflowV2Studio({
                               {n.label}: {n.status} {n.error_code}
                             </p>
                           ))}
-                          {pending && (
+                          {pending && run.data.status === "waiting" && (
                             <fieldset>
                               <legend>{pending.prompt}</legend>
                               {taskNode?.kind === "human-task" &&

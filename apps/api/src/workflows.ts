@@ -14,6 +14,7 @@ import {
   registerWorkflowTriggers,
   workflowInputText,
 } from "./workflow-triggers.js";
+import { registerWorkflowEvents } from "./workflow-events.js";
 import { registerWorkflowComponentRoutes } from "./workflow-components.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
@@ -58,6 +59,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
   });
   await registerWorkflowComponentRoutes(app);
   await registerWorkflowTriggers(app);
+  await registerWorkflowEvents(app);
   const schema = (body: z.ZodType) => ({
     // AJV cannot apply defaults inside V1/V2 anyOf branches. Zod applies all defaults after validation.
     schema: {
@@ -138,7 +140,9 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
         });
       }
     }
-    return { models, agents, actions };
+    const workflows =
+      await sql`SELECT v.id,v.workflow_id,v.version,v.name FROM workflow_versions v JOIN workflows w ON w.id=v.workflow_id WHERE v.workspace_id=${w.id} AND v.organization_id=${w.organization_id} AND w.archived_at IS NULL ORDER BY v.name,v.version DESC`;
+    return { models, agents, actions, workflows };
   });
   app.post(
     "/workspaces/:workspaceId/workflows",
@@ -258,6 +262,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
       try {
         await validateWorkflowDependencies(storedWorkflowGraph(w.draft_graph), {
           workspaceId: w.workspace_id,
+          workflowId: w.id,
           organizationId: w.organization_id,
           userId: u.id,
         });
@@ -297,6 +302,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
           definition.schemaVersion === 2 ? definition : graph;
         await validateWorkflowDependencies(graph, {
           workspaceId: w.workspace_id,
+          workflowId: w.id,
           organizationId: w.organization_id,
           userId: u.id,
         });
@@ -411,6 +417,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
         graph,
         {
           workspaceId: w.workspace_id,
+          workflowId: w.id,
           organizationId: w.organization_id,
           userId: u.id,
         },
@@ -459,7 +466,11 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
     const visible = { ...run };
     delete visible.lease_owner;
     delete visible.lease_expires_at;
-    return { ...visible, nodes, approvals, tools };
+    const suspensions =
+      await sql`SELECT id,node_id,kind,status,due_at,error_code,resumed_at,payload->>'eventName' AS event_name FROM workflow_suspensions WHERE run_id=${run.id} ORDER BY created_at`;
+    const children =
+      await sql`SELECT id,workflow_id,version_id,parent_node_id,iteration_index,status,error_code,created_at,finished_at FROM workflow_runs WHERE parent_run_id=${run.id} ORDER BY parent_node_id,iteration_index`;
+    return { ...visible, nodes, approvals, tools, suspensions, children };
   });
   app.post("/workflow-runs/:runId/cancel", async (r) => {
     const { u, run } = await ownedRun(r, "workflow:execute");
@@ -500,7 +511,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
         const task = pending.find(
           (p) => !data.nodeId || p.node_id === data.nodeId,
         );
-        if (!task || pending.length !== 1)
+        if (!task || (!data.nodeId && pending.length !== 1))
           throw new HttpError(409, "Select the pending human task");
         const program = workflowV2Program(
           storedWorkflowGraph(run.graph_snapshot),
@@ -523,7 +534,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
             );
         }
         const [approval] =
-          await tx`UPDATE workflow_approvals SET decision=${data.decision},comment=${data.comment},edited_input=${data.editedInput === undefined ? null : tx.json(data.editedInput as never)},decided_by=${u.id},decided_at=now() WHERE run_id=${run.id} AND decision='pending' RETURNING id`;
+          await tx`UPDATE workflow_approvals SET decision=${data.decision},comment=${data.comment},edited_input=${data.editedInput === undefined ? null : tx.json(data.editedInput as never)},decided_by=${u.id},decided_at=now() WHERE run_id=${run.id} AND node_id=${task.node_id} AND decision='pending' RETURNING id`;
         if (!approval)
           throw new HttpError(409, "Approval has already been decided");
         await tx`UPDATE workflow_runs SET status=${data.decision === "approved" ? "queued" : "rejected"},attempts=CASE WHEN ${data.decision} = 'approved' THEN 0 ELSE attempts END,finished_at=${data.decision === "rejected" ? new Date() : null} WHERE id=${run.id}`;

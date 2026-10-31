@@ -37,7 +37,36 @@ let modelId = "",
   toolId = "",
   calls = 0,
   providerCalls = 0;
+const persistedInvoices = new Map<string, unknown>();
+const persistenceCalls: string[] = [];
 const server = createServer((req, res) => {
+  const query =
+    new URL(req.url!, "http://localhost").searchParams.get("query") ?? "";
+  if (query.startsWith("persist:")) {
+    const record = JSON.parse(query.slice(8));
+    persistenceCalls.push(record.invoiceNumber);
+    if (record.invoiceNumber === "FAIL") {
+      res.writeHead(503, { "content-type": "application/json" });
+      res.end('{"error":"mock persistence failure"}');
+      return;
+    }
+    persistedInvoices.set(record.invoiceNumber, record);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        readKey: "read:" + record.invoiceNumber,
+        persisted: true,
+      }),
+    );
+    return;
+  }
+  if (query.startsWith("read:")) {
+    const record = persistedInvoices.get(query.slice(5));
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ valid: !!record, record }));
+    return;
+  }
+
   calls++;
   res.writeHead(200, { "content-type": "application/json" });
   res.end(
@@ -270,7 +299,9 @@ before(async () => {
 });
 after(async () => {
   const saver = await workflowSaver();
-  for (const id of runs) await saver.deleteThread(id);
+  const allRuns =
+    await sql`SELECT id FROM workflow_runs WHERE organization_id=${org}`;
+  for (const { id } of allRuns) await saver.deleteThread(id);
   await closeWorkflowSaver();
   await sql.begin(async (tx) => {
     for (const table of [
@@ -962,4 +993,1246 @@ test("more than three sequential human tasks resume independently without exhaus
   const result = await inspect(rid);
   assert.equal(result.status, "completed", JSON.stringify(result));
   assert.equal(result.output, "four reviews");
+});
+
+function chain(steps: unknown[], resources = {}) {
+  return workflowDefinitionV2.parse({
+    schemaVersion: 2,
+    execution: {
+      resources,
+      nodes: [
+        { id: "start", kind: "input", label: "Input", config: {} },
+        ...steps,
+        { id: "end", kind: "output", label: "Output", config: {} },
+      ],
+      edges: ["start", ...steps.map((s) => (s as { id: string }).id), "end"]
+        .slice(0, -1)
+        .map((id, i, ids) => ({
+          id: "e_" + i,
+          source: id,
+          target: ids[i + 1] ?? "end",
+        })),
+    },
+  });
+}
+async function pump(
+  rid: string,
+  overrides: Parameters<typeof processWorkflowRun>[0] = {},
+  expected = "completed",
+) {
+  for (let i = 0; i < 100; i++) {
+    const result = await inspect(rid);
+    if ([expected, "failed", "cancelled", "rejected"].includes(result.status))
+      return result;
+    await processWorkflowRun(overrides);
+  }
+  assert.fail("Bounded fixture did not reach its expected state");
+}
+test("durable waits release the worker and survive saver restart; timestamps and long waits are bounded", async () => {
+  const id = await create(
+      chain([
+        {
+          id: "pause",
+          kind: "wait",
+          label: "Wait",
+          config: { mode: "duration", seconds: 3600 },
+        },
+      ]),
+    ),
+    rid = await run(id, "restart-safe value");
+  await processWorkflowRun();
+  assert.equal((await inspect(rid)).status, "waiting");
+  assert.equal(
+    await processWorkflowRun(),
+    false,
+    "no worker sleeps or holds the waiting run",
+  );
+  const [s] =
+    await sql`SELECT due_at FROM workflow_suspensions WHERE run_id=${rid}`;
+  assert.ok(new Date(s!.due_at).getTime() > Date.now() + 3500000);
+  await closeWorkflowSaver();
+  await sql`UPDATE workflow_suspensions SET due_at=now()-interval '1 second' WHERE run_id=${rid}`;
+  await processWorkflowRun();
+  assert.equal((await inspect(rid)).output, "restart-safe value");
+  const until = await create(
+      chain([
+        {
+          id: "pause",
+          kind: "wait",
+          label: "Until",
+          config: { mode: "until", until: literal("2000-01-01T00:00:00Z") },
+        },
+      ]),
+    ),
+    urid = await run(until, "past deadline");
+  assert.equal((await pump(urid)).output, "past deadline");
+  const invalid = await create(
+      chain([
+        {
+          id: "pause",
+          kind: "wait",
+          label: "Until",
+          config: { mode: "until", until: literal("2099-01-01T00:00:00Z") },
+        },
+      ]),
+    ),
+    invalidRun = await run(invalid, "too far");
+  assert.equal((await pump(invalidRun)).error_code, "WAIT_LIMIT_EXCEEDED");
+});
+
+test("Wait for Event uses expiring, rotatable, scoped bearer tokens and validates callback data", async () => {
+  const id = await create(
+      chain([
+        {
+          id: "event",
+          kind: "wait-for-event",
+          label: "External callback",
+          config: {
+            eventName: "invoice.processed",
+            outputSchema: {
+              type: "object",
+              properties: { reference: { type: "string" } },
+              required: ["reference"],
+              additionalProperties: false,
+            },
+          },
+        },
+      ]),
+    ),
+    rid = await run(id, "invoice");
+  await processWorkflowRun();
+  let result = await inspect(rid);
+  assert.equal(result.status, "waiting");
+  const issue = await call("POST", `/workflow-runs/${rid}/event-token`, {
+    nodeId: "event",
+  });
+  assert.equal(issue.statusCode, 200, issue.body);
+  const first = issue.json();
+  assert.equal(
+    (
+      await call(
+        "POST",
+        `/workflow-runs/${rid}/event-token`,
+        { nodeId: "event" },
+        viewerToken,
+      )
+    ).statusCode,
+    403,
+  );
+  const rotated = (
+    await call("POST", `/workflow-runs/${rid}/event-token`, { nodeId: "event" })
+  ).json();
+  const callback = (
+    token: string,
+    data: unknown,
+    eventName = "invoice.processed",
+  ) =>
+    app.inject({
+      method: "POST",
+      url: rotated.callbackPath,
+      headers: { authorization: "Bearer " + token },
+      payload: { eventName, data },
+    });
+  assert.equal(
+    (await callback(first.token, { reference: "old" })).statusCode,
+    401,
+  );
+  assert.equal((await callback("a".repeat(64), {})).statusCode, 401);
+  assert.equal(
+    (await callback(rotated.token, { reference: 4 })).statusCode,
+    400,
+  );
+  assert.equal(
+    (await callback(rotated.token, { reference: "ok" }, "wrong")).statusCode,
+    400,
+  );
+  const accepted = await callback(rotated.token, { reference: "accepted" });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  assert.equal(
+    (await callback(rotated.token, { reference: "duplicate" })).statusCode,
+    409,
+  );
+  await closeWorkflowSaver();
+  await processWorkflowRun();
+  result = await inspect(rid);
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.output, { reference: "accepted" });
+  assert.ok(!JSON.stringify(result).includes(rotated.token));
+  const timeoutId = await create(
+      chain([
+        {
+          id: "event",
+          kind: "wait-for-event",
+          label: "Timeout",
+          config: { eventName: "never", timeoutSeconds: 1 },
+        },
+      ]),
+    ),
+    timeoutRun = await run(timeoutId, "waiting");
+  await processWorkflowRun();
+  await sql`UPDATE workflow_suspensions SET due_at=now()-interval '1 second' WHERE run_id=${timeoutRun}`;
+  await processWorkflowRun();
+  assert.equal(
+    (await inspect(timeoutRun)).error_code,
+    "WORKFLOW_EVENT_TIMEOUT",
+  );
+});
+
+test("For Each executes published child flows sequentially, preserves item/index scope and records per-item failure", async () => {
+  const body = chain(
+    [
+      {
+        id: "extract",
+        kind: "structured-ai",
+        label: "Extract item",
+        config: {
+          resource: "model",
+          input: reference("item.name"),
+          instruction: "Return structured text",
+          outputSchema: {
+            type: "object",
+            required: ["name"],
+            properties: { name: { type: "string" } },
+          },
+        },
+      },
+      {
+        id: "project",
+        kind: "transform",
+        label: "Item result",
+        config: {
+          fields: {
+            name: reference("steps.extract.output.name"),
+            index: reference("iteration.index"),
+          },
+        },
+      },
+    ],
+    { model: { kind: "model", id: modelId } },
+  );
+  const bodyId = await create(body),
+    bodyVersion = await publish(bodyId);
+  const definition = chain(
+    [
+      {
+        id: "loop",
+        kind: "for-each",
+        label: "Documents",
+        config: {
+          resource: "body",
+          collection: reference("input.files"),
+          failurePolicy: "continue",
+          maxItems: 3,
+        },
+      },
+    ],
+    { body: { kind: "workflow", workflowId: bodyId, versionId: bodyVersion } },
+  );
+  const id = await create(definition),
+    rid = await run(id, {
+      files: [{ name: "one" }, { name: "bad" }, { name: "three" }],
+    });
+  let calls = 0;
+  const provider: ProviderFactory = () => ({
+    async *stream(input) {
+      calls++;
+      const name = input.messages[0]!.content;
+      yield {
+        type: "token",
+        text: name === "bad" ? "malformed" : JSON.stringify({ name }),
+      };
+    },
+  });
+  const result = await pump(rid, { providerFactory: provider });
+  assert.equal(result.status, "completed", JSON.stringify(result));
+  assert.deepEqual(result.output, [
+    { index: 0, status: "completed", output: { name: "one", index: 0 } },
+    {
+      status: "failed",
+      error: { code: "STRUCTURED_AI_OUTPUT_INVALID", index: 1 },
+    },
+    { index: 2, status: "completed", output: { name: "three", index: 2 } },
+  ]);
+  assert.equal(calls, 3);
+  assert.equal(result.children.length, 3);
+  assert.ok(
+    result.children.every(
+      (c: { version_id: string }) => c.version_id === bodyVersion,
+    ),
+  );
+  const tooMany = await run(id, { files: [{}, {}, {}, {}] });
+  assert.equal((await pump(tooMany)).error_code, "FOR_EACH_LIMIT_EXCEEDED");
+  const empty = await run(id, { files: [] });
+  assert.deepEqual((await pump(empty)).output, []);
+  definition.execution.nodes.find(
+    (n) => n.kind === "for-each",
+  )!.config.failurePolicy = "fail-workflow";
+  const failingId = await create(definition),
+    failingRun = await run(failingId, {
+      files: [{ name: "bad" }, { name: "never" }],
+    });
+  assert.equal(
+    (await pump(failingRun, { providerFactory: provider })).error_code,
+    "SUBWORKFLOW_FAILED",
+  );
+  assert.equal((await inspect(failingRun)).children.length, 1);
+});
+
+test("Subworkflow pins a published version, maps results, and prevents recursive workflow ancestry", async () => {
+  const bodyId = await create(
+      chain([
+        {
+          id: "project",
+          kind: "transform",
+          label: "Child",
+          config: { fields: { result: reference("input.value") } },
+        },
+      ]),
+    ),
+    version = await publish(bodyId);
+  const parent = await create(
+      chain(
+        [
+          {
+            id: "child",
+            kind: "subworkflow",
+            label: "Child flow",
+            config: { resource: "body", outputPath: "/result" },
+          },
+        ],
+        { body: { kind: "workflow", workflowId: bodyId, versionId: version } },
+      ),
+    ),
+    rid = await run(parent, { value: "mapped child result" });
+  const result = await pump(rid);
+  assert.equal(result.status, "completed", JSON.stringify(result));
+  assert.equal(result.output, "mapped child result");
+  assert.equal(result.children[0].version_id, version);
+  const a = await create(chain([])),
+    av = await publish(a);
+  const b = await create(
+      chain(
+        [
+          {
+            id: "a",
+            kind: "subworkflow",
+            label: "A",
+            config: { resource: "a" },
+          },
+        ],
+        { a: { kind: "workflow", workflowId: a, versionId: av } },
+      ),
+    ),
+    bv = await publish(b);
+  const revision = await call("PUT", `/workflows/${a}`, {
+    revision: 1,
+    name: "Recursive A",
+    graph: chain(
+      [{ id: "b", kind: "subworkflow", label: "B", config: { resource: "b" } }],
+      { b: { kind: "workflow", workflowId: b, versionId: bv } },
+    ),
+  });
+  assert.equal(revision.statusCode, 200, revision.body);
+  const a2 = await call("POST", `/workflows/${a}/publish`, { revision: 2 });
+  assert.equal(a2.statusCode, 201, a2.body);
+  const circular = await run(a, "recursion", a2.json().id);
+  assert.equal((await pump(circular)).error_code, "SUBWORKFLOW_FAILED");
+  const [child] =
+    await sql`SELECT error_code FROM workflow_runs WHERE parent_run_id=${circular}`;
+  assert.equal(child!.error_code, "SUBWORKFLOW_RECURSION_LIMIT");
+});
+
+test("node error routing reaches Human Task with sanitized error context and skips the success route", async () => {
+  const definition = workflowDefinitionV2.parse({
+    schemaVersion: 2,
+    execution: {
+      resources: { model: { kind: "model", id: modelId } },
+      nodes: [
+        { id: "start", kind: "input", label: "Input", config: {} },
+        {
+          id: "extract",
+          kind: "structured-ai",
+          label: "Failing extraction",
+          onError: "review",
+          config: {
+            resource: "model",
+            instruction: "Extract fields",
+            outputSchema: {},
+          },
+        },
+        {
+          id: "success",
+          kind: "transform",
+          label: "Success",
+          config: { fields: { status: literal("success") } },
+        },
+        {
+          id: "review",
+          kind: "human-task",
+          label: "Error review",
+          config: {
+            mode: "approve-reject",
+            prompt: "Review safe failure details",
+            input: reference("error"),
+            outputSchema: {
+              type: "object",
+              required: ["code", "message", "nodeId", "attempt"],
+            },
+          },
+        },
+        { id: "join", kind: "merge", label: "Join", config: {} },
+        { id: "end", kind: "output", label: "Output", config: {} },
+      ],
+      edges: [
+        ["start", "extract"],
+        ["extract", "success"],
+        ["success", "join"],
+        ["review", "join"],
+        ["join", "end"],
+      ].map(([source, target], i) => ({ id: "edge_" + i, source, target })),
+    },
+  });
+  const id = await create(definition),
+    rid = await run(id, "invoice");
+  const failingProvider: ProviderFactory = () => ({
+    async *stream() {
+      yield* [];
+      throw new Error("postgres://user:password@secret-host");
+    },
+  });
+  await processWorkflowRun({ providerFactory: failingProvider });
+  const waiting = await inspect(rid);
+  assert.equal(waiting.status, "waiting", JSON.stringify(waiting));
+  assert.deepEqual(waiting.approvals[0].input, {
+    code: "WORKFLOW_EXECUTION_FAILED",
+    message: "This step could not be completed.",
+    nodeId: "extract",
+    attempt: 1,
+  });
+  assert.ok(!JSON.stringify(waiting).includes("password"));
+  assert.equal(
+    waiting.nodes.some((n: { node_id: string }) => n.node_id === "success"),
+    false,
+  );
+  assert.equal(
+    (
+      await call("POST", `/workflow-runs/${rid}/approval`, {
+        nodeId: "review",
+        decision: "approved",
+      })
+    ).statusCode,
+    200,
+  );
+  await processWorkflowRun({ providerFactory: failingProvider });
+  assert.equal((await inspect(rid)).status, "completed");
+});
+
+test("V2 Parallel/Merge supports typed references and independent human gates across saver restart", async () => {
+  const definition = workflowDefinitionV2.parse({
+    schemaVersion: 2,
+    execution: {
+      nodes: [
+        { id: "start", kind: "input", label: "Input", config: {} },
+        { id: "fork", kind: "parallel", label: "Parallel", config: {} },
+        {
+          id: "left",
+          kind: "transform",
+          label: "Left data",
+          config: {
+            fields: {
+              value: literal("left"),
+              amount: reference("input.amount"),
+            },
+          },
+        },
+        {
+          id: "right",
+          kind: "transform",
+          label: "Right data",
+          config: {
+            fields: {
+              value: literal("right"),
+              amount: reference("input.amount"),
+            },
+          },
+        },
+        ...["left", "right"].map((id) => ({
+          id: "review_" + id,
+          kind: "human-task",
+          label: "Review " + id,
+          config: {
+            mode: "review-edit",
+            prompt: "Approve " + id,
+            outputSchema: { type: "object" },
+          },
+        })),
+        { id: "join", kind: "merge", label: "Join", config: {} },
+        {
+          id: "project",
+          kind: "transform",
+          label: "Aggregate typed data",
+          config: {
+            fields: {
+              left: reference("steps.review_left.output.value"),
+              right: reference("steps.review_right.output.value"),
+            },
+          },
+        },
+        { id: "end", kind: "output", label: "Output", config: {} },
+      ],
+      edges: [
+        ["start", "fork"],
+        ["fork", "left"],
+        ["fork", "right"],
+        ["left", "review_left"],
+        ["right", "review_right"],
+        ["review_left", "join"],
+        ["review_right", "join"],
+        ["join", "project"],
+        ["project", "end"],
+      ].map(([source, target], i) => ({ id: "edge_" + i, source, target })),
+    },
+  });
+  const id = await create(definition),
+    rid = await run(id, { amount: 7 });
+  await processWorkflowRun();
+  assert.equal(
+    (await inspect(rid)).approvals.filter(
+      (a: { decision: string }) => a.decision === "pending",
+    ).length,
+    2,
+  );
+  assert.equal(
+    (
+      await call("POST", `/workflow-runs/${rid}/approval`, {
+        decision: "approved",
+      })
+    ).statusCode,
+    409,
+    "ambiguous approvals must select a node",
+  );
+  assert.equal(
+    (
+      await call("POST", `/workflow-runs/${rid}/approval`, {
+        nodeId: "review_left",
+        decision: "approved",
+        editedInput: { value: "left edited", amount: 7 },
+      })
+    ).statusCode,
+    200,
+  );
+  await processWorkflowRun();
+  assert.equal((await inspect(rid)).status, "waiting");
+  await closeWorkflowSaver();
+  assert.equal(
+    (
+      await call("POST", `/workflow-runs/${rid}/approval`, {
+        nodeId: "review_right",
+        decision: "approved",
+      })
+    ).statusCode,
+    200,
+  );
+  await processWorkflowRun();
+  const result = await inspect(rid);
+  assert.equal(result.status, "completed", JSON.stringify(result));
+  assert.deepEqual(result.output, { left: "left edited", right: "right" });
+});
+
+test("multiple HITL sequence: extraction → review → Action → finance approval → Action → output", async () => {
+  const definition = chain(
+    [
+      {
+        id: "extract",
+        kind: "structured-ai",
+        label: "Extract",
+        config: {
+          resource: "model",
+          instruction: "Extract invoice",
+          outputSchema: invoiceSchema,
+        },
+      },
+      {
+        id: "review",
+        kind: "human-task",
+        label: "Human review",
+        config: {
+          mode: "review-edit",
+          prompt: "Review invoice",
+          outputSchema: invoiceSchema,
+        },
+      },
+      {
+        id: "first",
+        kind: "action",
+        label: "First Action",
+        config: {
+          actionId: "lookup",
+          inputs: { query: reference("steps.review.output.invoiceNumber") },
+        },
+      },
+      {
+        id: "finance",
+        kind: "human-task",
+        label: "Finance approval",
+        config: {
+          mode: "approve-reject",
+          prompt: "Finance approval",
+          outputSchema: { type: "object" },
+        },
+      },
+      {
+        id: "second",
+        kind: "action",
+        label: "Second Action",
+        config: {
+          actionId: "lookup",
+          inputs: { query: literal("finance-approved") },
+        },
+      },
+    ],
+    { model: { kind: "model", id: modelId } },
+  );
+  definition.execution.actions = flow().execution.actions;
+  const id = await create(definition),
+    rid = await run(id, "document");
+  let aiCalls = 0;
+  const factory = extractionProvider(extractedInvoice, () => aiCalls++),
+    previousCalls = calls;
+  await processWorkflowRun({ providerFactory: factory });
+  assert.equal(
+    (
+      await call("POST", `/workflow-runs/${rid}/approval`, {
+        nodeId: "review",
+        decision: "approved",
+        editedInput: { ...extractedInvoice, invoiceNumber: "REVIEWED" },
+      })
+    ).statusCode,
+    200,
+  );
+  await processWorkflowRun({ providerFactory: factory });
+  let result = await inspect(rid);
+  assert.equal(result.status, "waiting");
+  assert.equal(calls, previousCalls + 1);
+  assert.equal(
+    result.nodes.find((n: { node_id: string }) => n.node_id === "first").output
+      .query,
+    "REVIEWED",
+  );
+  assert.equal(
+    (
+      await call("POST", `/workflow-runs/${rid}/approval`, {
+        nodeId: "finance",
+        decision: "approved",
+      })
+    ).statusCode,
+    200,
+  );
+  await closeWorkflowSaver();
+  await processWorkflowRun({ providerFactory: factory });
+  result = await inspect(rid);
+  assert.equal(result.status, "completed");
+  assert.equal(result.output.query, "finance-approved");
+  assert.equal(calls, previousCalls + 2);
+  assert.equal(aiCalls, 1);
+});
+
+test("document-processing acceptance: approved sample, durable per-document child flow, mock persistence/validation, aggregate and error review", async () => {
+  // External persistence is intentionally a mock behind the registered Tool adapter.
+  const body = chain(
+    [
+      {
+        id: "extract",
+        kind: "structured-ai",
+        label: "Extract using approved sample",
+        config: {
+          resource: "model",
+          input: reference("input"),
+          instruction: "Extract remaining document using approved sample",
+          outputSchema: {
+            type: "object",
+            required: ["invoiceNumber", "total", "command"],
+            properties: {
+              invoiceNumber: { type: "string" },
+              total: { type: "number" },
+              command: { type: "string" },
+            },
+          },
+        },
+      },
+      {
+        id: "persist",
+        kind: "action",
+        label: "Persist result (mock integration)",
+        config: {
+          actionId: "external",
+          inputs: { query: reference("steps.extract.output.command") },
+        },
+      },
+      {
+        id: "read",
+        kind: "action",
+        label: "Read / validate persisted data",
+        config: {
+          actionId: "read_external",
+          inputs: { query: reference("steps.persist.output.readKey") },
+        },
+      },
+      {
+        id: "result",
+        kind: "transform",
+        label: "Validated record",
+        config: {
+          fields: {
+            invoiceNumber: reference("steps.extract.output.invoiceNumber"),
+            total: reference("steps.extract.output.total"),
+            stored: reference("steps.read.output.record"),
+            valid: reference("steps.read.output.valid"),
+          },
+        },
+      },
+    ],
+    { model: { kind: "model", id: modelId } },
+  );
+  body.execution.actions = flow().execution.actions.map((a) => ({
+    ...a,
+    id: "external",
+    mappedInputs: {},
+    staticInputs: {},
+    outputSchema: {},
+  }));
+  body.execution.actions.push({
+    ...body.execution.actions[0]!,
+    id: "read_external",
+    outputSchema: {
+      type: "object",
+      required: ["valid", "record"],
+      properties: { valid: { const: true }, record: { type: "object" } },
+    },
+  });
+  const bodyId = await create(body),
+    bv = await publish(bodyId);
+  const definition = workflowDefinitionV2.parse({
+    schemaVersion: 2,
+    execution: {
+      resources: {
+        model: { kind: "model", id: modelId },
+        body: { kind: "workflow", workflowId: bodyId, versionId: bv },
+      },
+      nodes: [
+        {
+          id: "start",
+          kind: "input",
+          label: "OCR/PDF document input",
+          config: {},
+        },
+        {
+          id: "sample",
+          kind: "structured-ai",
+          label: "Extract sample",
+          config: {
+            resource: "model",
+            input: reference("input.documents[0]"),
+            instruction: "Extract sample invoice",
+            outputSchema: invoiceSchema,
+          },
+        },
+        {
+          id: "review",
+          kind: "human-task",
+          label: "Human Review/Edit sample",
+          config: {
+            mode: "review-edit",
+            prompt: "Approve sample for processing",
+            approveLabel: "Process",
+            outputSchema: invoiceSchema,
+          },
+        },
+        {
+          id: "loop",
+          kind: "for-each",
+          label: "Remaining documents",
+          config: {
+            resource: "body",
+            collection: reference("input.documents"),
+            startIndex: 1,
+            maxItems: 4,
+            failurePolicy: "continue",
+            itemInputs: {
+              document: reference("item"),
+              approvedSample: reference("steps.review.output"),
+              index: reference("iteration.index"),
+            },
+          },
+        },
+        {
+          id: "aggregate",
+          kind: "transform",
+          label: "Aggregate",
+          config: {
+            fields: {
+              sample: reference("steps.review.output"),
+              results: reference("steps.loop.output"),
+              failed: reference("steps.loop.summary.failed"),
+            },
+          },
+        },
+        {
+          id: "check",
+          kind: "condition",
+          label: "Success / failure",
+          config: {
+            condition: {
+              operator: "equals",
+              left: reference("steps.loop.summary.failed"),
+              right: literal(0),
+            },
+          },
+        },
+        {
+          id: "complete",
+          kind: "transform",
+          label: "Complete",
+          config: {
+            fields: {
+              status: literal("complete"),
+              data: reference("steps.aggregate.output"),
+            },
+          },
+        },
+        {
+          id: "error_review",
+          kind: "human-task",
+          label: "Human Error Review",
+          config: {
+            mode: "review-edit",
+            prompt: "Review failed documents",
+            input: reference("steps.aggregate.output"),
+            outputSchema: {
+              type: "object",
+              required: ["sample", "results", "failed"],
+            },
+          },
+        },
+        { id: "join", kind: "merge", label: "Completion", config: {} },
+        { id: "end", kind: "output", label: "Output", config: {} },
+      ],
+      edges: [
+        ["start", "sample"],
+        ["sample", "review"],
+        ["review", "loop"],
+        ["loop", "aggregate"],
+        ["aggregate", "check"],
+        ["check", "complete", "true"],
+        ["check", "error_review", "false"],
+        ["complete", "join"],
+        ["error_review", "join"],
+        ["join", "end"],
+      ].map(([source, target, branch], i) => ({
+        id: "e_" + i,
+        source,
+        target,
+        ...(branch ? { branch } : {}),
+      })),
+    },
+  });
+  const id = await create(definition),
+    published = await publish(id);
+  for (const fail of [false, true]) {
+    const documents = [
+      {
+        name: "sample.pdf",
+        mimeType: "application/pdf",
+        ocrText: "sample invoice",
+      },
+      {
+        name: "scan.png",
+        mimeType: "image/png",
+        ocrText: "OCR invoice 2",
+        invoiceNumber: "DOC-2",
+        amount: 10,
+      },
+      {
+        name: "invoice.pdf",
+        mimeType: "application/pdf",
+        ocrText: "PDF text invoice 3",
+        invoiceNumber: fail ? "FAIL" : "DOC-3",
+        amount: 20,
+      },
+    ];
+    const rid = await run(id, { documents }, published),
+      contexts: {
+        approvedSample: { total: number };
+        document: { invoiceNumber: string; amount: number };
+        index: number;
+      }[] = [];
+    let sampleCalls = 0;
+    const provider: ProviderFactory = () => ({
+      async *stream(input) {
+        let output: unknown;
+        if (input.system.startsWith("Extract sample")) {
+          sampleCalls++;
+          output = extractedInvoice;
+        } else {
+          const value = JSON.parse(input.messages[0]!.content);
+          contexts.push(value);
+          const record = {
+            invoiceNumber: value.document.invoiceNumber,
+            total: value.approvedSample.total + value.document.amount,
+          };
+          output = { ...record, command: "persist:" + JSON.stringify(record) };
+        }
+        yield { type: "token", text: JSON.stringify(output) };
+      },
+    });
+    await processWorkflowRun({ providerFactory: provider });
+    assert.equal((await inspect(rid)).status, "waiting");
+    assert.equal(
+      (
+        await call("POST", `/workflow-runs/${rid}/approval`, {
+          nodeId: "review",
+          decision: "approved",
+          editedInput: {
+            ...extractedInvoice,
+            invoiceNumber: "SAMPLE-APPROVED",
+            total: 123,
+          },
+        })
+      ).statusCode,
+      200,
+    );
+    await closeWorkflowSaver();
+    let result = await pump(
+      rid,
+      { providerFactory: provider },
+      fail ? "waiting" : "completed",
+    );
+    // pump must first execute the queued root segment before stopping at the later waiting gate.
+    if (
+      fail &&
+      !result.approvals.some(
+        (a: { node_id: string }) => a.node_id === "error_review",
+      )
+    ) {
+      for (let i = 0; i < 40; i++) {
+        await processWorkflowRun({ providerFactory: provider });
+        result = await inspect(rid);
+        if (
+          result.approvals.some(
+            (a: { node_id: string }) => a.node_id === "error_review",
+          )
+        )
+          break;
+      }
+    }
+    assert.equal(contexts.length, 2);
+    assert.ok(contexts.every((c) => c.approvedSample.total === 123));
+    assert.deepEqual(
+      contexts.map((c) => c.index),
+      [1, 2],
+    );
+    assert.equal(sampleCalls, 1);
+    assert.equal(result.children.length, 2);
+    if (fail) {
+      assert.equal(result.status, "waiting", JSON.stringify(result));
+      const errorReview = result.approvals.find(
+        (a: { node_id: string }) => a.node_id === "error_review",
+      );
+      assert.equal(errorReview.input.failed, 1);
+      assert.equal(
+        (
+          await call("POST", `/workflow-runs/${rid}/approval`, {
+            nodeId: "error_review",
+            decision: "approved",
+          })
+        ).statusCode,
+        200,
+      );
+      result = await pump(rid, { providerFactory: provider });
+    }
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.equal(
+      (persistedInvoices.get("DOC-2") as { total: number }).total,
+      133,
+    );
+    if (!fail)
+      assert.equal(
+        result.output.complete.data.results.every(
+          (r: { output: { valid: boolean } }) => r.output.valid,
+        ),
+        true,
+      );
+  }
+});
+
+test("latest-published is resolved once per invocation and remains pinned across waits and new publications", async () => {
+  const body = chain([
+    {
+      id: "result",
+      kind: "transform",
+      label: "Version",
+      config: { fields: { version: literal("one") } },
+    },
+  ]);
+  const bodyId = await create(body),
+    firstVersion = await publish(bodyId);
+  const id = await create(
+    chain(
+      [
+        {
+          id: "child",
+          kind: "subworkflow",
+          label: "Latest published",
+          config: { resource: "body", outputPath: "/version" },
+        },
+      ],
+      {
+        body: {
+          kind: "workflow",
+          workflowId: bodyId,
+          versionBehavior: "latest-published",
+        },
+      },
+    ),
+  );
+  const firstRun = await run(id, "version test");
+  await processWorkflowRun();
+  const [pin] =
+    await sql`SELECT payload FROM workflow_suspensions WHERE run_id=${firstRun}`;
+  assert.equal(pin!.payload.versionId, firstVersion);
+  const updated = chain([
+    {
+      id: "result",
+      kind: "transform",
+      label: "Version",
+      config: { fields: { version: literal("two") } },
+    },
+  ]);
+  assert.equal(
+    (
+      await call("PUT", `/workflows/${bodyId}`, {
+        revision: 1,
+        name: "Body two",
+        graph: updated,
+      })
+    ).statusCode,
+    200,
+  );
+  const secondVersion = await call("POST", `/workflows/${bodyId}/publish`, {
+    revision: 2,
+  });
+  assert.equal(secondVersion.statusCode, 201, secondVersion.body);
+  await closeWorkflowSaver();
+  assert.equal((await pump(firstRun)).output, "one");
+  const secondRun = await run(id, "next invocation");
+  const result = await pump(secondRun);
+  assert.equal(result.output, "two");
+  assert.equal(result.children[0].version_id, secondVersion.json().id);
+});
+
+test("parent cancellation stops parked child runs and concurrent suspension polls never duplicate children", async () => {
+  const bodyId = await create(
+      chain([
+        {
+          id: "wait",
+          kind: "wait",
+          label: "Parked child",
+          config: { mode: "duration", seconds: 3600 },
+        },
+      ]),
+    ),
+    version = await publish(bodyId);
+  const id = await create(
+      chain(
+        [
+          {
+            id: "child",
+            kind: "subworkflow",
+            label: "Child",
+            config: { resource: "body" },
+          },
+        ],
+        { body: { kind: "workflow", workflowId: bodyId, versionId: version } },
+      ),
+    ),
+    rid = await run(id, "cancel tree");
+  await processWorkflowRun();
+  const { wakeWorkflowSuspensions } =
+    await import("../src/workflow-control.js");
+  await Promise.all([
+    wakeWorkflowSuspensions(),
+    wakeWorkflowSuspensions(),
+    wakeWorkflowSuspensions(),
+  ]);
+  assert.equal((await inspect(rid)).children.length, 1);
+  await processWorkflowRun();
+  const [child] =
+    await sql`SELECT id,status FROM workflow_runs WHERE parent_run_id=${rid}`;
+  assert.equal(child!.status, "waiting");
+  assert.equal(
+    (await call("POST", `/workflow-runs/${rid}/cancel`)).statusCode,
+    200,
+  );
+  await processWorkflowRun();
+  const result = await inspect(child!.id);
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.suspensions[0].status, "cancelled");
+});
+
+test("retention keeps completed child outputs while the parent is active and prunes finished trees leaf-first", async () => {
+  const bodyId = await create(chain([])),
+    version = await publish(bodyId);
+  const definition = chain(
+    [
+      {
+        id: "child",
+        kind: "subworkflow",
+        label: "Child",
+        config: { resource: "body" },
+      },
+      {
+        id: "hold",
+        kind: "wait",
+        label: "Long hold",
+        config: { mode: "duration", seconds: 3600 },
+      },
+    ],
+    { body: { kind: "workflow", workflowId: bodyId, versionId: version } },
+  );
+  const id = await create(definition),
+    rid = await run(id, "retain child");
+  for (let i = 0; i < 8; i++) await processWorkflowRun();
+  const result = await inspect(rid);
+  assert.equal(result.status, "waiting");
+  const childId = result.children[0].id;
+  await sql`UPDATE workflow_runs SET finished_at=now()-interval '40 days' WHERE id=${childId}`;
+  const { retentionCandidates } = await import("../src/retention.js");
+  const policy = {
+    workspace_id: workspace,
+    organization_id: org,
+    revision: 1,
+    enabled: true,
+    conversation_days: null,
+    run_days: 30,
+    artifact_days: null,
+    connector_days: null,
+    updated_by: owner,
+    next_run_at: null,
+  };
+  assert.equal(
+    (await retentionCandidates(sql, policy, new Date())).workflowRuns.includes(
+      childId,
+    ),
+    false,
+  );
+  await call("POST", `/workflow-runs/${rid}/cancel`);
+  await processWorkflowRun();
+  await sql`UPDATE workflow_runs SET finished_at=now()-interval '40 days' WHERE id=${rid}`;
+  const candidates = await retentionCandidates(sql, policy, new Date());
+  assert.ok(candidates.workflowRuns.includes(childId));
+  assert.equal(candidates.workflowRuns.includes(rid), false);
+});
+
+test("child-run database identity rejects duplicate iterations and cross-tenant parent linkage", async () => {
+  const [existing] =
+    await sql`SELECT * FROM workflow_runs WHERE organization_id=${org} AND parent_run_id IS NOT NULL LIMIT 1`;
+  assert.ok(existing);
+  await assert.rejects(
+    sql`INSERT INTO workflow_runs(id,workflow_id,version_id,workspace_id,organization_id,user_id,graph_snapshot,input,status,parent_run_id,parent_node_id,iteration_index) VALUES (${randomUUID()},${existing.workflow_id},${existing.version_id},${workspace},${org},${owner},${sql.json(existing.graph_snapshot)},'duplicate','completed',${existing.parent_run_id},${existing.parent_node_id},${existing.iteration_index})`,
+    (e: unknown) => (e as { code: string }).code === "23505",
+  );
+  await assert.rejects(
+    sql`INSERT INTO workflow_runs(id,workflow_id,version_id,workspace_id,organization_id,user_id,graph_snapshot,input,status,parent_run_id,parent_node_id,iteration_index) VALUES (${randomUUID()},${existing.workflow_id},${existing.version_id},${workspace},${org},${owner},${sql.json(existing.graph_snapshot)},'missing-index','completed',${existing.parent_run_id},'missing_index',NULL)`,
+    (e: unknown) => (e as { code: string }).code === "23514",
+  );
+  const foreignWorkflow = await call(
+    "POST",
+    `/workspaces/${foreign}/workflows`,
+    { name: "Foreign child target", graph: chain([]) },
+  );
+  assert.equal(foreignWorkflow.statusCode, 201, foreignWorkflow.body);
+  await assert.rejects(
+    sql`INSERT INTO workflow_runs(id,workflow_id,workspace_id,organization_id,user_id,graph_snapshot,input,status,parent_run_id,parent_node_id,iteration_index) VALUES (${randomUUID()},${foreignWorkflow.json().id},${foreign},${org},${owner},${sql.json(existing.graph_snapshot)},'foreign','completed',${existing.parent_run_id},'foreign',0)`,
+    (e: unknown) =>
+      (e as { constraint_name: string }).constraint_name ===
+      "workflow_parent_tenant",
+  );
+});
+
+test("For Each preserves typed primitive and array items in V2 child input and scope", async () => {
+  const bodyId = await create(
+      chain([
+        {
+          id: "value",
+          kind: "transform",
+          label: "Typed item",
+          config: {
+            fields: {
+              input: reference("input"),
+              item: reference("item"),
+              index: reference("iteration.index"),
+            },
+          },
+        },
+      ]),
+    ),
+    version = await publish(bodyId);
+  const id = await create(
+    chain(
+      [
+        {
+          id: "loop",
+          kind: "for-each",
+          label: "Values",
+          config: { resource: "body", collection: reference("input.items") },
+        },
+      ],
+      { body: { kind: "workflow", workflowId: bodyId, versionId: version } },
+    ),
+  );
+  const values = [1, false, null, ["a", "b"], "", "123", "false", "null", "  "],
+    rid = await run(id, { items: values }),
+    result = await pump(rid);
+  assert.equal(result.status, "completed", JSON.stringify(result));
+  assert.deepEqual(
+    result.output,
+    values.map((value, index) => ({
+      index,
+      status: "completed",
+      output: { input: value, item: value, index },
+    })),
+  );
+});
+
+test("the root descendant budget blocks further scheduling across all child nodes", async () => {
+  const body = chain([]),
+    bodyId = await create(body),
+    version = await publish(bodyId);
+  const id = await create(
+      chain(
+        [
+          {
+            id: "loop",
+            kind: "for-each",
+            label: "Budgeted items",
+            config: { resource: "body", collection: reference("input.items") },
+          },
+        ],
+        { body: { kind: "workflow", workflowId: bodyId, versionId: version } },
+      ),
+    ),
+    rid = await run(id, { items: ["one"] });
+  await processWorkflowRun();
+  const graph = storedWorkflowGraph(body);
+  await sql`INSERT INTO workflow_runs(id,workflow_id,version_id,workspace_id,organization_id,user_id,graph_snapshot,input,status,parent_run_id,parent_node_id,iteration_index,finished_at) SELECT gen_random_uuid(),${bodyId},${version},${workspace},${org},${owner},${sql.json(graph)},'budget fixture','completed',${rid},'other_node',n,now() FROM generate_series(0,99) AS n`;
+  await processWorkflowRun();
+  const result = await inspect(rid);
+  assert.equal(result.status, "failed");
+  assert.equal(result.error_code, "WORKFLOW_CHILD_LIMIT");
+  assert.equal(
+    result.children.filter(
+      (c: { parent_node_id: string }) => c.parent_node_id === "loop",
+    ).length,
+    0,
+  );
 });

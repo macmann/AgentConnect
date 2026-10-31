@@ -19,6 +19,10 @@ export const workflowKinds = [
   "transform",
   "set-variable",
   "switch",
+  "for-each",
+  "wait",
+  "wait-for-event",
+  "subworkflow",
 ] as const;
 const nodeId = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,47}$/);
 export const workflowNode = z.object({
@@ -91,6 +95,7 @@ export const workflowGraph = z.object({
       compilerVersion: z.literal(1),
       execution: z.record(z.string(), z.json()),
       trigger: z.record(z.string(), z.json()).optional(),
+      scope: z.record(z.string(), z.json()).optional(),
     })
     .optional(),
   nodes: z.array(workflowNode).min(1).max(40),
@@ -131,6 +136,10 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
         "transform",
         "set-variable",
         "switch",
+        "for-each",
+        "wait",
+        "wait-for-event",
+        "subworkflow",
       ].includes(n.type),
     )
   )
@@ -216,7 +225,17 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
   }
   for (const n of graph.nodes) {
     const ins = incoming.get(n.id)!,
-      outs = outgoing.get(n.id)!;
+      allOuts = outgoing.get(n.id)!,
+      hasError =
+        !!graph.programV2 &&
+        graph.edges.some(
+          (e) => e.source === n.id && e.sourceHandle === "error",
+        ),
+      outs = hasError
+        ? graph.edges
+            .filter((e) => e.source === n.id && e.sourceHandle !== "error")
+            .map((e) => e.target)
+        : allOuts;
     if (n.type === "input" && ins.length)
       errors.push("Input cannot have incoming connections");
     if (n.type === "output" && outs.length)
@@ -247,7 +266,12 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
       !["router", "condition", ...(graph.programV2 ? ["switch"] : [])].includes(
         n.type,
       ) &&
-      graph.edges.some((e) => e.source === n.id && e.sourceHandle)
+      graph.edges.some(
+        (e) =>
+          e.source === n.id &&
+          e.sourceHandle &&
+          !(hasError && e.sourceHandle === "error"),
+      )
     )
       errors.push(
         `${n.data.label}: branch handles only belong to Router/Condition`,
@@ -328,11 +352,13 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
               "parallel",
               "router",
               "condition",
-              "approval",
-              "human-task",
+              ...(graph.programV2 ? [] : ["approval"]),
               "switch",
               "set-variable",
             ].includes(item.type) ||
+            graph.edges.some(
+              (e) => e.source === item.id && e.sourceHandle === "error",
+            ) ||
             path.has(current) ||
             branchNodes.has(current)
           ) {

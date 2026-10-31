@@ -220,12 +220,12 @@ export class PostgresRagTool implements RagTool {
                   ),
                 )
               ).flat();
-              if (preferQa)
-                rows.sort(
-                  (a, b) =>
-                    Number(b.vector_score) - Number(a.vector_score) ||
-                    String(a.id).localeCompare(String(b.id)),
-                );
+              // Stabilize tied candidate ranks before reciprocal-rank fusion.
+              rows.sort(
+                (a, b) =>
+                  Number(b.vector_score) - Number(a.vector_score) ||
+                  String(a.id).localeCompare(String(b.id)),
+              );
               searchSpan.setAttribute("retrieval.results", rows.length);
               searchSpan.setAttribute(
                 "retrieval.matches",
@@ -290,12 +290,11 @@ export class PostgresRagTool implements RagTool {
                         ),
                       )
                     ).flat();
-                    if (preferQa)
-                      rows.sort(
-                        (a, b) =>
-                          Number(b.lexical_score) - Number(a.lexical_score) ||
-                          String(a.id).localeCompare(String(b.id)),
-                      );
+                    rows.sort(
+                      (a, b) =>
+                        Number(b.lexical_score) - Number(a.lexical_score) ||
+                        String(a.id).localeCompare(String(b.id)),
+                    );
                     searchSpan.setAttribute("retrieval.results", rows.length);
                     searchSpan.setAttribute(
                       "retrieval.matches",

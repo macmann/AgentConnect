@@ -42,6 +42,7 @@ export function storedWorkflowGraph(value: unknown): WorkflowGraph {
       execution: compiled.data.programV2.execution,
     });
     graph.programV2!.trigger = compiled.data.programV2.trigger;
+    graph.programV2!.scope = compiled.data.programV2.scope;
     return graph;
   }
   try {
@@ -76,6 +77,14 @@ export async function validateV2Resources(
   for (const [resourceName, resource] of Object.entries(program.resources)) {
     let found = false;
     switch (resource.kind) {
+      case "workflow": {
+        if (resource.workflowId === ctx.workflowId)
+          throw new HttpError(400, "A workflow cannot invoke itself");
+        found = !!(
+          await sql`SELECT v.id FROM workflow_versions v JOIN workflows w ON w.id=v.workflow_id WHERE v.workflow_id=${resource.workflowId} AND v.workspace_id=${ctx.workspaceId} AND v.organization_id=${ctx.organizationId} AND w.archived_at IS NULL AND (${resource.versionBehavior} = 'latest-published' OR v.id=${resource.versionId ?? null})`
+        ).length;
+        break;
+      }
       case "agent": {
         const rows =
           await sql`SELECT v.id FROM agent_versions v JOIN agents a ON a.id=v.agent_id WHERE v.id=${resource.versionId} AND v.agent_id=${resource.agentId} AND v.workspace_id=${ctx.workspaceId} AND v.organization_id=${ctx.organizationId} AND a.archived_at IS NULL`;
@@ -120,7 +129,9 @@ export async function validateV2Resources(
       );
     if (
       ctx.publicAccess &&
-      ["secret", "connection", "model", "mcp"].includes(resource.kind)
+      ["secret", "connection", "model", "mcp", "workflow"].includes(
+        resource.kind,
+      )
     )
       throw new HttpError(
         400,
@@ -128,7 +139,11 @@ export async function validateV2Resources(
       );
   }
   for (const node of program.nodes) {
-    if (node.kind === "structured-ai" || node.kind === "human-task")
+    if (
+      node.kind === "structured-ai" ||
+      node.kind === "human-task" ||
+      node.kind === "wait-for-event"
+    )
       schemaValidator(node.config.outputSchema);
   }
   for (const action of program.actions) {

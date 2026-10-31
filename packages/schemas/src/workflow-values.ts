@@ -11,6 +11,8 @@ export const workflowRoots = [
   "variables",
   "workflow",
   "error",
+  "item",
+  "iteration",
 ] as const;
 const forbidden = new Set(["__proto__", "constructor", "prototype"]);
 export const workflowIdentifier = z
@@ -34,7 +36,7 @@ export class WorkflowValueError extends Error {
 export function referenceSegments(path: string): string[] {
   if (
     path.length > 512 ||
-    !/^(trigger|input|steps|variables|workflow|error)(?:\.[A-Za-z_][A-Za-z0-9_-]*|\[(?:0|[1-9][0-9]{0,6})\])*$/.test(
+    !/^(trigger|input|steps|variables|workflow|error|item|iteration)(?:\.[A-Za-z_][A-Za-z0-9_-]*|\[(?:0|[1-9][0-9]{0,6})\])*$/.test(
       path,
     )
   )
@@ -108,9 +110,9 @@ export const workflowExpression = z.discriminatedUnion("type", [
 ]);
 export type WorkflowExpression = z.infer<typeof workflowExpression>;
 export type WorkflowDataContext = Record<
-  (typeof workflowRoots)[number],
+  Exclude<(typeof workflowRoots)[number], "item" | "iteration">,
   unknown
->;
+> & { item?: unknown; iteration?: unknown };
 function ownPath(value: unknown, segments: string[]) {
   let current = value;
   for (const segment of segments) {
