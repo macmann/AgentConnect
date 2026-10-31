@@ -1297,3 +1297,175 @@ test("V2 creates structured schemas and deterministic Actions from canvas proper
     fullPage: true,
   });
 });
+
+test("V2 controlled primitives configure published bodies, durable waits, event schemas and error routes", async ({
+  page,
+  context,
+}) => {
+  const body = await api(`/workspaces/${workspace}/workflows`, {
+    name: "Published iteration body",
+    graph: {
+      schemaVersion: 2,
+      execution: {
+        nodes: [
+          { id: "start", kind: "input", label: "Input", config: {} },
+          { id: "end", kind: "output", label: "Output", config: {} },
+        ],
+        edges: [{ id: "a", source: "start", target: "end" }],
+      },
+    },
+  });
+  const version = await api(`/workflows/${body.id}/publish`, { revision: 1 });
+  const steps = [
+    { id: "start", kind: "input", label: "Input", config: {} },
+    {
+      id: "timer",
+      kind: "wait",
+      label: "Durable wait",
+      config: { mode: "duration", seconds: 5 },
+    },
+    {
+      id: "child",
+      kind: "subworkflow",
+      label: "Child flow",
+      config: { resource: "body" },
+    },
+    {
+      id: "loop",
+      kind: "for-each",
+      label: "Documents",
+      config: {
+        resource: "body",
+        collection: { type: "reference", path: "input.files" },
+      },
+    },
+    {
+      id: "event",
+      kind: "wait-for-event",
+      label: "Callback",
+      config: { eventName: "complete" },
+    },
+    {
+      id: "error_review",
+      kind: "human-task",
+      label: "Error review",
+      config: {
+        mode: "approve-reject",
+        prompt: "Review failure",
+        outputSchema: { type: "object" },
+      },
+    },
+    { id: "join", kind: "merge", label: "Join", config: {} },
+    { id: "end", kind: "output", label: "Output", config: {} },
+  ];
+  const root = await api(`/workspaces/${workspace}/workflows`, {
+    name: "Controlled canvas",
+    graph: {
+      schemaVersion: 2,
+      execution: {
+        resources: {
+          body: {
+            kind: "workflow",
+            workflowId: body.id,
+            versionId: version.id,
+          },
+        },
+        nodes: steps,
+        edges: [
+          ["start", "timer"],
+          ["timer", "child"],
+          ["child", "loop"],
+          ["loop", "event"],
+          ["event", "join"],
+          ["error_review", "join"],
+          ["join", "end"],
+        ].map(([source, target], i) => ({ id: "e_" + i, source, target })),
+      },
+      editor: {
+        nodes: Object.fromEntries(
+          steps.map((s, i) => [s.id, { x: i * 220, y: 100 }]),
+        ),
+      },
+    },
+  });
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByLabel("Current workflow", { exact: true })
+    .selectOption(root.id);
+  await expect(page.locator(".react-flow__node")).toHaveCount(8);
+  await page
+    .getByRole("button", { name: "› Minimize panel", exact: true })
+    .click();
+  await page.locator('.react-flow__node[data-id="timer"]').click();
+  await page.getByRole("combobox", { name: /Time unit/ }).selectOption("60");
+  await page
+    .getByText("Failure recovery / error route", { exact: true })
+    .click();
+  await page
+    .getByRole("combobox", { name: /On error/ })
+    .selectOption("error_review");
+  await page
+    .getByRole("button", { name: "› Minimize panel", exact: true })
+    .click();
+  await page.locator('.react-flow__node[data-id="child"]').click();
+  await page
+    .getByRole("combobox", { name: /Version behavior/ })
+    .selectOption("latest-published");
+  await page
+    .getByRole("button", { name: "› Minimize panel", exact: true })
+    .click();
+  await page.locator('.react-flow__node[data-id="loop"]').click();
+  await expect(
+    page.getByLabel("Child workflow version", { exact: true }),
+  ).toHaveValue(version.id);
+  await page.getByLabel("Maximum items", { exact: true }).fill("4");
+  await page
+    .getByRole("combobox", { name: /Item failure/ })
+    .selectOption("continue");
+  await page.getByLabel("Output field name", { exact: true }).fill("document");
+  await page.getByRole("button", { name: "+ Mapping", exact: true }).click();
+  await page
+    .getByLabel("Value source", { exact: true })
+    .nth(1)
+    .selectOption("item");
+  await page
+    .getByRole("button", { name: "› Minimize panel", exact: true })
+    .click();
+  await page.locator('.react-flow__node[data-id="event"]').click();
+  await page
+    .getByLabel("Event name", { exact: true })
+    .fill("documents.finished");
+  await page.getByLabel("Timeout (seconds)", { exact: true }).fill("3600");
+  await page.getByLabel("New schema field", { exact: true }).fill("status");
+  await page.getByRole("button", { name: "+ Field", exact: true }).click();
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Draft saved");
+  const [stored] =
+    await sql`SELECT draft_graph FROM workflows WHERE id=${root.id}`;
+  const nodes = stored.draft_graph.execution.nodes;
+  expect(nodes.find((n) => n.id === "timer").onError).toBe("error_review");
+  expect(nodes.find((n) => n.id === "timer").config.seconds).toBe(300);
+  expect(stored.draft_graph.execution.resources.body.versionBehavior).toBe(
+    "latest-published",
+  );
+  expect(
+    nodes.find((n) => n.id === "loop").config.itemInputs.document.path,
+  ).toBe("item");
+  expect(
+    nodes.find((n) => n.id === "event").config.outputSchema.properties.status
+      .type,
+  ).toBe("string");
+  await expect(
+    page.locator('.react-flow__edge[data-id="error_timer"]'),
+  ).toHaveCount(1);
+});

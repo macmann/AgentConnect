@@ -48,6 +48,7 @@ export type ToolContext = {
   userId?: string;
   runId?: string;
   workflowRunId?: string;
+  workflowId?: string;
   workflowNodeId?: string;
   knowledgeSources?: Citation[];
 };

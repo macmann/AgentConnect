@@ -334,7 +334,11 @@ export async function buildApp(
       !apiKeyChatRequest(r) &&
       !platformRequest(r) &&
       !widgetDeploymentPath(r) &&
-      !messagingWebhookPath(r.url)
+      !messagingWebhookPath(r.url) &&
+      !(
+        r.method === "POST" &&
+        /^\/workflow-events\/[0-9a-f-]{36}(?:\?|$)/.test(r.url)
+      )
     )
       throw new HttpError(403, "Invalid request origin");
   });

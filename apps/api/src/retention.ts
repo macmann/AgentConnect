@@ -44,7 +44,7 @@ export async function retentionCandidates(
     ? await tx`SELECT r.id,r.conversation_id FROM agent_runs r JOIN conversations c ON c.id=r.conversation_id WHERE ${scope} AND r.status IN ('completed','failed','cancelled') AND r.finished_at<${runs} ORDER BY r.finished_at,r.id LIMIT ${retentionBatchSize}`
     : [];
   const ws = runs
-    ? await tx`SELECT id FROM workflow_runs WHERE workspace_id=${p.workspace_id} AND organization_id=${p.organization_id} AND status IN ('completed','failed','cancelled','rejected') AND finished_at<${runs} AND NOT EXISTS(SELECT 1 FROM tool_executions t WHERE t.workflow_run_id=workflow_runs.id AND t.status='running') ORDER BY finished_at,id LIMIT ${retentionBatchSize}`
+    ? await tx`SELECT id FROM workflow_runs WHERE workspace_id=${p.workspace_id} AND organization_id=${p.organization_id} AND status IN ('completed','failed','cancelled','rejected') AND finished_at<${runs} AND NOT EXISTS(SELECT 1 FROM workflow_runs child WHERE child.parent_run_id=workflow_runs.id) AND (parent_run_id IS NULL OR EXISTS(SELECT 1 FROM workflow_runs parent WHERE parent.id=workflow_runs.parent_run_id AND parent.status IN ('completed','failed','cancelled','rejected') AND parent.finished_at<${runs})) AND NOT EXISTS(SELECT 1 FROM tool_executions t WHERE t.workflow_run_id=workflow_runs.id AND t.status='running') ORDER BY finished_at,id LIMIT ${retentionBatchSize}`
     : [];
   // Referenced evaluation baselines remain available until their dependents expire.
   const es = runs

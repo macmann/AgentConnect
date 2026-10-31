@@ -226,14 +226,12 @@ export const embeddingModels = pgTable("embedding_models", {
 });
 
 export const knowledgeBases = pgTable("knowledge_bases", {
-  advancedProcessing: jsonb("advanced_processing")
-    .notNull()
-    .default({
-      enabled: false,
-      llmAssisted: false,
-      modelId: null,
-      chunkTokens: 500,
-    }),
+  advancedProcessing: jsonb("advanced_processing").notNull().default({
+    enabled: false,
+    llmAssisted: false,
+    modelId: null,
+    chunkTokens: 500,
+  }),
   parentContext: boolean("parent_context").notNull().default(false),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
@@ -400,6 +398,9 @@ export const workflowVersions = pgTable("workflow_versions", {
     .defaultNow(),
 });
 export const workflowRuns = pgTable("workflow_runs", {
+  parentRunId: uuid("parent_run_id"),
+  parentNodeId: text("parent_node_id"),
+  iterationIndex: integer("iteration_index"),
   id: uuid("id").primaryKey(),
   workflowId: uuid("workflow_id").notNull(),
   versionId: uuid("version_id"),
@@ -939,4 +940,21 @@ export const supportLiveRevisions = pgTable("support_live_revisions", {
   workspaceId: uuid("workspace_id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),
   revision: bigint("revision", { mode: "number" }).notNull().default(1),
+});
+
+export const workflowSuspensions = pgTable("workflow_suspensions", {
+  id: uuid("id").primaryKey(),
+  runId: uuid("run_id").notNull(),
+  nodeId: text("node_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  kind: text("kind").notNull(),
+  status: text("status").notNull().default("pending"),
+  dueAt: timestamp("due_at", { withTimezone: true }),
+  tokenHash: text("token_hash"),
+  payload: jsonb("payload").notNull().default({}),
+  result: jsonb("result"),
+  errorCode: text("error_code"),
+  createdAt: created(),
+  resumedAt: timestamp("resumed_at", { withTimezone: true }),
 });

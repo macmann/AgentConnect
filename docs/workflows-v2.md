@@ -1,4 +1,4 @@
-# Workflow Definition V2 foundation
+# Workflow Definition V2
 
 Workflows are a sub-product of AgentConnect. Agents, Knowledge/RAG, Tools/MCP, model providers, encrypted Secrets, saved Connections, authentication, workspaces and administration remain independently managed modules. Workflows orchestrate those assets; they do not own replacement copies of their configurations. Runs/Operations use the existing history, audit, monitoring and worker services.
 
@@ -16,6 +16,9 @@ flowchart TD
   Runtime --> Agent[Published Agent version]
   Runtime --> Action[Deterministic Action / registered Tool]
   Runtime --> Approval[Durable human approval]
+  Runtime --> Suspension[Persisted waits and events]
+  Runtime --> Child[Published child workflow runs]
+  Child --> Runtime
 ```
 
 The Workflows module now includes a **V2 no-code canvas** alongside the existing V1 authoring experience. Choose Create V2 workflow, or open an existing V2 definition, to edit its canonical execution/configuration and visual layout. The property drawer stays inside the canvas, scrolls independently and has an external minimize/restore button. A single toolbar offers adding steps, saving, publishing and tests/history. Node/edge deletion, side handles and edge reconnection are supported. The existing definition API and optional AI chain proposals feed the same compiler. V2 is never saved through a lossy V1 projection.
@@ -33,7 +36,7 @@ V1 keeps `schemaVersion: 1`, `nodes[].type/data/position`, existing JSON Pointer
 
 V2 publication stores the source definition in the existing immutable `workflow_versions.graph` JSONB column. Queuing compiles it to the existing runtime graph representation with an internal `programV2` artifact containing compiler version 1 and the validated execution program, without editor layout or copied resource configuration. Draft tests use the saved definition/revision. Runs use their queued snapshot; later edits to a draft do not affect them. The existing worker consumes V1 and compiled V2 snapshots through the same queue, LangGraph compiler, saver, retries, leases, cancellation, approval and history infrastructure. There is no second workflow engine.
 
-No database migration or hosted-only service is required. Deploy the API, web and worker from the same release. Existing self-hosted PostgreSQL/pgvector, Redis, object storage, provider allowlists, secret encryption and worker settings remain authoritative.
+The controlled-execution increment requires migration **0045**; no hosted-only service is required. Deploy the API, web and worker from the same release. Existing self-hosted PostgreSQL/pgvector, Redis, object storage, provider allowlists, secret encryption and worker settings remain authoritative.
 
 ## Resource references
 
@@ -82,7 +85,9 @@ Supported roots are `trigger`, `input`, `steps`, `variables`, `workflow` and `er
 - `steps.extract.output.invoiceNumber`: a completed ancestor step's output.
 - `variables.batchSize`: a definition variable.
 - `workflow.id`, `workflow.versionId`, `workflow.runId`, `workflow.schemaVersion`: stable run metadata.
-- `error.code`, `error.nodeId`: initially null. Error-handler routing is not introduced in this phase; terminal errors continue to appear in the existing run/node traces.
+- `error.code`, `error.message`, `error.nodeId`, `error.attempt`: sanitized failure context on an error route. Initially null/zero; raw provider/database/credential messages never enter this context.
+- `item.*`, `iteration.index`: scoped values inside a For Each body run.
+- `steps.<loop>.summary.total/completed/failed`: derived from the persisted For Each result array.
 
 `trigger.type` identifies `manual`, `api`, `schedule` or `customer`, derived from persisted run identity. No HTTP authorization headers, cookie values or secret material enter this context. V2 accepts object input without requiring a form; declared `inputFields` still use existing required/default/type validation. Text input remains supported; JSON text is parsed for typed V2 access. Variables begin as JSON literals and can be updated by Set Variable steps. Updates are checkpointed, including across human-task pauses. Set Variable steps are forbidden inside parallel branches to avoid race-dependent results.
 
@@ -147,7 +152,7 @@ Submit a run with `input: { "customer": { "email": "customer@example.com" } }`. 
 
 AI creation clients can pass `workflowSchemaVersion: 2` to the existing creation-assistant request. The assistant still proposes a bounded chain of existing published Agent versions; the server converts that proposal into resource-referencing V2 and validates it. Omit the field to retain the current V1 proposal/UI contract. Neither path publishes or runs a proposal automatically.
 
-V2 retains acyclic graphs, up to 40 nodes and 80 edges, and structured parallel joins. V2 permits multiple sequential Human Task/Approval steps. Human Task, Approval, Switch, nested branches and Set Variable steps are excluded from parallel branches. Loops, error-handler edges, nested parallel control flow and additional connectors remain outside this phase. Strict schemas reject unsupported node configuration rather than silently dropping it.
+V2 retains acyclic graphs, up to 40 nodes and 80 edges, and structured parallel joins. V2 permits multiple sequential and parallel Human Task/Approval steps. Parallel branches remain linear until their shared Merge; they may contain stateless transformations, Agents, Actions, waits, events, For Each and Subworkflow calls. Switch, nested branches, node error routes and Set Variable steps are excluded inside parallel branches. For Each uses a separate bounded child flow, never a cyclic canvas graph. Strict schemas reject unsupported node configuration rather than silently dropping it.
 
 ## No-code node configuration
 
@@ -174,7 +179,7 @@ Structured output schemas support strings, numbers, booleans, objects, arrays an
 
 Action configuration uses schemas derived from registered Tools/MCP. A connection belongs to the selected registered integration; the canvas displays that saved binding and links to Tools configuration to change it. It cannot retarget an existing Tool to another credential. Selecting a different integration selects its connection. This deliberately preserves the existing resource security boundary. No new connector fleet or writable executor is introduced.
 
-Human tasks persist input, decisions and edits in the existing `workflow_approvals` table. `POST /workflow-runs/:runId/approval` accepts optional `nodeId`, required to match the pending gate when supplied. Review/edit results must pass the configured output schema before the approval transaction commits. Approve/reject mode rejects edits. Resume identifies the pending node from the existing checkpoint interrupt, so a prior approval cannot release a later gate. Approving a gate refreshes the worker recovery-attempt budget for the next segment. Reject retains existing terminal-rejection behavior. Human forms are generated from the queued run snapshot schema, rather than a subsequently edited draft.
+Human tasks persist input, decisions and edits in the existing `workflow_approvals` table. `POST /workflow-runs/:runId/approval` accepts optional `nodeId`, required to match the pending gate when supplied. Review/edit results must pass the configured output schema before the approval transaction commits. Approve/reject mode rejects edits. Resume uses each persisted checkpoint interrupt ID, so a prior approval cannot release a later gate or a parallel sibling. When several tasks are pending, the approval request must specify `nodeId`. Approving a gate refreshes the worker recovery-attempt budget for the next segment. Reject retains existing terminal-rejection behavior. Human forms are generated from the queued run snapshot schema, rather than a subsequently edited draft.
 
 Merge retains the V1 contract: output is keyed by the active upstream step IDs, including when only one conditional path executes. Use a Transform or an explicit output mapping when a different final shape is required.
 
@@ -184,4 +189,109 @@ Merge retains the V1 contract: output is keyed by the active upstream step IDs, 
 
 `apps/api/test/workflow-v2.test.ts` includes an executable acceptance fixture: Input → Structured AI → Human Review/Edit → Action → Condition → branch transforms/Merge → a second Human Task → Output. The test edits invoice number and amount, checks the Action receives the edited number, verifies the condition chooses the edited amount’s route, and resumes the second task without replaying the AI request. Additional fixtures cover malformed output, date validation, persisted variables and Switch default/case routing, and four sequential durable human tasks.
 
-No database migration or new execution service is needed. Deploy updated API and worker builds together for the new node kinds. V1 source, existing publications and queued V1 snapshots remain valid. An older application binary cannot execute the newly introduced V2 node kinds; drain those runs before rolling back to an older binary.
+Apply migration 0045, then deploy updated API, web and worker builds together for the new node kinds. No new execution service is needed. V1 source, existing publications and queued V1 snapshots remain valid. An older application binary cannot execute the newly introduced V2 node kinds; drain those runs before rolling back to an older binary.
+
+## Controlled execution: For Each, waits, events and Subworkflow
+
+These primitives remain inside Workflow Definition V2 and the existing LangGraph/PostgreSQL runner. They do not enable arbitrary cyclic graphs. Migration `0045_workflow_controlled_execution.sql` adds parent/child run links and `workflow_suspensions`. Existing V1 definitions, versions, node traces, approvals and execution remain supported.
+
+### For Each
+
+`kind: "for-each"` config:
+
+```json
+{
+  "resource": "document_body",
+  "collection": { "type": "reference", "path": "input.documents" },
+  "startIndex": 1,
+  "maxItems": 25,
+  "failurePolicy": "continue",
+  "itemInputs": {
+    "document": { "type": "reference", "path": "item" },
+    "approvedSample": { "type": "reference", "path": "steps.review.output" },
+    "index": { "type": "reference", "path": "iteration.index" }
+  }
+}
+```
+
+The resource is an existing **published workflow**, configured separately on its own canvas. Its reference has `kind: "workflow"`, `workflowId`, `versionBehavior` (`pinned` or `latest-published`) and a `versionId` for pinned behavior. The workflow must be available in the same workspace/organization. Direct workflow dependencies remain staff-only; customer-facing V1 workflows retain their existing behavior.
+
+Collection values must resolve to arrays. JSON input fields may hold arrays and are checked at runtime. For Each is **sequential** in this increment: at most one child per For Each is active, and the worker is released between children. `startIndex` skips the approved sample or other initial items; `iteration.index` retains the original zero-based collection index. The child-run `iteration_index` is the zero-based ordinal within the selected batch. `itemInputs` builds the child input using typed mappings; leave it empty to pass the item itself. V2 child bodies can additionally use `item.*` and `iteration.index`. Child variables are isolated; explicitly map parent/shared data into body inputs.
+
+Results preserve collection order:
+
+```json
+[
+  { "index": 1, "status": "completed", "output": { "invoiceNumber": "INV-2" } },
+  {
+    "status": "failed",
+    "error": { "code": "ACTION_INPUT_INVALID", "index": 1 }
+  }
+]
+```
+
+The failed entry’s `error.index` is the original collection index; its original input/scope remains available in the child run history. `fail-workflow` stops scheduling further items and raises `SUBWORKFLOW_FAILED`, which may use the node’s error route. `continue` records failed/rejected/cancelled children and schedules the next item. `steps.<loop>.output` is the result array; `.summary` provides total/completed/failed counts for no-code conditions and aggregation. Empty collections return an empty array.
+
+### Subworkflow and version behavior
+
+`kind: "subworkflow"` selects the same workflow-resource reference, an optional typed `input` mapping, and optional `outputPath` JSON Pointer. The node always waits for completion in this increment. It returns the child output, optionally projected through that pointer. It never starts a separate execution engine.
+
+Pinned references use the specified immutable publication. Latest-published references resolve **once when the node first starts**, and that selected version and compiled graph are persisted before child scheduling. Publishing another body version during a wait does not change an in-flight batch. Subsequent invocations may select the newer publication. V1 published bodies are supported through their ordinary input contract; iteration-specific roots are available to V2 bodies.
+
+Runs retain `parent_run_id`, `parent_node_id`, `iteration_index`, published version and graph snapshot. The run inspector links to children and back to the parent. Workflow ancestry is checked before invoking a body: the same workflow ID cannot reappear, and there are at most four run levels including the root. A root can create at most **100 descendant runs total**, shared across all iterations/subworkflow calls. This prevents multiplicative nested iteration. Duplicate scheduling is guarded by a unique parent/node/item identity and PostgreSQL row locks.
+
+### Durable Wait
+
+`kind: "wait"` supports `mode: "duration"` with integer `seconds`, or `mode: "until"` with a typed ISO timestamp expression. The canvas exposes seconds/minutes/hours. Duration and future timestamp limits are **30 days**. Timestamps require a timezone and a valid calendar date; past timestamps become eligible immediately.
+
+The original due time and pass-through input are persisted once. The node interrupts through the existing checkpoint store, releases the lease, and returns its input after resumption. Restart/retry does not restart the duration. Queue polls select due records and requeue their owners; no worker sleeps for the wait and no per-wait in-memory timer is created. Existing active-execution deadlines/heartbeats continue to apply only while a worker is executing a segment.
+
+### Wait for Event
+
+`kind: "wait-for-event"` configures `eventName`, `timeoutSeconds` (1 second to 30 days), optional input mapping and `outputSchema`. The output is the received event data, checked against that schema; timeout raises `WORKFLOW_EVENT_TIMEOUT` and may use an error route.
+
+An authorized workspace operator/builder issues or rotates a callback credential while the run is waiting:
+
+```http
+POST /workflow-runs/{runId}/event-token
+Content-Type: application/json
+
+{ "nodeId": "external_response" }
+```
+
+The authenticated response contains `callbackPath`, `eventName`, `expiresAt`, and a random 256-bit token. The canvas provides the same operation in Test / runs. The token is returned only at issuance; only its hash is retained in PostgreSQL. It is excluded from ordinary run history and workflow data context. The original deadline is unchanged by rotation; rotation invalidates the old token.
+
+The external service sends:
+
+```http
+POST /workflow-events/{suspensionId}
+Authorization: Bearer <issued-token>
+Content-Type: application/json
+
+{ "eventName": "invoice.processed", "data": { "reference": "INV-123" } }
+```
+
+This exact callback route accepts external server requests without a browser Origin header because it authenticates exclusively with the scoped token. Other session-authenticated routes retain their origin/CSRF policy. Unknown/wrong/rotated/expired tokens cannot resume a run. Event name and data schema must match; accepted payloads are redacted and validated again before storage. A token authorizes one accepted event; duplicate delivery does not overwrite it. Cancellation/termination invalidates pending waits. Token issuance is audited; active wait/callback status and child links are available in the existing authorized run history. External integration setup must arrange credential delivery to its callback sender; no token is passed to an LLM automatically.
+
+### Error routing and parallel gates
+
+A supported operation may set `onError` to an existing handler node ID. Its ordinary edge remains the success path; the compiler adds a distinct failure edge and validates both paths for reachability and cycles. Canvas nodes expose a red error handle and an error-target selector. Errors route only after the operation’s existing retry policy is exhausted; cancellation is terminal and never routes as a business failure.
+
+A failed operation remains failed in node traces, while its handler can recover the overall run. The error output/context contains a bounded code, a fixed safe message, node ID and bounded attempt number. Raw exception text, SQL messages, provider bodies and credential values are not exposed. The default input to the handler is that safe error object; explicit mappings can select `error.*`. Non-operation control nodes do not have error routes in this increment.
+
+Parallel branches can independently park at human gates, waits, callbacks or child invocations. Resume values are keyed by **checkpoint interrupt ID**, not broadcast to all pending nodes. One human approval cannot release a sibling or later gate. The existing Merge waits for all linear branch terminal nodes and retains its V1 object-keyed result shape. Parallel mutation, error-routing branches inside a fan-out, nested fan-out and unrestricted graph loops remain rejected.
+
+### Operations, limits and document acceptance
+
+- Graphs remain acyclic: at most 40 nodes and 80 compiled edges, including error edges.
+- For Each collection limit: 100 items; configurable processed-item maximum 1–100 (default 25).
+- Four run levels including root; at most 100 descendants per root. Sequential For Each only.
+- Existing 12 KB workflow input, 128 KB node output and 1 MB state/persisted suspension-payload budgets remain enforced.
+- Wait/event maximum 30 days; durable progress is stored in PostgreSQL and serviced by the existing worker queue poll.
+- Parent termination cancels active descendants, including parked gates/events; running operations observe existing cancellation/lease checks.
+- Completed children are retained while their parent is active. Finished trees expire leaf-first under the existing retention policy, preserving child outputs needed for resume.
+- Existing Tool/MCP read-only restrictions remain. This phase does not add production write connectors or promise exactly-once external side effects.
+
+The executable document fixture in `apps/api/test/workflow-v2.test.ts` uses staged OCR/PDF document data and mocks external persistence behind the registered Action/Tool adapter. It runs real orchestration: sample extraction → durable human review/edit and Process → For Each remaining document using the approved sample → Structured AI → mock persistence Action → read/schema-validation Action → aggregate → success/failure condition → completion or Human Error Review. Both success and persistence-failure branches are verified, including approved context, ordered child results, checkpoints and final review. Additional tests cover event rotation/schema/timeout, restart-safe waits, latest/pinned versions, recursion, independent parallel approvals, parent cancellation, concurrent scheduling, tenant constraints and retention.
+
+Apply migration 0045 before starting the updated workers/API. Deploy API, web and worker from the same release. No V1 publication is rewritten. Older binaries cannot execute the new V2 node kinds; drain those runs before rolling back. PostgreSQL and the existing worker remain the only durable orchestration infrastructure; no hosted service, new engine or in-memory-only scheduler is required.

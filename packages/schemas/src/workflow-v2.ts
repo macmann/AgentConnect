@@ -6,6 +6,7 @@ import {
   analyzeWorkflow,
   type WorkflowGraph,
 } from "@agentconnect/schemas/workflows";
+import { pointerSegments } from "@agentconnect/schemas/workflow-mapping";
 import { workflowAncestors } from "@agentconnect/schemas/workflow-mapping";
 import {
   workflowAction,
@@ -28,6 +29,12 @@ export const workflowResource = z.discriminatedUnion("kind", [
     agentId: z.uuid(),
     versionId: z.uuid(),
   }),
+  z.strictObject({
+    kind: z.literal("workflow"),
+    workflowId: z.uuid(),
+    versionId: z.uuid().optional(),
+    versionBehavior: z.enum(["pinned", "latest-published"]).default("pinned"),
+  }),
   z.strictObject({ kind: z.literal("knowledge"), id: z.uuid() }),
   z.strictObject({ kind: z.literal("tool"), id: z.uuid() }),
   z.strictObject({ kind: z.literal("mcp"), id: z.uuid() }),
@@ -38,6 +45,7 @@ export const workflowResource = z.discriminatedUnion("kind", [
 const binding = { input: workflowExpression.optional() };
 const common = {
   id: workflowIdentifier,
+  onError: workflowIdentifier.optional(),
   label: z.string().trim().min(1).max(100),
 };
 export const workflowV2Node = z.discriminatedUnion("kind", [
@@ -120,6 +128,52 @@ export const workflowV2Node = z.discriminatedUnion("kind", [
         )
         .min(1)
         .max(10),
+    }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("for-each"),
+    config: z.strictObject({
+      resource: workflowIdentifier,
+      collection: workflowExpression.refine(
+        (v) => v.type === "reference",
+        "Select a typed array reference",
+      ),
+      itemInputs: actionInputs.default({}),
+      startIndex: z.number().int().min(0).max(99).default(0),
+      maxItems: z.number().int().min(1).max(100).default(25),
+      failurePolicy: z
+        .enum(["fail-workflow", "continue"])
+        .default("fail-workflow"),
+    }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("subworkflow"),
+    config: z.strictObject({
+      ...binding,
+      resource: workflowIdentifier,
+      outputPath: z.string().max(512).default(""),
+    }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("wait"),
+    config: z.strictObject({
+      ...binding,
+      mode: z.enum(["duration", "until"]),
+      seconds: z.number().int().min(1).max(2592000).default(60),
+      until: workflowExpression.optional(),
+    }),
+  }),
+  z.strictObject({
+    ...common,
+    kind: z.literal("wait-for-event"),
+    config: z.strictObject({
+      ...binding,
+      eventName: z.string().trim().min(1).max(100),
+      timeoutSeconds: z.number().int().min(1).max(2592000).default(86400),
+      outputSchema: actionJsonSchema.default({}),
     }),
   }),
   z.strictObject({
@@ -283,7 +337,17 @@ export function compileWorkflowDefinition(
     inputFields: e.inputFields,
     nodes,
     programV2: { compilerVersion: 1, execution: JSON.parse(JSON.stringify(e)) },
-    edges: e.edges.map((edge) => ({
+    edges: [
+      ...e.edges,
+      ...e.nodes
+        .filter((n) => n.onError)
+        .map((n) => ({
+          id: "error_" + n.id,
+          source: n.id,
+          target: n.onError!,
+          branch: "error",
+        })),
+    ].map((edge) => ({
       id: edge.id,
       source: edge.source,
       target: edge.target,
@@ -292,8 +356,48 @@ export function compileWorkflowDefinition(
     })),
   });
   errors.push(...analyzeWorkflow(graph).errors);
+  for (const node of e.nodes) {
+    if (
+      node.onError &&
+      (!e.nodes.some((n) => n.id === node.onError) ||
+        [
+          "input",
+          "output",
+          "parallel",
+          "merge",
+          "condition",
+          "switch",
+          "human-task",
+          "approval",
+        ].includes(node.kind))
+    )
+      errors.push(
+        `${node.id}: choose an existing error handler on a supported operation`,
+      );
+    if (node.kind === "for-each" || node.kind === "subworkflow") {
+      const resource = e.resources[node.config.resource];
+      if (
+        resource?.kind !== "workflow" ||
+        (resource.versionBehavior === "pinned" && !resource.versionId)
+      )
+        errors.push(`${node.id}: select a published workflow and version`);
+    }
+    if (
+      node.kind === "wait" &&
+      node.config.mode === "until" &&
+      !node.config.until
+    )
+      errors.push(`${node.id}: choose a wait-until timestamp`);
+    if (node.kind === "subworkflow") {
+      try {
+        pointerSegments(node.config.outputPath);
+      } catch {
+        errors.push(`${node.id}: select a valid result field`);
+      }
+    }
+  }
   const nodeIds = new Set(e.nodes.map((n) => n.id)),
-    edgeIds = new Set(e.edges.map((edge) => edge.id));
+    edgeIds = new Set(graph.edges.map((edge) => edge.id));
   if (
     Object.keys(editor?.nodes ?? {}).some((id) => !nodeIds.has(id)) ||
     Object.keys(editor?.edges ?? {}).some((id) => !edgeIds.has(id))
@@ -311,6 +415,10 @@ export function compileWorkflowDefinition(
       : []),
     ...("inputs" in node.config ? Object.values(node.config.inputs) : []),
     ...(node.kind === "transform" ? Object.values(node.config.fields) : []),
+    ...(node.kind === "for-each"
+      ? [node.config.collection, ...Object.values(node.config.itemInputs)]
+      : []),
+    ...(node.kind === "wait" && node.config.until ? [node.config.until] : []),
     ...(node.kind === "set-variable" || node.kind === "switch"
       ? [node.config.value]
       : []),
@@ -350,7 +458,13 @@ export function compileWorkflowDefinition(
       const parts = referenceSegments(expression.path);
       if (
         parts[0] === "steps" &&
-        (parts.length < 3 || parts[2] !== "output" || !ancestors.has(parts[1]!))
+        (parts.length < 3 ||
+          (parts[2] !== "output" &&
+            !(
+              parts[2] === "summary" &&
+              e.nodes.find((n) => n.id === parts[1])?.kind === "for-each"
+            )) ||
+          !ancestors.has(parts[1]!))
       )
         errors.push(
           `${node.id}: step references must select an ancestor output`,

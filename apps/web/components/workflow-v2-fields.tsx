@@ -321,7 +321,9 @@ export function FieldPicker({
   nodeId,
   value,
   onChange,
+  referenceOnly = false,
 }: {
+  referenceOnly?: boolean;
   definition: WorkflowDefinitionV2;
   nodeId: string;
   value: WorkflowExpression;
@@ -329,7 +331,13 @@ export function FieldPicker({
 }) {
   const e = definition.execution;
   const ancestors = new Set<string>();
-  const pending = e.edges
+  const controlEdges = [
+    ...e.edges,
+    ...e.nodes
+      .filter((n) => n.onError)
+      .map((n) => ({ source: n.id, target: n.onError! })),
+  ];
+  const pending = controlEdges
     .filter((edge) => edge.target === nodeId)
     .map((edge) => edge.source);
   while (pending.length) {
@@ -337,7 +345,7 @@ export function FieldPicker({
     if (ancestors.has(id)) continue;
     ancestors.add(id);
     pending.push(
-      ...e.edges
+      ...controlEdges
         .filter((edge) => edge.target === id)
         .map((edge) => edge.source),
     );
@@ -360,6 +368,39 @@ export function FieldPicker({
   };
   const sources: { id: string; label: string; schema: ValueSchema }[] = [
     { id: "input", label: "Workflow input", schema: inputSchema },
+    { id: "item", label: "Current item (iteration body)", schema: {} },
+    {
+      id: "iteration",
+      label: "Iteration",
+      schema: { type: "object", properties: { index: { type: "number" } } },
+    },
+    {
+      id: "error",
+      label: "Error",
+      schema: {
+        type: "object",
+        properties: {
+          code: { type: "string" },
+          message: { type: "string" },
+          nodeId: { type: "string" },
+          attempt: { type: "number" },
+        },
+      },
+    },
+    ...e.nodes
+      .filter((n) => ancestors.has(n.id) && n.kind === "for-each")
+      .map((n) => ({
+        id: `steps.${n.id}.summary`,
+        label: `${n.label} summary`,
+        schema: {
+          type: "object",
+          properties: {
+            total: { type: "number" },
+            failed: { type: "number" },
+            completed: { type: "number" },
+          },
+        },
+      })),
     {
       id: "trigger",
       label: "Trigger",
@@ -440,7 +481,7 @@ export function FieldPicker({
           )
         }
       >
-        <option value="literal">Literal value</option>
+        {!referenceOnly && <option value="literal">Literal value</option>}
         {sources.map((s) => (
           <option key={s.id} value={s.id}>
             {s.label}

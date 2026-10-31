@@ -14,6 +14,12 @@ import { resourceHref } from "./workflow-resource-picker";
 import { Button } from "./button";
 import { useState } from "react";
 export type WorkflowCatalog = {
+  workflows?: {
+    id: string;
+    workflow_id: string;
+    name: string;
+    version: number;
+  }[];
   agents: {
     id: string;
     agent_id: string;
@@ -142,6 +148,7 @@ export function WorkflowV2NodePanel({
   catalog?: WorkflowCatalog;
   onChange: (definition: WorkflowDefinitionV2) => void;
 }) {
+  const [waitUnit, setWaitUnit] = useState(1);
   const [connectorFilter, setConnectorFilter] = useState("");
   const e = definition.execution;
   const change = (config: V2Node["config"]) =>
@@ -735,6 +742,334 @@ export function WorkflowV2NodePanel({
           )}
         </>
       )}
+      {(node.kind === "for-each" || node.kind === "subworkflow") && (
+        <>
+          <label>
+            Published workflow / body
+            <select
+              aria-label="Child workflow version"
+              value={
+                resource?.kind === "workflow" ? (resource.versionId ?? "") : ""
+              }
+              onChange={(event) => {
+                const selected = catalog?.workflows?.find(
+                  (w) => w.id === event.target.value,
+                );
+                if (selected)
+                  onChange({
+                    ...definition,
+                    execution: {
+                      ...e,
+                      resources: {
+                        ...e.resources,
+                        [node.config.resource]: {
+                          kind: "workflow",
+                          workflowId: selected.workflow_id,
+                          versionId: selected.id,
+                          versionBehavior: "pinned",
+                        },
+                      },
+                    },
+                  });
+              }}
+            >
+              <option value="">Choose published workflow</option>
+              {catalog?.workflows?.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name} · v{w.version}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Version behavior
+            <select
+              value={
+                resource?.kind === "workflow"
+                  ? resource.versionBehavior
+                  : "pinned"
+              }
+              onChange={(event) => {
+                if (resource?.kind === "workflow")
+                  onChange({
+                    ...definition,
+                    execution: {
+                      ...e,
+                      resources: {
+                        ...e.resources,
+                        [node.config.resource]: {
+                          ...resource,
+                          versionBehavior: event.target.value as
+                            "pinned" | "latest-published",
+                        },
+                      },
+                    },
+                  });
+              }}
+            >
+              <option value="pinned">Pinned published version</option>
+              <option value="latest-published">
+                Latest published when this step starts
+              </option>
+            </select>
+          </label>
+          <p>
+            Uses the same durable workflow engine. Waits for the child result.
+            Recursive workflow calls are blocked.
+          </p>
+          {node.kind === "subworkflow" && (
+            <label>
+              Result field (JSON Pointer; blank keeps the full result)
+              <input
+                value={node.config.outputPath}
+                placeholder="/invoiceNumber"
+                onChange={(event) =>
+                  change({ ...node.config, outputPath: event.target.value })
+                }
+              />
+            </label>
+          )}
+          {node.kind === "for-each" && (
+            <>
+              <h4>Collection</h4>
+              <FieldPicker
+                referenceOnly
+                definition={definition}
+                nodeId={node.id}
+                value={node.config.collection}
+                onChange={(collection) => {
+                  if (collection.type === "reference")
+                    change({ ...node.config, collection });
+                }}
+              />
+              <label>
+                Skip first items
+                <input
+                  type="number"
+                  min="0"
+                  max="99"
+                  value={node.config.startIndex}
+                  onChange={(event) =>
+                    change({
+                      ...node.config,
+                      startIndex: Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Maximum items
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={node.config.maxItems}
+                  onChange={(event) =>
+                    change({
+                      ...node.config,
+                      maxItems: Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Item failure
+                <select
+                  value={node.config.failurePolicy}
+                  onChange={(event) =>
+                    change({
+                      ...node.config,
+                      failurePolicy: event.target.value as
+                        "continue" | "fail-workflow",
+                    })
+                  }
+                >
+                  <option value="fail-workflow">Fail the workflow</option>
+                  <option value="continue">
+                    Continue and record failed item
+                  </option>
+                </select>
+              </label>
+              <h4>Body input fields</h4>
+              <Mappings
+                fields={node.config.itemInputs}
+                definition={definition}
+                nodeId={node.id}
+                onChange={(itemInputs) =>
+                  change({ ...node.config, itemInputs })
+                }
+              />
+              <p>
+                Leave fields empty to pass the item as input. The body can also
+                use Current item and Iteration → index. Items run sequentially,
+                with a maximum of 100 descendant runs per root workflow.
+              </p>
+            </>
+          )}
+        </>
+      )}
+      {node.kind === "wait" && (
+        <>
+          <label>
+            Wait mode
+            <select
+              value={node.config.mode}
+              onChange={(event) =>
+                change({
+                  ...node.config,
+                  mode: event.target.value as "duration" | "until",
+                  until: node.config.until ?? {
+                    type: "literal",
+                    value: new Date().toISOString(),
+                  },
+                })
+              }
+            >
+              <option value="duration">Wait for a duration</option>
+              <option value="until">Wait until a timestamp</option>
+            </select>
+          </label>
+          {node.config.mode === "duration" ? (
+            <>
+              <label>
+                Duration
+                <input
+                  type="number"
+                  min="1"
+                  max={2592000 / waitUnit}
+                  value={node.config.seconds / waitUnit}
+                  onChange={(event) =>
+                    change({
+                      ...node.config,
+                      seconds: Math.round(
+                        Number(event.target.value) * waitUnit,
+                      ),
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Time unit
+                <select
+                  value={waitUnit}
+                  onChange={(event) => {
+                    const unit = Number(event.target.value);
+                    change({
+                      ...node.config,
+                      seconds: Math.min(
+                        2592000,
+                        Math.max(
+                          1,
+                          Math.round((node.config.seconds / waitUnit) * unit),
+                        ),
+                      ),
+                    });
+                    setWaitUnit(unit);
+                  }}
+                >
+                  <option value="1">Seconds</option>
+                  <option value="60">Minutes</option>
+                  <option value="3600">Hours</option>
+                </select>
+              </label>
+            </>
+          ) : (
+            picker(
+              node.config.until ?? { type: "literal", value: "" },
+              (until) => change({ ...node.config, until }),
+            )
+          )}
+          <p>
+            The worker is released while waiting. Maximum wait: 30 days.
+            Timestamps must include a timezone.
+          </p>
+        </>
+      )}
+      {node.kind === "wait-for-event" && (
+        <>
+          <label>
+            Event name
+            <input
+              value={node.config.eventName}
+              onChange={(event) =>
+                change({ ...node.config, eventName: event.target.value })
+              }
+            />
+          </label>
+          <label>
+            Timeout (seconds)
+            <input
+              type="number"
+              min="1"
+              max="2592000"
+              value={node.config.timeoutSeconds}
+              onChange={(event) =>
+                change({
+                  ...node.config,
+                  timeoutSeconds: Number(event.target.value),
+                })
+              }
+            />
+          </label>
+          <h4>Event data schema</h4>
+          <SchemaEditor
+            value={node.config.outputSchema as ValueSchema}
+            onChange={(outputSchema) =>
+              change({ ...node.config, outputSchema: outputSchema as never })
+            }
+          />
+          <p>
+            When the run pauses, an authorized operator can issue a scoped
+            callback token from Test / runs. Tokens expire and can be rotated.
+          </p>
+        </>
+      )}
+      {![
+        "input",
+        "output",
+        "parallel",
+        "merge",
+        "condition",
+        "switch",
+        "approval",
+        "human-task",
+      ].includes(node.kind) && (
+        <details>
+          <summary>Failure recovery / error route</summary>
+          <label>
+            On error
+            <select
+              value={node.onError ?? ""}
+              onChange={(event) =>
+                onChange({
+                  ...definition,
+                  execution: {
+                    ...e,
+                    nodes: e.nodes.map((n) =>
+                      n.id === node.id
+                        ? { ...n, onError: event.target.value || undefined }
+                        : n,
+                    ),
+                  },
+                })
+              }
+            >
+              <option value="">Fail this workflow</option>
+              {e.nodes
+                .filter((n) => n.id !== node.id && n.kind !== "input")
+                .map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.label}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <p>
+            Error handlers can map Error → code, message, nodeId and attempt.
+            Messages are sanitized.
+          </p>
+        </details>
+      )}
       {node.kind === "condition" && (
         <>
           <h4>Left value</h4>
@@ -863,7 +1198,9 @@ export function WorkflowV2NodePanel({
           <p>Connect every case and the default handle to its route.</p>
         </>
       )}
-      {!["input", "transform", "set-variable"].includes(node.kind) && (
+      {!["input", "transform", "set-variable", "for-each"].includes(
+        node.kind,
+      ) && (
         <details open>
           <summary>
             {node.kind === "output" ? "Workflow result" : "Input mapping"}
