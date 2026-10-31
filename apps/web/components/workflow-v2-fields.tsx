@@ -322,8 +322,10 @@ export function FieldPicker({
   value,
   onChange,
   referenceOnly = false,
+  allowArguments = false,
 }: {
   referenceOnly?: boolean;
+  allowArguments?: boolean;
   definition: WorkflowDefinitionV2;
   nodeId: string;
   value: WorkflowExpression;
@@ -367,6 +369,25 @@ export function FieldPicker({
     ),
   };
   const sources: { id: string; label: string; schema: ValueSchema }[] = [
+    ...(allowArguments
+      ? [
+          {
+            id: "arguments",
+            label: "Action inputs",
+            schema: (e.nodes.find((n) => n.id === nodeId)?.kind === "action"
+              ? e.actions.find(
+                  (a) =>
+                    a.id ===
+                    (
+                      e.nodes.find((n) => n.id === nodeId) as {
+                        config: { actionId: string };
+                      }
+                    ).config.actionId,
+                )?.inputSchema
+              : {}) as ValueSchema,
+          },
+        ]
+      : []),
     { id: "input", label: "Workflow input", schema: inputSchema },
     { id: "item", label: "Current item (iteration body)", schema: {} },
     {
@@ -668,6 +689,106 @@ function LiteralEditor({
       ) : type !== "null" ? (
         <StructuredFields schema={{ type }} value={value} onChange={onChange} />
       ) : null}
+    </div>
+  );
+}
+
+export function WorkflowMappings({
+  fields,
+  definition,
+  nodeId,
+  onChange,
+  known,
+  allowHyphens = false,
+  allowArguments = false,
+}: {
+  fields: Record<string, WorkflowExpression>;
+  definition: WorkflowDefinitionV2;
+  nodeId: string;
+  onChange: (f: Record<string, WorkflowExpression>) => void;
+  known?: ValueSchema;
+  allowHyphens?: boolean;
+  allowArguments?: boolean;
+}) {
+  const [name, setName] = useState("");
+  return (
+    <div>
+      {Object.entries(fields).map(([key, value]) => (
+        <details key={key} open>
+          <summary>
+            {key}
+            {known?.properties?.[key]?.type
+              ? ` · ${known.properties[key].type}`
+              : ""}
+          </summary>
+          <FieldPicker
+            allowArguments={allowArguments}
+            definition={definition}
+            nodeId={nodeId}
+            value={value}
+            onChange={(v) => onChange({ ...fields, [key]: v })}
+          />
+          <Button
+            onClick={() =>
+              onChange(
+                Object.fromEntries(
+                  Object.entries(fields).filter(([k]) => k !== key),
+                ),
+              )
+            }
+          >
+            Remove {key}
+          </Button>
+        </details>
+      ))}
+      <div className="v2-inline">
+        {known?.properties ? (
+          <select
+            aria-label="Input field to map"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          >
+            <option value="">Choose input field</option>
+            {Object.keys(known.properties)
+              .filter((k) => !Object.hasOwn(fields, k))
+              .map((k) => (
+                <option key={k}>{k}</option>
+              ))}
+          </select>
+        ) : (
+          <input
+            aria-label="Output field name"
+            placeholder="Field name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        )}
+        <Button
+          disabled={
+            !(
+              allowHyphens
+                ? /^[A-Za-z][A-Za-z0-9_-]{0,47}$/
+                : /^[A-Za-z][A-Za-z0-9_]{0,47}$/
+            ).test(name) ||
+            ["constructor", "prototype", "__proto__"].includes(name) ||
+            Object.hasOwn(fields, name)
+          }
+          onClick={() => {
+            onChange({
+              ...fields,
+              [name]: {
+                type: "literal",
+                value: defaultValue(
+                  known?.properties?.[name] ?? { type: "string" },
+                ) as never,
+              },
+            });
+            setName("");
+          }}
+        >
+          + Mapping
+        </Button>
+      </div>
     </div>
   );
 }

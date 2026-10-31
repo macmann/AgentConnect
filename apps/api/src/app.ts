@@ -337,7 +337,9 @@ export async function buildApp(
       !messagingWebhookPath(r.url) &&
       !(
         r.method === "POST" &&
-        /^\/workflow-events\/[0-9a-f-]{36}(?:\?|$)/.test(r.url)
+        /^\/(?:workflow-events|workflow-webhooks)\/[0-9a-f-]{36}(?:\?|$)/.test(
+          r.url,
+        )
       )
     )
       throw new HttpError(403, "Invalid request origin");
@@ -761,7 +763,7 @@ export async function buildApp(
       if ((error as { code?: string }).code === "23503")
         throw new HttpError(
           409,
-          "Secret is in use by a model, reranker, embedding provider, or connector. Change or remove its references before deleting, or edit the secret to replace its value.",
+          "Secret is in use by a model, reranker, embedding provider, connector, or Action connection. Change or remove its references before deleting, or edit the secret to replace its value.",
         );
       throw error;
     }

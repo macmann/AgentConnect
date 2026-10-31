@@ -160,7 +160,7 @@ export function safeHttpTransport(
   headers: Record<string, string>,
   body: unknown,
   signal: AbortSignal,
-  method?: "GET" | "POST" | "DELETE",
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
 ) => Promise<TransportResponse> {
   return async (url, headers, body, signal, method = "POST") => {
     const u = new URL(url);
@@ -197,7 +197,7 @@ export function safeHttpTransport(
         method,
         headers,
         body:
-          method === "POST"
+          ["POST", "PUT", "PATCH", "DELETE"].includes(method)
             ? headers["content-type"] === "application/x-www-form-urlencoded" &&
               typeof body === "string"
               ? body

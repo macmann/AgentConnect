@@ -7,6 +7,7 @@ import { z } from "zod";
 export const workflowKinds = [
   "input",
   "agent",
+  "action",
   "tool",
   "router",
   "condition",
@@ -131,6 +132,7 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
     !graph.programV2 &&
     graph.nodes.some((n) =>
       [
+        "action",
         "structured-ai",
         "human-task",
         "transform",
@@ -277,7 +279,7 @@ export function analyzeWorkflow(graph: WorkflowGraph) {
         `${n.data.label}: branch handles only belong to Router/Condition`,
       );
     if (
-      !["agent", "tool"].includes(n.type) &&
+      !["agent", "tool", "action"].includes(n.type) &&
       (n.data.retry?.maxAttempts ?? 1) > 1
     )
       errors.push(

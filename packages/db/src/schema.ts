@@ -398,6 +398,7 @@ export const workflowVersions = pgTable("workflow_versions", {
     .defaultNow(),
 });
 export const workflowRuns = pgTable("workflow_runs", {
+  webhookId: uuid("webhook_id"),
   parentRunId: uuid("parent_run_id"),
   parentNodeId: text("parent_node_id"),
   iterationIndex: integer("iteration_index"),
@@ -957,4 +958,90 @@ export const workflowSuspensions = pgTable("workflow_suspensions", {
   errorCode: text("error_code"),
   createdAt: created(),
   resumedAt: timestamp("resumed_at", { withTimezone: true }),
+});
+
+export const workflowHttpConnections = pgTable("workflow_http_connections", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  name: text("name").notNull(),
+  baseUrl: text("base_url").notNull(),
+  auth: text("auth").notNull(),
+  secretId: uuid("secret_id"),
+  headerName: text("header_name").notNull(),
+  methods: jsonb("methods").notNull(),
+  idempotencySupported: boolean("idempotency_supported")
+    .notNull()
+    .default(false),
+  scopes: jsonb("scopes").notNull().default([]),
+  enabled: boolean("enabled").notNull().default(true),
+  revision: integer("revision").notNull().default(1),
+  createdBy: uuid("created_by").notNull(),
+  createdAt: created(),
+});
+export const workflowMcpActionGrants = pgTable("workflow_mcp_action_grants", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  connectorId: uuid("connector_id").notNull(),
+  operation: text("operation").notNull(),
+  sideEffect: text("side_effect").notNull(),
+  riskLevel: text("risk_level").notNull(),
+  capabilityHash: text("capability_hash").notNull(),
+  metadata: jsonb("metadata").notNull(),
+  idempotencyArgument: text("idempotency_argument"),
+  scopes: jsonb("scopes").notNull().default([]),
+  enabled: boolean("enabled").notNull().default(true),
+  createdBy: uuid("created_by").notNull(),
+  createdAt: created(),
+});
+export const workflowActionExecutions = pgTable("workflow_action_executions", {
+  id: uuid("id").primaryKey(),
+  runId: uuid("run_id").notNull(),
+  nodeId: text("node_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  actionId: text("action_id").notNull(),
+  connector: text("connector").notNull(),
+  operation: text("operation").notNull(),
+  connectionId: uuid("connection_id"),
+  sideEffect: text("side_effect").notNull(),
+  riskLevel: text("risk_level").notNull(),
+  idempotency: text("idempotency").notNull(),
+  inputFingerprint: text("input_fingerprint").notNull(),
+  status: text("status").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  result: jsonb("result"),
+  errorCode: text("error_code"),
+  durationMs: integer("duration_ms"),
+  createdAt: created(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+export const workflowActionAttempts = pgTable("workflow_action_attempts", {
+  id: uuid("id").primaryKey(),
+  executionId: uuid("execution_id").notNull(),
+  attempt: integer("attempt").notNull(),
+  status: text("status").notNull(),
+  errorCode: text("error_code"),
+  durationMs: integer("duration_ms"),
+  startedAt: timestamp("started_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+export const workflowWebhooks = pgTable("workflow_webhooks", {
+  id: uuid("id").primaryKey(),
+  workflowId: uuid("workflow_id").notNull(),
+  versionId: uuid("version_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  inputSchema: jsonb("input_schema").notNull().default({}),
+  sample: jsonb("sample").notNull().default({}),
+  enabled: boolean("enabled").notNull().default(true),
+  createdBy: uuid("created_by").notNull(),
+  revision: integer("revision").notNull().default(1),
+  createdAt: created(),
 });

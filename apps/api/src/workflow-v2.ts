@@ -10,19 +10,14 @@ import {
   WorkflowCompileError,
   type WorkflowDefinitionV2,
 } from "@agentconnect/schemas/workflow-v2";
-import {
-  actionJsonSchema,
-  type WorkflowAction,
-} from "@agentconnect/schemas/workflow-actions";
-import { Ajv } from "ajv";
+import { schemaValidator } from "./workflow-action-schema.js";
+export { schemaValidator } from "./workflow-action-schema.js";
 import { sql } from "./db.js";
-import { HttpError, workspaceAccess } from "./app.js";
+import { HttpError } from "./app.js";
 import {
   validateToolIds,
   connectorFor,
-  executeTool,
   ToolError,
-  toolSecret,
   type ToolContext,
 } from "./tool-runtime.js";
 
@@ -160,104 +155,11 @@ export async function validateV2Resources(
     }
   }
 }
-export function schemaValidator(schema: Record<string, unknown>) {
-  actionJsonSchema.parse(schema);
-  let count = 0;
-  const walk = (v: unknown, depth: number): void => {
-    if (++count > 500 || depth > 12)
-      throw new ToolError("ACTION_SCHEMA_UNSUPPORTED");
-    if (v && typeof v === "object")
-      for (const [key, value] of Object.entries(v)) {
-        if (
-          [
-            "$ref",
-            "$dynamicRef",
-            "pattern",
-            "patternProperties",
-            "$id",
-          ].includes(key)
-        )
-          throw new ToolError("ACTION_SCHEMA_UNSUPPORTED");
-        if (key === "format" && typeof value === "string" && value !== "date")
-          throw new ToolError("ACTION_SCHEMA_UNSUPPORTED");
-        walk(value, depth + 1);
-      }
-  };
-  walk(schema, 0);
-  try {
-    return new Ajv({ strict: false, validateFormats: true })
-      .addFormat("date", {
-        type: "string",
-        validate: (v: string) =>
-          /^\d{4}-\d{2}-\d{2}$/.test(v) &&
-          !Number.isNaN(Date.parse(v)) &&
-          new Date(v).toISOString().slice(0, 10) === v,
-      })
-      .compile(schema);
-  } catch {
-    throw new ToolError("ACTION_SCHEMA_UNSUPPORTED");
-  }
-}
-export async function validateWorkflowAction(
-  action: WorkflowAction,
-  ctx: ToolContext,
-) {
-  const [tool] = await validateToolIds([action.toolId], ctx);
-  if (!tool) throw new ToolError("TOOL_UNAVAILABLE");
-  if (
-    action.sideEffect !== "read" ||
-    action.idempotency === "key" ||
-    action.requiredScopes.length
-  )
-    throw new ToolError("ACTION_EXECUTOR_UNSUPPORTED");
-  if (action.connector === "agentconnect.mcp" && tool.config.kind !== "mcp")
-    throw new ToolError("ACTION_CONNECTOR_MISMATCH");
-  if (action.connector === "agentconnect.tool" && tool.config.kind === "mcp")
-    throw new ToolError("ACTION_CONNECTOR_MISMATCH");
-  if (tool.config.kind === "mcp") {
-    const connector = await connectorFor(tool.config.connectorId, ctx);
-    if (connector.secret_id) await toolSecret(connector.secret_id, ctx);
-  } else if ("secretId" in tool.config && tool.config.secretId)
-    await toolSecret(tool.config.secretId, ctx);
-  if (action.connectionId) {
-    const actual =
-      tool.config.kind === "mcp"
-        ? tool.config.connectorId
-        : "secretId" in tool.config
-          ? tool.config.secretId
-          : undefined;
-    if (actual !== action.connectionId)
-      throw new ToolError("ACTION_CONNECTION_MISMATCH");
-  }
-  schemaValidator(action.inputSchema);
-  schemaValidator(action.outputSchema);
-  for (const permission of action.requiredPermissions) {
-    if (!ctx.userId) throw new ToolError("ACTION_PERMISSION_REQUIRED");
-    await workspaceAccess(ctx.userId, ctx.workspaceId, permission);
-  }
-}
-export async function executeWorkflowAction(
-  action: WorkflowAction,
-  args: Record<string, unknown>,
-  ctx: ToolContext,
-  signal: AbortSignal,
-) {
-  await validateWorkflowAction(action, ctx);
-  if (!schemaValidator(action.inputSchema)(args))
-    throw new ToolError("ACTION_INPUT_INVALID");
-  const timeout = AbortSignal.timeout(action.timeoutMs),
-    combined = AbortSignal.any([signal, timeout]);
-  try {
-    const result = await executeTool(action.toolId, args, ctx, combined);
-    if (!schemaValidator(action.outputSchema)(result.result))
-      throw new ToolError("ACTION_OUTPUT_INVALID");
-    return result.result;
-  } catch (error) {
-    if (timeout.aborted && !signal.aborted)
-      throw new ToolError("ACTION_TIMEOUT", true);
-    throw error;
-  }
-}
+export {
+  validateWorkflowAction,
+  executeWorkflowAction,
+} from "./workflow-action-runtime.js";
+import { validateWorkflowAction } from "./workflow-action-runtime.js";
 export const v2DefinitionRequest = z.strictObject({
   definition: workflowDefinitionV2,
 });

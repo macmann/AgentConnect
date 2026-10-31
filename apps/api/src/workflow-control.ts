@@ -280,7 +280,7 @@ export async function wakeWorkflowSuspensions() {
         graph = structuredClone(s.payload.graph!);
       if (graph.programV2 && entry.scope)
         graph.programV2.scope = entry.scope as never;
-      await tx`INSERT INTO workflow_runs(id,workflow_id,version_id,workspace_id,organization_id,user_id,graph_snapshot,input,status,parent_run_id,parent_node_id,iteration_index,api_key_id,schedule_id) VALUES (${randomUUID()},${s.payload.workflowId!},${s.payload.versionId!},${s.workspace_id},${s.organization_id},${parent.user_id},${tx.json(graph)},${entry.input},'queued',${s.run_id},${s.node_id},${index},${parent.api_key_id},${parent.schedule_id}) ON CONFLICT DO NOTHING`;
+      await tx`INSERT INTO workflow_runs(id,workflow_id,version_id,workspace_id,organization_id,user_id,graph_snapshot,input,status,parent_run_id,parent_node_id,iteration_index,api_key_id,schedule_id,webhook_id) VALUES (${randomUUID()},${s.payload.workflowId!},${s.payload.versionId!},${s.workspace_id},${s.organization_id},${parent.user_id},${tx.json(graph)},${entry.input},'queued',${s.run_id},${s.node_id},${index},${parent.api_key_id},${parent.schedule_id},${parent.webhook_id}) ON CONFLICT DO NOTHING`;
     });
   await sql`UPDATE workflow_runs r SET status='queued',attempts=0 FROM workflow_suspensions s WHERE s.run_id=r.id AND s.status='ready' AND s.resumed_at IS NULL AND r.status='waiting' AND NOT r.cancel_requested`;
 }

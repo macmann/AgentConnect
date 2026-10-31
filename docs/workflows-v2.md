@@ -14,7 +14,7 @@ flowchart TD
   Adapter --> Runtime[Existing LangGraph runtime]
   Runtime --> Postgres[PostgreSQL leases and checkpoints]
   Runtime --> Agent[Published Agent version]
-  Runtime --> Action[Deterministic Action / registered Tool]
+  Runtime --> Action[Deterministic Action runtime]
   Runtime --> Approval[Durable human approval]
   Runtime --> Suspension[Persisted waits and events]
   Runtime --> Child[Published child workflow runs]
@@ -36,7 +36,7 @@ V1 keeps `schemaVersion: 1`, `nodes[].type/data/position`, existing JSON Pointer
 
 V2 publication stores the source definition in the existing immutable `workflow_versions.graph` JSONB column. Queuing compiles it to the existing runtime graph representation with an internal `programV2` artifact containing compiler version 1 and the validated execution program, without editor layout or copied resource configuration. Draft tests use the saved definition/revision. Runs use their queued snapshot; later edits to a draft do not affect them. The existing worker consumes V1 and compiled V2 snapshots through the same queue, LangGraph compiler, saver, retries, leases, cancellation, approval and history infrastructure. There is no second workflow engine.
 
-The controlled-execution increment requires migration **0045**; no hosted-only service is required. Deploy the API, web and worker from the same release. Existing self-hosted PostgreSQL/pgvector, Redis, object storage, provider allowlists, secret encryption and worker settings remain authoritative.
+The controlled-execution increment requires migrations **0045–0046**; no hosted-only service is required. Deploy the API, web and worker from the same release. Existing self-hosted PostgreSQL/pgvector, Redis, object storage, provider allowlists, secret encryption and worker settings remain authoritative.
 
 ## Resource references
 
@@ -58,13 +58,15 @@ The server checks ownership and availability on compile/publication and executio
 
 ## Tool versus Action
 
-A **Tool** is a registered capability an Agent/LLM may decide to invoke through the existing planner and usage policy. An **Action** is a deterministic invocation explicitly selected by the workflow designer. Both reuse the same registry and execution policies; Actions do not replace Tools. V2 deterministic integration nodes use `kind: "action"`; legacy V1 `tool` nodes remain supported without renaming or migration.
+A **Tool** is a capability an Agent/LLM may choose through the existing planner and usage policy. An **Action** is a deterministic operation explicitly selected by the workflow designer. Agents retain their existing Tool/MCP configuration and read-only policy. A workflow write grant never creates an Agent Tool or grants an LLM permission to write.
 
-An Action definition includes `id`, `name`, `connector`, `operation`, `toolId`, optional `connectionId`, input/output JSON Schema assertions, static inputs, mapped inputs, timeout, retry policy, side-effect classification, risk level, idempotency capability and required permissions/scopes. Action nodes select `actionId` and may override mapped inputs. Static inputs are overlaid by mapped defaults, then node mappings. Mappings resolve into typed arguments, and the registry's actual input schema is always enforced as well.
+Actions have their own execution path, input/output schema assertions and durable attempt ledger, while reusing existing encrypted secrets, endpoint/DNS validation, pinned HTTP transport, MCP client, redaction, bounded schemas and workflow retries. Legacy `agentconnect.tool/execute` and `agentconnect.mcp/execute` Actions remain supported as reviewed read-only Tool invocations. New `agentconnect.http` and `agentconnect.mcp-operation` Actions do not require a Tool registration. See [Action runtime and webhooks](workflow-actions.md) for configuration, security, replay semantics and limits.
 
-This phase registers two read executors: `agentconnect.tool/execute` and `agentconnect.mcp/execute`. Both invoke an existing reviewed read-only Tool; the MCP executor requires a Tool bound to an existing enabled MCP server. Additional input/output schemas are assertions, not replacements for resource configuration. Bounded schemas reject references, regex patterns and unsupported formats; the built-in `date` format validates real YYYY-MM-DD calendar dates; no remote schema fetch occurs. Effective timeouts are bounded by the Action, Tool and workflow deadlines. Required permission checks are authorization requirements, never grants.
+An Action definition includes `id`, `name`, `description`, `connector`, `operation`, optional saved `connectionId`, input/output JSON Schema assertions, static/mapped inputs, timeout, retry policy, side-effect classification, risk, idempotency capability/key and required permissions/scopes. Nodes select `actionId` and may override mapped inputs. Static inputs are overlaid by mapped defaults, then node mappings. An Action's `arguments.*` root is available only while mapping its HTTP URL, headers, query, body and idempotency key; Action input mappings cannot reference their own arguments.
 
-Write/delete operations, provider-specific OAuth scope verification and executors that accept idempotency keys are **not implemented**. The compiler rejects those requested guarantees rather than pretending to enforce them. Read retries use the existing retry infrastructure. As with V1, a crash between an upstream read and checkpoint persistence can repeat that read; there is no exactly-once claim. Actions are reusable by multiple nodes within a definition. A shared workspace Action registry and additional connector executors are future increments.
+HTTP requests configure method/URL/headers/query/body without embedding credentials. Authenticated requests select an administrator-managed HTTP connection bound to an origin/path, method allowlist and an existing encrypted Secret ID. MCP Actions reference an existing discovered MCP server and explicit operation; write/delete operations additionally require an administrator grant and explicit author acknowledgement. Metadata includes schemas, descriptions, side effects, risk, permissions/scopes and idempotency support. MCP is the database integration: choose controlled operations such as `insert_invoice` or `read_invoice`; no unrestricted SQL editor or duplicate database connector is introduced.
+
+V2 compiles to a native internal `action` node dispatched by the existing LangGraph runner. V1 Tool nodes keep their original executor. Existing published definitions and Agents/KB/Tools/MCP screens are not migrated or redesigned. Direct integration dependencies are staff-only. Required permissions and configured connection scopes are checks, never authorization grants; provider-specific OAuth introspection is not claimed.
 
 ## Typed workflow context
 

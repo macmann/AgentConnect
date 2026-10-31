@@ -668,3 +668,110 @@ test("controlled primitives keep graphs acyclic, scope references safe and itera
     "JSON fields may hold arrays; runtime checks the collection type",
   );
 });
+
+test("native Action schema keeps Agent Tools distinct and enforces write/idempotency policy", () => {
+  const base = {
+    id: "http",
+    name: "HTTP",
+    connector: "agentconnect.http",
+    operation: "POST",
+    http: { method: "POST", url: literal("https://example.com") },
+    sideEffect: "write",
+    riskLevel: "medium",
+  };
+  assert.equal(workflowAction.safeParse(base).success, false);
+  assert.equal(
+    workflowAction.safeParse({
+      ...base,
+      allowSideEffects: true,
+      retry: { maxAttempts: 2 },
+    }).success,
+    false,
+  );
+  assert.equal(
+    workflowAction.safeParse({
+      ...base,
+      allowSideEffects: true,
+      idempotency: "key",
+      retry: { maxAttempts: 2 },
+    }).success,
+    true,
+  );
+  assert.equal(
+    workflowAction.safeParse({
+      ...base,
+      allowSideEffects: true,
+      toolId: randomUUID(),
+    }).success,
+    false,
+  );
+  assert.equal(
+    workflowAction.safeParse({
+      id: "legacy",
+      name: "Legacy",
+      connector: "agentconnect.tool",
+      operation: "execute",
+    }).success,
+    false,
+  );
+  assert.equal(
+    workflowAction.safeParse({
+      id: "mcp",
+      name: "MCP",
+      connector: "agentconnect.mcp-operation",
+      operation: "insert_invoice",
+    }).success,
+    false,
+  );
+});
+test("Action request arguments use safe traversal and cannot escape their request scope", () => {
+  assert.equal(
+    resolveWorkflowExpression(reference("arguments.items[0].amount"), {
+      ...context,
+      arguments: { items: [{ amount: 12 }] },
+    }),
+    12,
+  );
+  assert.equal(
+    workflowExpression.safeParse({
+      type: "reference",
+      path: "arguments.__proto__.x",
+    }).success,
+    false,
+  );
+  const d = definition();
+  d.execution.nodes[1]!.config = { input: reference("arguments.amount") };
+  assert.ok(
+    validateWorkflowDefinition(d).some((e) =>
+      e.includes("arguments are scoped"),
+    ),
+  );
+  const action = workflowAction.parse({
+    id: "request",
+    name: "HTTP",
+    connector: "agentconnect.http",
+    operation: "GET",
+    http: { method: "GET", url: reference("arguments.url") },
+    staticInputs: { url: "https://example.com" },
+  });
+  d.execution.actions = [action];
+  d.execution.nodes.splice(1, 0, {
+    id: "request",
+    kind: "action",
+    label: "Request",
+    config: {
+      actionId: "request",
+      inputs: { url: reference("arguments.url") },
+    },
+  });
+  d.execution.nodes[2]!.config = {};
+  d.execution.edges = [
+    { id: "a", source: "start", target: "request" },
+    { id: "b", source: "request", target: "end" },
+  ];
+  assert.ok(
+    validateWorkflowDefinition(d).some((e) =>
+      e.includes("inputs cannot refer"),
+    ),
+  );
+});

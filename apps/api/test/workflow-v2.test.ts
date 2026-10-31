@@ -1,3 +1,5 @@
+import { workflowAction } from "@agentconnect/schemas/workflow-actions";
+import { executeWorkflowAction } from "../src/workflow-action-runtime.js";
 import { storedWorkflowGraph } from "../src/workflow-v2.js";
 import "./tracing-fixture.js";
 import { test, before, after } from "node:test";
@@ -39,7 +41,139 @@ let modelId = "",
   providerCalls = 0;
 const persistedInvoices = new Map<string, unknown>();
 const persistenceCalls: string[] = [];
-const server = createServer((req, res) => {
+const actionRequests: { method: string; key?: string; body: unknown }[] = [];
+const actionInvoices = new Map<string, Record<string, unknown>>();
+const actionKeys = new Set<string>();
+let staleRead = false,
+  mcpMetadataDrift = false;
+const mcpInvoiceSchema = {
+  type: "object",
+  properties: {
+    invoiceNumber: { type: "string" },
+    supplier: { type: "string" },
+    total: { type: "number" },
+    requestId: { type: "string" },
+  },
+  required: ["invoiceNumber", "supplier", "total", "requestId"],
+  additionalProperties: false,
+};
+const server = createServer(async (req, res) => {
+  const url = new URL(req.url!, "http://localhost");
+  if (url.pathname === "/actions/mcp") {
+    if (req.method === "DELETE") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    const input = JSON.parse(raw);
+    if (!("id" in input)) {
+      res.writeHead(202);
+      res.end();
+      return;
+    }
+    let result: unknown = {};
+    if (input.method === "initialize")
+      result = {
+        protocolVersion: input.params.protocolVersion,
+        capabilities: { tools: {} },
+        serverInfo: { name: "invoice-db", version: "1" },
+      };
+    if (input.method === "tools/list")
+      result = {
+        tools: [
+          {
+            name: "insert_invoice",
+            inputSchema: mcpMetadataDrift
+              ? { ...mcpInvoiceSchema, additionalProperties: true }
+              : mcpInvoiceSchema,
+            annotations: { readOnlyHint: false, destructiveHint: false },
+          },
+          {
+            name: "read_invoice",
+            inputSchema: {
+              type: "object",
+              properties: { invoiceNumber: { type: "string" } },
+              required: ["invoiceNumber"],
+              additionalProperties: false,
+            },
+            annotations: { readOnlyHint: true },
+          },
+        ],
+      };
+    if (input.method === "tools/call") {
+      const args = input.params.arguments;
+      let output: unknown;
+      if (input.params.name === "insert_invoice") {
+        if (!actionKeys.has(args.requestId)) {
+          actionKeys.add(args.requestId);
+          actionInvoices.set(args.invoiceNumber, {
+            invoiceNumber: args.invoiceNumber,
+            supplier: args.supplier,
+            total: args.total,
+          });
+        }
+        output = { persisted: true, invoiceNumber: args.invoiceNumber };
+      } else {
+        const record = actionInvoices.get(args.invoiceNumber);
+        output = { ...record, total: staleRead ? -1 : record?.total };
+      }
+      result = {
+        content: [{ type: "text", text: JSON.stringify(output) }],
+        structuredContent: output,
+      };
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id: input.id, result }));
+    return;
+  }
+  if (url.pathname.startsWith("/actions/")) {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    actionRequests.push({
+      method: req.method!,
+      key: req.headers["idempotency-key"] as string | undefined,
+      body: raw ? JSON.parse(raw) : null,
+    });
+    if (url.pathname === "/actions/slow") {
+      setTimeout(() => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end('{"ok":true}');
+      }, 1000).unref();
+      return;
+    }
+    if (url.pathname === "/actions/drop") {
+      req.socket.destroy();
+      return;
+    }
+    if (url.pathname === "/actions/redirect") {
+      res.writeHead(302, {
+        location: "http://169.254.169.254/latest/meta-data",
+      });
+      res.end();
+      return;
+    }
+    if (
+      url.pathname === "/actions/retry" &&
+      actionRequests.filter((r) => r.key === req.headers["idempotency-key"])
+        .length === 1
+    ) {
+      res.writeHead(503);
+      res.end();
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        method: req.method,
+        body: raw ? JSON.parse(raw) : null,
+        query: url.searchParams.get("q"),
+        echo: req.headers.authorization ?? "none",
+      }),
+    );
+    return;
+  }
   const query =
     new URL(req.url!, "http://localhost").searchParams.get("query") ?? "";
   if (query.startsWith("persist:")) {
@@ -310,11 +444,14 @@ after(async () => {
       "workflow_node_runs",
       "workflow_runs",
       "workflow_schedules",
+      "workflow_webhooks",
       "workflow_versions",
       "workflows",
       "agent_versions",
       "agents",
       "tools",
+      "workflow_mcp_action_grants",
+      "workflow_http_connections",
       "mcp_connectors",
       "enterprise_connectors",
       "knowledge_bases",
@@ -2235,4 +2372,588 @@ test("the root descendant budget blocks further scheduling across all child node
     ).length,
     0,
   );
+});
+
+const httpAction = (
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+  connectionId?: string,
+  path = "echo",
+) =>
+  workflowAction.parse({
+    id: "request",
+    name: "HTTP request",
+    connector: "agentconnect.http",
+    operation: method,
+    connectionId,
+    sideEffect:
+      method === "GET" ? "read" : method === "DELETE" ? "delete" : "write",
+    riskLevel: method === "GET" ? "low" : "high",
+    allowSideEffects: method !== "GET",
+    idempotency: method === "GET" ? "not-required" : "unsupported",
+    http: {
+      method,
+      url: literal(`http://127.0.0.1:4549/actions/${path}`),
+      query: { q: reference("arguments.value") },
+      ...(method !== "GET" ? { body: reference("arguments") } : {}),
+    },
+    staticInputs: { value: "static" },
+    mappedInputs: { value: reference("input.value") },
+  });
+async function actionFlow(
+  action: ReturnType<typeof workflowAction.parse>,
+  input: unknown = { value: "mapped" },
+) {
+  const definition = chain([
+    {
+      id: "request",
+      kind: "action",
+      label: "Request",
+      config: { actionId: action.id },
+    },
+  ]);
+  definition.execution.actions = [action];
+  const id = await create(definition),
+    rid = await run(id, input);
+  return {
+    id,
+    rid,
+    definition,
+    ctx: {
+      workspaceId: workspace,
+      organizationId: org,
+      userId: owner,
+      workflowId: id,
+      workflowRunId: rid,
+      workflowNodeId: "request",
+    },
+  };
+}
+test("native HTTP Actions support five methods, saved encrypted auth, mapped/static inputs, and secret-safe audit", async () => {
+  const secret = await call("POST", `/workspaces/${workspace}/secrets`, {
+    name: "ACTION_AUTH",
+    value: "fixture-action-credential",
+  });
+  assert.equal(secret.statusCode, 201, secret.body);
+  const secrets = await call("GET", `/workspaces/${workspace}/secrets`);
+  const secretId = secrets
+    .json()
+    .find((s: { name: string }) => s.name === "ACTION_AUTH").id;
+  const connection = await call(
+    "POST",
+    `/workspaces/${workspace}/action-connections`,
+    {
+      name: "HTTP API",
+      baseUrl: "http://127.0.0.1:4549/actions",
+      auth: "bearer",
+      secretId,
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+      idempotencySupported: true,
+    },
+  );
+  assert.equal(connection.statusCode, 201, connection.body);
+  for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"] as const) {
+    const action = httpAction(method, connection.json().id);
+    const { rid } = await actionFlow(action);
+    await processWorkflowRun({ providerFactory: provider });
+    const result = await inspect(rid);
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.equal(result.output.method, method);
+    assert.equal(result.output.query, "mapped");
+    if (method !== "GET")
+      assert.deepEqual(result.output.body, { value: "mapped" });
+    assert.ok(!JSON.stringify(result).includes("fixture-action-credential"));
+    assert.equal(result.actionExecutions.length, 1);
+    assert.equal(result.actionExecutions[0].status, "completed");
+    assert.equal(result.actionExecutions[0].attempts, 1);
+  }
+  const catalog = await call(
+    "GET",
+    `/workspaces/${workspace}/action-connections`,
+  );
+  assert.ok(!catalog.body.includes("fixture-action-credential"));
+  const foreignAction = httpAction("GET", connection.json().id);
+  await assert.rejects(() =>
+    executeWorkflowAction(
+      foreignAction,
+      { value: "x" },
+      { workspaceId: foreign, organizationId: org, userId: owner },
+      AbortSignal.timeout(1000),
+    ),
+  );
+});
+test("native HTTP retries use stable idempotency and completed results survive replay; ambiguous writes are never repeated", async () => {
+  const connection = await call(
+    "POST",
+    `/workspaces/${workspace}/action-connections`,
+    {
+      name: "Idempotent API",
+      baseUrl: "http://127.0.0.1:4549/actions",
+      methods: ["POST"],
+      idempotencySupported: true,
+    },
+  );
+  assert.equal(connection.statusCode, 201, connection.body);
+  const action = workflowAction.parse({
+    ...httpAction("POST", connection.json().id, "retry"),
+    idempotency: "key",
+    retry: { maxAttempts: 2, delayMs: 100 },
+  });
+  const { rid, ctx } = await actionFlow(action);
+  const before = actionRequests.length;
+  await processWorkflowRun({ providerFactory: provider });
+  const result = await inspect(rid);
+  assert.equal(result.status, "completed", JSON.stringify(result));
+  const requests = actionRequests.slice(before);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0]!.key, requests[1]!.key);
+  assert.ok(requests[0]!.key);
+  assert.equal(result.actionExecutions[0].attempts, 2);
+  const cached = await executeWorkflowAction(
+    action,
+    { value: "mapped" },
+    ctx,
+    AbortSignal.timeout(1000),
+  );
+  assert.deepEqual(cached, result.output);
+  assert.equal(actionRequests.length, before + 2);
+  const unsafe = httpAction("POST", undefined, "drop"),
+    fixture = await actionFlow(unsafe);
+  const baseline = actionRequests.length;
+  await processWorkflowRun({ providerFactory: provider });
+  const failed = await inspect(fixture.rid);
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.actionExecutions[0].status, "uncertain");
+  await assert.rejects(
+    () =>
+      executeWorkflowAction(
+        unsafe,
+        { value: "mapped" },
+        fixture.ctx,
+        AbortSignal.timeout(1000),
+      ),
+    /ACTION_OUTCOME_UNKNOWN/,
+  );
+  assert.equal(actionRequests.length, baseline + 1);
+});
+test("HTTP Actions reject unsafe headers, credentials in JSON, saved-connection boundary escapes, redirects and invalid output", async () => {
+  const conn = await call(
+    "POST",
+    `/workspaces/${workspace}/action-connections`,
+    {
+      name: "Restricted API",
+      baseUrl: "http://127.0.0.1:4549/actions",
+      methods: ["GET"],
+    },
+  );
+  for (const action of [
+    {
+      ...httpAction("GET"),
+      http: {
+        method: "GET",
+        url: literal("http://127.0.0.1:4549/actions/echo?api_key=embedded-key"),
+      },
+    },
+    {
+      ...httpAction("GET", conn.json().id),
+      http: { method: "GET", url: literal("http://127.0.0.1:4549/outside") },
+    },
+    {
+      ...httpAction("GET"),
+      http: {
+        method: "GET",
+        url: literal("http://127.0.0.1:4549/actions/echo"),
+        headers: { Authorization: literal("embedded-key") },
+      },
+    },
+  ]) {
+    const definition = chain([
+      {
+        id: "request",
+        kind: "action",
+        label: "Request",
+        config: { actionId: "request" },
+      },
+    ]);
+    definition.execution.actions = [workflowAction.parse(action)];
+    const rejected = await call("POST", `/workspaces/${workspace}/workflows`, {
+      name: "Unsafe",
+      graph: definition,
+    });
+    assert.equal(rejected.statusCode, 201, rejected.body);
+    const blocked = await call(
+      "POST",
+      `/workflows/${rejected.json().id}/publish`,
+      { revision: 1 },
+    );
+    assert.equal(blocked.statusCode, 400, blocked.body);
+  }
+  for (const action of [
+    httpAction("GET", undefined, "redirect"),
+    workflowAction.parse({
+      ...httpAction("GET"),
+      outputSchema: { type: "object", required: ["missing"] },
+    }),
+  ]) {
+    const { rid } = await actionFlow(action);
+    await processWorkflowRun({ providerFactory: provider });
+    const result = await inspect(rid);
+    assert.equal(result.status, "failed");
+    assert.equal(result.actionExecutions[0].status, "failed");
+  }
+});
+
+test("MCP acceptance: structured extraction → durable edit → explicit DB write → read → business condition; Agent Tools remain read-only", async () => {
+  const acceptanceSchema = {
+    ...invoiceSchema,
+    properties: { ...invoiceSchema.properties, supplier: { type: "string" } },
+    required: [...invoiceSchema.required, "supplier"],
+  };
+  const extracted = { ...extractedInvoice, supplier: "Extracted supplier" };
+  const connector = await call(
+    "POST",
+    `/workspaces/${workspace}/mcp-connectors`,
+    { name: "Invoice database", url: "http://127.0.0.1:4549/actions/mcp" },
+  );
+  assert.equal(connector.statusCode, 201, connector.body);
+  const connectorId = connector.json().id;
+  const discovered = await call(
+    "POST",
+    `/mcp-connectors/${connectorId}/discover`,
+  );
+  assert.equal(discovered.statusCode, 200, discovered.body);
+  const grant = await call(
+    "POST",
+    `/workspaces/${workspace}/mcp-action-grants`,
+    {
+      connectorId,
+      operation: "insert_invoice",
+      sideEffect: "write",
+      riskLevel: "medium",
+      allowWrites: true,
+      idempotencyArgument: "requestId",
+    },
+  );
+  assert.equal(grant.statusCode, 200, grant.body);
+  const denied = await call("POST", `/workspaces/${workspace}/tools`, {
+    name: "Not an Agent write Tool",
+    description: "Must stay forbidden",
+    config: { kind: "mcp", connectorId, remoteName: "insert_invoice" },
+    readOnlyAcknowledged: true,
+  });
+  assert.equal(denied.statusCode, 400, denied.body);
+  const write = workflowAction.parse({
+    id: "persist",
+    name: "Insert invoice",
+    connector: "agentconnect.mcp-operation",
+    connectionId: connectorId,
+    operation: "insert_invoice",
+    inputSchema: mcpInvoiceSchema,
+    sideEffect: "write",
+    riskLevel: "medium",
+    allowSideEffects: true,
+    idempotency: "key",
+    idempotencyArgument: "requestId",
+    retry: { maxAttempts: 2, delayMs: 100 },
+    mappedInputs: {
+      invoiceNumber: reference("steps.review.output.invoiceNumber"),
+      supplier: reference("steps.review.output.supplier"),
+      total: reference("steps.review.output.total"),
+    },
+  });
+  const read = workflowAction.parse({
+    id: "fetch",
+    name: "Read persisted invoice",
+    connector: "agentconnect.mcp-operation",
+    connectionId: connectorId,
+    operation: "read_invoice",
+    inputSchema: {
+      type: "object",
+      properties: { invoiceNumber: { type: "string" } },
+      required: ["invoiceNumber"],
+    },
+    mappedInputs: {
+      invoiceNumber: reference("steps.review.output.invoiceNumber"),
+    },
+  });
+  const definition = chain(
+    [
+      {
+        id: "extract",
+        kind: "structured-ai",
+        label: "Extract invoice",
+        config: {
+          resource: "model",
+          instruction: "Extract invoice",
+          outputSchema: acceptanceSchema,
+        },
+      },
+      {
+        id: "review",
+        kind: "human-task",
+        label: "Review extracted invoice",
+        config: {
+          mode: "review-edit",
+          prompt: "Correct extraction",
+          outputSchema: acceptanceSchema,
+        },
+      },
+      {
+        id: "write",
+        kind: "action",
+        label: "Database write",
+        config: { actionId: "persist" },
+      },
+      {
+        id: "read",
+        kind: "action",
+        label: "Read persisted data",
+        config: { actionId: "fetch" },
+      },
+      {
+        id: "validate",
+        kind: "condition",
+        label: "Validate saved total",
+        config: {
+          condition: {
+            operator: "equals",
+            left: reference("steps.read.output.total"),
+            right: reference("steps.review.output.total"),
+          },
+        },
+      },
+      {
+        id: "failure",
+        kind: "human-task",
+        label: "Review incorrect persisted data",
+        config: {
+          mode: "approve-reject",
+          prompt: "Database returned different total",
+          outputSchema: { type: "object" },
+        },
+      },
+      { id: "join", kind: "merge", label: "Join", config: {} },
+    ],
+    { model: { kind: "model", id: modelId } },
+  );
+  definition.execution.actions = [write, read];
+  definition.execution.edges = definition.execution.edges.filter(
+    (e) => !["validate", "failure"].includes(e.source),
+  );
+  definition.execution.edges.push(
+    { id: "valid", source: "validate", target: "join", branch: "true" },
+    { id: "invalid", source: "validate", target: "failure", branch: "false" },
+    { id: "reviewed", source: "failure", target: "join" },
+  );
+  const id = await create(definition),
+    version = await publish(id);
+  try {
+    for (const invalid of [false, true]) {
+      staleRead = invalid;
+      const rid = await run(id, { document: "OCR/PDF text" }, version);
+      await processWorkflowRun({
+        providerFactory: extractionProvider(extracted),
+      });
+      assert.equal((await inspect(rid)).status, "waiting");
+      const invoice = {
+        ...extractedInvoice,
+        invoiceNumber: invalid ? "DB-INVALID" : "DB-VALID",
+        supplier: "Reviewed supplier",
+        total: 432,
+      };
+      const approval = await call("POST", `/workflow-runs/${rid}/approval`, {
+        nodeId: "review",
+        decision: "approved",
+        editedInput: invoice,
+      });
+      assert.equal(approval.statusCode, 200, approval.body);
+      await closeWorkflowSaver();
+      await processWorkflowRun({
+        providerFactory: extractionProvider(extracted),
+      });
+      let result = await inspect(rid);
+      assert.equal(
+        result.status,
+        invalid ? "waiting" : "completed",
+        JSON.stringify(result),
+      );
+      assert.equal(result.actionExecutions.length, 2);
+      assert.ok(
+        result.actionExecutions.every(
+          (a: { status: string }) => a.status === "completed",
+        ),
+      );
+      assert.deepEqual(actionInvoices.get(invoice.invoiceNumber), {
+        invoiceNumber: invoice.invoiceNumber,
+        supplier: invoice.supplier,
+        total: 432,
+      });
+      if (invalid) {
+        const resolved = await call("POST", `/workflow-runs/${rid}/approval`, {
+          nodeId: "failure",
+          decision: "approved",
+        });
+        assert.equal(resolved.statusCode, 200, resolved.body);
+        await closeWorkflowSaver();
+        await processWorkflowRun();
+        result = await inspect(rid);
+        assert.equal(result.status, "completed", JSON.stringify(result));
+      }
+    }
+  } finally {
+    staleRead = false;
+  }
+  const driftRun = await run(id, { document: "Drift check" }, version);
+  await processWorkflowRun({ providerFactory: extractionProvider(extracted) });
+  const approved = await call("POST", `/workflow-runs/${driftRun}/approval`, {
+    nodeId: "review",
+    decision: "approved",
+    editedInput: { ...extracted, invoiceNumber: "DRIFT" },
+  });
+  assert.equal(approved.statusCode, 200, approved.body);
+  mcpMetadataDrift = true;
+  try {
+    await processWorkflowRun();
+    const drift = await inspect(driftRun);
+    assert.equal(drift.status, "failed", JSON.stringify(drift));
+    assert.equal(
+      drift.actionExecutions[0].error_code,
+      "ACTION_MCP_CAPABILITY_CHANGED",
+    );
+    assert.equal(actionInvoices.has("DRIFT"), false);
+  } finally {
+    mcpMetadataDrift = false;
+  }
+  await sql`UPDATE workflow_mcp_action_grants SET enabled=false WHERE connector_id=${connectorId}`;
+  const rejected = await call("POST", `/workspaces/${workspace}/workflows`, {
+    name: "Revoked MCP write",
+    graph: definition,
+  });
+  assert.equal(rejected.statusCode, 201, rejected.body);
+  const blocked = await call(
+    "POST",
+    `/workflows/${rejected.json().id}/publish`,
+    { revision: 1 },
+  );
+  assert.equal(blocked.statusCode, 400, blocked.body);
+});
+test("webhooks authenticate independently, validate payloads, deduplicate, expose safe trigger context, rotate and revoke", async () => {
+  const definition = simple();
+  definition.execution.nodes.find((n) => n.id === "end")!.config = {
+    input: reference("trigger"),
+  };
+  const id = await create(definition),
+    versionId = await publish(id);
+  const schema = {
+    type: "object",
+    properties: { customer: { type: "string" } },
+    required: ["customer"],
+    additionalProperties: false,
+  };
+  const created = await call("POST", `/workflows/${id}/webhooks`, {
+    name: "Customer callback",
+    versionId,
+    inputSchema: schema,
+    sample: { customer: "sample" },
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  const hook = created.json(),
+    url = hook.endpoint + "?source=customer";
+  assert.equal(
+    (await call("POST", hook.endpoint, { customer: "cookie only" })).statusCode,
+    401,
+  );
+  const send = (payload: unknown, token = hook.token, key = "request-1") =>
+    app.inject({
+      method: "POST",
+      url,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "idempotency-key": key,
+        "x-secret": "must-not-persist",
+      },
+      payload: payload as Record<string, unknown>,
+    });
+  assert.equal((await send({ wrong: true })).statusCode, 400);
+  const queued = await send({ customer: "Ada" });
+  assert.equal(queued.statusCode, 202, queued.body);
+  const rid = queued.json().id;
+  runs.push(rid);
+  const duplicate = await send({ customer: "Ada" });
+  assert.equal(duplicate.statusCode, 202);
+  assert.equal(duplicate.json().id, rid);
+  assert.equal(duplicate.json().reused, true);
+  assert.equal((await send({ customer: "Grace" })).statusCode, 409);
+  await processWorkflowRun();
+  const result = await inspect(rid);
+  assert.equal(result.status, "completed", JSON.stringify(result));
+  assert.equal(result.output.body.customer, "Ada");
+  assert.equal(result.output.query.source, "customer");
+  assert.deepEqual(result.output.headers, {
+    "content-type": "application/json",
+  });
+  assert.ok(!JSON.stringify(result).includes(hook.token));
+  assert.ok(!JSON.stringify(result).includes("must-not-persist"));
+  const listing = await call("GET", `/workflows/${id}/webhooks`);
+  assert.ok(!listing.body.includes(hook.token));
+  assert.ok(!listing.body.includes("token_hash"));
+  const rotated = await call(
+    "POST",
+    `/workflows/${id}/webhooks/${hook.id}/rotate`,
+  );
+  assert.equal(rotated.statusCode, 200, rotated.body);
+  assert.equal((await send({ customer: "Ada" })).statusCode, 401);
+  const fresh = await send(
+    { customer: "Grace" },
+    rotated.json().token,
+    "request-2",
+  );
+  assert.equal(fresh.statusCode, 202, fresh.body);
+  runs.push(fresh.json().id);
+  await sql`UPDATE workflow_webhooks SET enabled=false WHERE id=${hook.id}`;
+  assert.equal(
+    (await send({ customer: "Grace" }, rotated.json().token)).statusCode,
+    401,
+  );
+  await processWorkflowRun();
+  assert.equal((await inspect(fresh.json().id)).status, "failed");
+  const testRun = await call(
+    "POST",
+    `/workflows/${id}/webhooks/${hook.id}/test`,
+  );
+  assert.equal(testRun.statusCode, 202, testRun.body);
+  runs.push(testRun.json().id);
+  await processWorkflowRun();
+  const testResult = await inspect(testRun.json().id);
+  assert.equal(testResult.status, "completed", JSON.stringify(testResult));
+  assert.equal(testResult.output.test, true);
+  assert.equal(testResult.output.body.customer, "sample");
+});
+
+test("native HTTP timeout and input validation persist sanitized Action failures", async () => {
+  for (const action of [
+    workflowAction.parse({
+      ...httpAction("GET", undefined, "slow"),
+      timeoutMs: 100,
+    }),
+    workflowAction.parse({
+      ...httpAction("GET"),
+      inputSchema: {
+        type: "object",
+        properties: { value: { type: "number" } },
+        required: ["value"],
+      },
+    }),
+  ]) {
+    const { rid } = await actionFlow(action);
+    await processWorkflowRun();
+    const result = await inspect(rid);
+    assert.equal(result.status, "failed", JSON.stringify(result));
+    assert.equal(result.actionExecutions[0].status, "failed");
+    assert.ok(
+      ["ACTION_TIMEOUT", "ACTION_INPUT_INVALID"].includes(
+        result.actionExecutions[0].error_code,
+      ),
+      JSON.stringify(result.actionExecutions),
+    );
+  }
 });

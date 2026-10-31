@@ -4,16 +4,19 @@ import { workflowAction } from "@agentconnect/schemas/workflow-actions";
 import { workflowCondition } from "@agentconnect/schemas/workflow-values";
 import type { WorkflowExpression } from "@agentconnect/schemas/workflow-values";
 import {
-  defaultValue,
+  WorkflowMappings as Mappings,
   FieldPicker,
   SchemaEditor,
   type ValueSchema,
 } from "./workflow-v2-fields";
 import { WorkflowInputEditor } from "./workflow-inputs";
+import { WorkflowDirectActionEditor } from "./workflow-direct-action-editor";
+import type { ActionConnectionCatalog } from "./workflow-action-connections";
 import { resourceHref } from "./workflow-resource-picker";
 import { Button } from "./button";
 import { useState } from "react";
 export type WorkflowCatalog = {
+  connections?: ActionConnectionCatalog;
   workflows?: {
     id: string;
     workflow_id: string;
@@ -45,105 +48,17 @@ export type WorkflowCatalog = {
 };
 type V2Node = WorkflowDefinitionV2["execution"]["nodes"][number];
 const ref = (path: string): WorkflowExpression => ({ type: "reference", path });
-function Mappings({
-  fields,
-  definition,
-  nodeId,
-  onChange,
-  known,
-}: {
-  fields: Record<string, WorkflowExpression>;
-  definition: WorkflowDefinitionV2;
-  nodeId: string;
-  onChange: (f: Record<string, WorkflowExpression>) => void;
-  known?: ValueSchema;
-}) {
-  const [name, setName] = useState("");
-  return (
-    <div>
-      {Object.entries(fields).map(([key, value]) => (
-        <details key={key} open>
-          <summary>
-            {key}
-            {known?.properties?.[key]?.type
-              ? ` · ${known.properties[key].type}`
-              : ""}
-          </summary>
-          <FieldPicker
-            definition={definition}
-            nodeId={nodeId}
-            value={value}
-            onChange={(v) => onChange({ ...fields, [key]: v })}
-          />
-          <Button
-            onClick={() =>
-              onChange(
-                Object.fromEntries(
-                  Object.entries(fields).filter(([k]) => k !== key),
-                ),
-              )
-            }
-          >
-            Remove {key}
-          </Button>
-        </details>
-      ))}
-      <div className="v2-inline">
-        {known?.properties ? (
-          <select
-            aria-label="Input field to map"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          >
-            <option value="">Choose input field</option>
-            {Object.keys(known.properties)
-              .filter((k) => !Object.hasOwn(fields, k))
-              .map((k) => (
-                <option key={k}>{k}</option>
-              ))}
-          </select>
-        ) : (
-          <input
-            aria-label="Output field name"
-            placeholder="Field name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        )}
-        <Button
-          disabled={
-            !/^[A-Za-z][A-Za-z0-9_]{0,47}$/.test(name) ||
-            ["constructor", "prototype", "__proto__"].includes(name) ||
-            Object.hasOwn(fields, name)
-          }
-          onClick={() => {
-            onChange({
-              ...fields,
-              [name]: {
-                type: "literal",
-                value: defaultValue(
-                  known?.properties?.[name] ?? { type: "string" },
-                ) as never,
-              },
-            });
-            setName("");
-          }}
-        >
-          + Mapping
-        </Button>
-      </div>
-    </div>
-  );
-}
 export function WorkflowV2NodePanel({
   node,
   workspaceId,
+  canManageConnections = false,
   definition,
   catalog,
   onChange,
 }: {
   node: V2Node;
   workspaceId: string;
+  canManageConnections?: boolean;
   definition: WorkflowDefinitionV2;
   catalog?: WorkflowCatalog;
   onChange: (definition: WorkflowDefinitionV2) => void;
@@ -379,8 +294,92 @@ export function WorkflowV2NodePanel({
                 },
               });
           };
+          if (
+            action &&
+            ["agentconnect.http", "agentconnect.mcp-operation"].includes(
+              action.connector,
+            )
+          )
+            return (
+              <WorkflowDirectActionEditor
+                workspaceId={workspaceId}
+                canManage={canManageConnections}
+                node={node}
+                definition={definition}
+                connections={catalog?.connections}
+                onChange={onChange}
+              />
+            );
           return (
             <>
+              <div className="v2-inline">
+                <Button
+                  onClick={() => {
+                    const created = workflowAction.parse({
+                      id: node.config.actionId,
+                      name: "HTTP request",
+                      connector: "agentconnect.http",
+                      operation: "GET",
+                      http: {
+                        method: "GET",
+                        url: { type: "literal", value: "" },
+                      },
+                    });
+                    onChange({
+                      ...definition,
+                      execution: {
+                        ...e,
+                        actions: [
+                          ...e.actions.filter((a) => a.id !== created.id),
+                          created,
+                        ],
+                      },
+                    });
+                  }}
+                >
+                  HTTP request
+                </Button>
+                <Button
+                  onClick={() => {
+                    const first = catalog?.connections?.mcp.find(
+                      (c) => c.enabled && c.operations.some((o) => o.allowed),
+                    );
+                    const operation = first?.operations.find((o) => o.allowed);
+                    if (!first || !operation) return;
+                    const created = workflowAction.parse({
+                      id: node.config.actionId,
+                      name: String(operation.name),
+                      connector: "agentconnect.mcp-operation",
+                      operation: operation.name,
+                      connectionId: first.id,
+                      inputSchema: operation.inputSchema,
+                      outputSchema: operation.outputSchema,
+                      sideEffect: operation.sideEffect,
+                      riskLevel: operation.riskLevel,
+                      allowSideEffects: operation.sideEffect !== "read",
+                      idempotency: operation.idempotency,
+                      idempotencyArgument: operation.idempotencyArgument,
+                    });
+                    onChange({
+                      ...definition,
+                      execution: {
+                        ...e,
+                        actions: [
+                          ...e.actions.filter((a) => a.id !== created.id),
+                          created,
+                        ],
+                      },
+                    });
+                  }}
+                >
+                  MCP operation
+                </Button>
+              </div>
+              <p>
+                Existing registered Tools remain read-only capabilities for
+                Agents. Direct Actions select deterministic HTTP or MCP
+                operations.
+              </p>
               <label>
                 Connector
                 <select

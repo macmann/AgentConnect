@@ -135,7 +135,7 @@ export async function boundedHttp(
   headers: Record<string, string>,
   body: unknown,
   signal: AbortSignal,
-  method: "GET" | "POST" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET",
 ) {
   const response = await safeHttpTransport(
     hosts(config.TOOL_ALLOWED_HOSTS),
@@ -182,9 +182,12 @@ export async function withMcp<T>(
   context: ToolContext,
   signal: AbortSignal,
   task: (client: Client) => Promise<T>,
+  resolvedCredential?: { value: string | null },
 ) {
   validateToolUrl(connector.url);
-  const secret = await toolSecret(connector.secret_id, context);
+  const secret = resolvedCredential
+    ? resolvedCredential.value
+    : await toolSecret(connector.secret_id, context);
   const transport = new StreamableHTTPClientTransport(new URL(connector.url), {
     requestInit: {
       headers: secret ? { Authorization: `Bearer ${secret}` } : {},

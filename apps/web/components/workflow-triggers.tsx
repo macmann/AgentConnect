@@ -1,4 +1,5 @@
 "use client";
+import { WorkflowWebhooks } from "./workflow-webhooks";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { WorkflowGraph } from "@agentconnect/schemas/workflows";
@@ -94,6 +95,11 @@ export function WorkflowTriggers({
   return (
     <section className="panel-body workflow-triggers">
       <h3>Workflow triggers</h3>
+      <WorkflowWebhooks
+        workflowId={workflowId}
+        versions={versions}
+        canManage={canManage}
+      />
       <p>Run a published workflow from your application or on a schedule.</p>
       <details className="configure-group">
         <summary>API invocation</summary>
