@@ -32,6 +32,7 @@ import {
 import { requestJson, apiBase } from "./agent-client";
 import { Button } from "./button";
 import { WorkflowResult } from "./workflow-result";
+import { WorkflowActionConnections } from "./workflow-action-connections";
 import { WorkflowTriggers } from "./workflow-triggers";
 type Step = WorkflowDefinitionV2["execution"]["nodes"][number];
 type VNode = Node<
@@ -45,6 +46,24 @@ type VNode = Node<
   "v2"
 >;
 type Run = {
+  actionExecutions?: {
+    id: string;
+    node_id: string;
+    connector: string;
+    operation: string;
+    side_effect: string;
+    risk_level: string;
+    status: string;
+    attempts: number;
+    duration_ms: number;
+    error_code?: string;
+    attempt_history: {
+      attempt: number;
+      status: string;
+      error_code?: string;
+      duration_ms: number;
+    }[];
+  }[];
   parent_run_id?: string;
   suspensions?: {
     id: string;
@@ -396,11 +415,40 @@ export function WorkflowV2Studio({
           return [`${n.id}: model is unavailable`];
       }
       if (n.kind === "action") {
+        const action = definition.execution.actions.find(
+          (a) => a.id === n.config.actionId,
+        );
+        if (
+          action?.connector === "agentconnect.http" &&
+          action.connectionId &&
+          !catalog.data.connections?.http.some(
+            (c) =>
+              c.id === action.connectionId &&
+              c.enabled &&
+              c.methods.includes(action.http!.method),
+          )
+        )
+          return [`${n.id}: compatible HTTP connection is unavailable`];
+        if (
+          action?.connector === "agentconnect.mcp-operation" &&
+          !catalog.data.connections?.mcp.some(
+            (c) =>
+              c.id === action.connectionId &&
+              c.enabled &&
+              c.operations.some(
+                (o) => o.name === action.operation && o.allowed,
+              ),
+          )
+        )
+          return [
+            `${n.id}: MCP operation is unavailable or requires permission`,
+          ];
         const a = definition.execution.actions.find(
           (a) => a.id === n.config.actionId,
         );
         if (
           a &&
+          ["agentconnect.tool", "agentconnect.mcp"].includes(a.connector) &&
           !catalog.data.actions.some((t) => t.id === a.toolId && !t.unavailable)
         )
           return [
@@ -1090,6 +1138,32 @@ export function WorkflowV2Studio({
                             </label>
                           )}
 
+                          {!!run.data.actionExecutions?.length && (
+                            <details>
+                              <summary>Action executions</summary>
+                              {run.data.actionExecutions.map((a) => (
+                                <div key={a.id}>
+                                  <strong>
+                                    {a.node_id} · {a.operation}
+                                  </strong>
+                                  <p>
+                                    {a.connector} · {a.side_effect} ·{" "}
+                                    {a.risk_level} risk · {a.status} ·{" "}
+                                    {a.attempts} attempts · {a.duration_ms} ms
+                                  </p>
+                                  {a.error_code && <p>{a.error_code}</p>}
+                                  {a.attempt_history.map((attempt) => (
+                                    <small key={attempt.attempt}>
+                                      Attempt {attempt.attempt}:{" "}
+                                      {attempt.status} {attempt.error_code} ·{" "}
+                                      {attempt.duration_ms} ms
+                                      <br />
+                                    </small>
+                                  ))}
+                                </div>
+                              ))}
+                            </details>
+                          )}
                           {run.data.error_code && (
                             <p role="alert">{run.data.error_code}</p>
                           )}
@@ -1210,11 +1284,24 @@ export function WorkflowV2Studio({
                         <WorkflowV2NodePanel
                           key={node.id}
                           workspaceId={workspaceId}
+                          canManageConnections={[
+                            "owner",
+                            "org_admin",
+                            "workspace_admin",
+                          ].includes(role)}
                           node={node}
                           definition={definition}
                           catalog={catalog.data}
                           onChange={change}
                         />
+                        {node.kind === "input" && id && (
+                          <WorkflowTriggers
+                            workflowId={id}
+                            workspaceId={workspaceId}
+                            versions={versions.data ?? []}
+                            canManage={editable}
+                          />
+                        )}
                         <Button onClick={() => remove([node.id])}>
                           Delete node
                         </Button>
@@ -1244,6 +1331,14 @@ export function WorkflowV2Studio({
                             }}
                           />
                         </label>
+                        <WorkflowActionConnections
+                          workspaceId={workspaceId}
+                          canManage={[
+                            "owner",
+                            "org_admin",
+                            "workspace_admin",
+                          ].includes(role)}
+                        />
                         <h4>Initial variables</h4>
                         {Object.entries(definition.execution.variables).map(
                           ([key, value]) => (

@@ -181,6 +181,7 @@ export function validateV2Mappings(
       const mapped = { ...action.mappedInputs, ...node.config.inputs };
       for (const field of schema.required ?? [])
         if (
+          !(action.idempotency === "key" && field === action.idempotencyArgument) &&
           !Object.hasOwn(mapped, field) &&
           !Object.hasOwn(action.staticInputs, field)
         )

@@ -1,3 +1,4 @@
+import { executeWorkflowNodeAction } from "./workflow-action-runtime.js";
 import {
   suspensionFor,
   wakeWorkflowSuspensions,
@@ -8,7 +9,6 @@ import {
   storedWorkflowGraph,
   workflowV2Program,
   validateV2Resources,
-  executeWorkflowAction,
   executeStructuredAI,
   schemaValidator,
 } from "./workflow-v2.js";
@@ -76,6 +76,7 @@ export type WorkflowRun = {
   version_id?: string | null;
   scheduled_for?: Date | string | null;
   parent_run_id?: string | null;
+  webhook_id?: string | null;
   workspace_id: string;
   organization_id: string;
   user_id: string | null;
@@ -291,7 +292,12 @@ export async function compileWorkflow(
         },
         async (span) => {
           signal.throwIfAborted();
-          if (run.api_key_id || run.schedule_id || run.parent_run_id) {
+          if (
+            run.api_key_id ||
+            run.schedule_id ||
+            run.parent_run_id ||
+            run.webhook_id
+          ) {
             if (!run.user_id)
               throw new WorkflowError("WORKFLOW_ACCESS_REVOKED");
             try {
@@ -310,6 +316,12 @@ export async function compileWorkflow(
               (config.REQUIRE_EMAIL_VERIFICATION && !issuer.verified_at)
             )
               throw new WorkflowError("WORKFLOW_ACCESS_REVOKED");
+            if (run.webhook_id) {
+              const active =
+                await sql`SELECT id FROM workflow_webhooks WHERE id=${run.webhook_id} AND created_by=${run.user_id} AND enabled AND expires_at>now()`;
+              if (!active.length)
+                throw new WorkflowError("WORKFLOW_WEBHOOK_REVOKED");
+            }
             if (run.api_key_id) {
               const [key] =
                 await sql`SELECT id FROM workspace_api_keys WHERE id=${run.api_key_id} AND created_by=${run.user_id} AND scope='workflow:execute' AND revoked_at IS NULL AND expires_at>now()`;
@@ -418,26 +430,19 @@ export async function compileWorkflow(
               outputTokens = result.outputTokens;
               citations = result.citations;
             }
-            if (node.type === "tool") {
+            if (node.type === "tool" || node.type === "action") {
               if (definitionNode?.kind === "action") {
                 const action = program!.actions.find(
                   (a) => a.id === definitionNode.config.actionId,
                 )!;
-                const mapped = {
-                  ...action.mappedInputs,
-                  ...definitionNode.config.inputs,
-                };
-                const args = {
-                  ...action.staticInputs,
-                  ...Object.fromEntries(
-                    Object.entries(mapped).map(([key, value]) => [
-                      key,
-                      resolveWorkflowExpression(value, context),
-                    ]),
-                  ),
-                };
                 output = await workflowRetry(run.id, node, signal, () =>
-                  executeWorkflowAction(action, args, nodeCtx, signal),
+                  executeWorkflowNodeAction(
+                    action,
+                    definitionNode.config.inputs,
+                    context,
+                    nodeCtx,
+                    signal,
+                  ),
                 );
               } else {
                 const args = workflowToolArguments(node, input);

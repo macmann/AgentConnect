@@ -105,8 +105,11 @@ test.afterAll(async () => {
       "workflow_approvals",
       "workflow_node_runs",
       "workflow_runs",
+      "workflow_webhooks",
       "workflow_versions",
       "workflows",
+      "workflow_mcp_action_grants",
+      "workflow_http_connections",
       "tools",
       "agent_versions",
       "agents",
@@ -1468,4 +1471,120 @@ test("V2 controlled primitives configure published bodies, durable waits, event 
   await expect(
     page.locator('.react-flow__edge[data-id="error_timer"]'),
   ).toHaveCount(1);
+});
+
+test("V2 native HTTP Actions and authenticated webhook triggers are configurable inside the canvas", async ({
+  page,
+  context,
+}) => {
+  const conn = await api(`/workspaces/${workspace}/action-connections`, {
+    name: "Workflow API",
+    baseUrl: "https://api.openai.com/v1",
+    methods: ["GET", "POST"],
+    idempotencySupported: true,
+  });
+  const workflow = await api(`/workspaces/${workspace}/workflows`, {
+    name: "Action configuration",
+    graph: {
+      schemaVersion: 2,
+      execution: {
+        nodes: [
+          { id: "start", kind: "input", label: "Webhook input", config: {} },
+          {
+            id: "request",
+            kind: "action",
+            label: "HTTP integration",
+            config: { actionId: "request" },
+          },
+          { id: "end", kind: "output", label: "Result", config: {} },
+        ],
+        edges: [
+          { id: "a", source: "start", target: "request" },
+          { id: "b", source: "request", target: "end" },
+        ],
+        actions: [
+          {
+            id: "request",
+            name: "Request",
+            connector: "agentconnect.http",
+            operation: "GET",
+            http: {
+              method: "GET",
+              url: {
+                type: "literal",
+                value: "https://api.openai.com/v1/models",
+              },
+            },
+          },
+        ],
+      },
+    },
+  });
+  await api(`/workflows/${workflow.id}/publish`, { revision: 1 });
+  await context.addCookies([
+    {
+      name: "session",
+      value: session,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByLabel("Current workflow", { exact: true })
+    .selectOption(workflow.id);
+  await page
+    .locator(".react-flow__node")
+    .filter({ hasText: "HTTP integration" })
+    .click();
+  await expect(page.getByLabel("HTTP method", { exact: true })).toHaveValue(
+    "GET",
+  );
+  await page
+    .getByLabel("HTTP authentication connection", { exact: true })
+    .selectOption(conn.id);
+  await page.getByLabel("HTTP method", { exact: true }).selectOption("POST");
+  await page.getByLabel("Allow this write operation", { exact: true }).check();
+  await page.getByLabel("Idempotency", { exact: true }).selectOption("key");
+  await page
+    .getByLabel("HTTP URL", { exact: true })
+    .fill("https://api.openai.com/v1/invoices");
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Draft saved");
+  const [stored] =
+    await sql`SELECT draft_graph FROM workflows WHERE id=${workflow.id}`;
+  const action = stored.draft_graph.execution.actions[0];
+  expect(action.connector).toBe("agentconnect.http");
+  expect(action.http.method).toBe("POST");
+  expect(action.connectionId).toBe(conn.id);
+  expect(action.idempotency).toBe("key");
+  expect(action.allowSideEffects).toBe(true);
+  expect(action.toolId).toBeUndefined();
+  await page
+    .getByRole("button", { name: "› Minimize panel", exact: true })
+    .click();
+  await page
+    .locator(".react-flow__node")
+    .filter({ hasText: "Webhook input" })
+    .click();
+  await page.getByText("Webhook triggers", { exact: true }).click();
+  await expect(page.getByLabel("Webhook name", { exact: true })).toBeVisible();
+  await page
+    .getByLabel("Webhook name", { exact: true })
+    .fill("Browser webhook");
+  await page
+    .getByLabel("Webhook workflow version", { exact: true })
+    .selectOption({ label: "Version 1" });
+  await page
+    .getByRole("button", { name: "Save webhook trigger", exact: true })
+    .click();
+  await expect(
+    page.getByLabel("Webhook bearer token", { exact: true }),
+  ).toHaveValue(/^acwh_/);
+  const [hook] =
+    await sql`SELECT name,token_hash FROM workflow_webhooks WHERE workflow_id=${workflow.id}`;
+  expect(hook.name).toBe("Browser webhook");
+  expect(hook.token_hash).not.toContain("acwh_");
 });

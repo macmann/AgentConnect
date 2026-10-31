@@ -51,6 +51,7 @@ export const migrationFiles: Record<string, string> = {
   "0043": "0043_creation_assistant.sql",
   "0044": "0044_agent_skills.sql",
   "0045": "0045_workflow_controlled_execution.sql",
+  "0046": "0046_workflow_actions_webhooks.sql",
 };
 
 export class MigrationFailure extends Error {

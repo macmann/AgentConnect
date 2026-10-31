@@ -284,11 +284,14 @@ export function compileWorkflowDefinition(
   if (actions.size !== e.actions.length)
     errors.push("Action IDs must be unique");
   for (const a of e.actions) {
-    if (a.sideEffect !== "read")
+    const legacy = ["agentconnect.tool", "agentconnect.mcp"].includes(
+      a.connector,
+    );
+    if (legacy && a.sideEffect !== "read")
       errors.push(`${a.id}: only read actions have a registered executor`);
-    if (a.idempotency === "key")
+    if (legacy && a.idempotency === "key")
       errors.push(`${a.id}: this executor does not support idempotency keys`);
-    if (a.requiredScopes.length)
+    if (legacy && a.requiredScopes.length)
       errors.push(
         `${a.id}: this executor cannot verify additional OAuth scopes`,
       );
@@ -306,7 +309,7 @@ export function compileWorkflowDefinition(
       errors.push(`${n.id}: action unavailable`);
     return {
       id: n.id,
-      type: n.kind === "action" ? "tool" : n.kind,
+      type: n.kind,
       // Layout only projects into the legacy adapter. It is never consulted by validation or execution.
       position: editor?.nodes[n.id] ?? { x: i * 250, y: 80 },
       data: {
@@ -423,10 +426,43 @@ export function compileWorkflowDefinition(
       ? [node.config.value]
       : []),
     ...(node.kind === "action"
-      ? Object.values(actions.get(node.config.actionId)?.mappedInputs ?? {})
+      ? [
+          ...Object.values(
+            actions.get(node.config.actionId)?.mappedInputs ?? {},
+          ),
+          ...(actions.get(node.config.actionId)?.http
+            ? [
+                actions.get(node.config.actionId)!.http!.url,
+                ...Object.values(
+                  actions.get(node.config.actionId)!.http!.headers,
+                ),
+                ...Object.values(
+                  actions.get(node.config.actionId)!.http!.query,
+                ),
+                ...(actions.get(node.config.actionId)!.http!.body
+                  ? [actions.get(node.config.actionId)!.http!.body!]
+                  : []),
+              ]
+            : []),
+          ...(actions.get(node.config.actionId)?.idempotencyKey
+            ? [actions.get(node.config.actionId)!.idempotencyKey!]
+            : []),
+        ]
       : []),
   ];
   for (const node of e.nodes) {
+    if (node.kind === "action") {
+      const action = actions.get(node.config.actionId);
+      for (const expression of [
+        ...Object.values(node.config.inputs),
+        ...Object.values(action?.mappedInputs ?? {}),
+      ])
+        if (
+          expression.type === "reference" &&
+          referenceSegments(expression.path)[0] === "arguments"
+        )
+          errors.push(`${node.id}: Action inputs cannot refer to themselves`);
+    }
     if (
       node.kind === "set-variable" &&
       !Object.hasOwn(e.variables, node.config.name)
@@ -456,6 +492,10 @@ export function compileWorkflowDefinition(
     for (const expression of expressions(node)) {
       if (expression.type !== "reference") continue;
       const parts = referenceSegments(expression.path);
+      if (parts[0] === "arguments" && node.kind !== "action")
+        errors.push(
+          `${node.id}: arguments are scoped to Action request configuration`,
+        );
       if (
         parts[0] === "steps" &&
         (parts.length < 3 ||

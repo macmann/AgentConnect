@@ -14,6 +14,11 @@ import {
   registerWorkflowTriggers,
   workflowInputText,
 } from "./workflow-triggers.js";
+import {
+  registerActionConnections,
+  actionConnectionCatalog,
+} from "./workflow-action-connections.js";
+import { registerWorkflowWebhooks } from "./workflow-webhooks.js";
 import { registerWorkflowEvents } from "./workflow-events.js";
 import { registerWorkflowComponentRoutes } from "./workflow-components.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -60,6 +65,8 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
   await registerWorkflowComponentRoutes(app);
   await registerWorkflowTriggers(app);
   await registerWorkflowEvents(app);
+  await registerActionConnections(app);
+  await registerWorkflowWebhooks(app);
   const schema = (body: z.ZodType) => ({
     // AJV cannot apply defaults inside V1/V2 anyOf branches. Zod applies all defaults after validation.
     schema: {
@@ -142,7 +149,13 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
     }
     const workflows =
       await sql`SELECT v.id,v.workflow_id,v.version,v.name FROM workflow_versions v JOIN workflows w ON w.id=v.workflow_id WHERE v.workspace_id=${w.id} AND v.organization_id=${w.organization_id} AND w.archived_at IS NULL ORDER BY v.name,v.version DESC`;
-    return { models, agents, actions, workflows };
+    return {
+      models,
+      agents,
+      actions,
+      workflows,
+      connections: await actionConnectionCatalog(w.id, w.organization_id),
+    };
   });
   app.post(
     "/workspaces/:workspaceId/workflows",
@@ -470,7 +483,17 @@ export async function registerWorkflowRoutes(app: FastifyInstance) {
       await sql`SELECT id,node_id,kind,status,due_at,error_code,resumed_at,payload->>'eventName' AS event_name FROM workflow_suspensions WHERE run_id=${run.id} ORDER BY created_at`;
     const children =
       await sql`SELECT id,workflow_id,version_id,parent_node_id,iteration_index,status,error_code,created_at,finished_at FROM workflow_runs WHERE parent_run_id=${run.id} ORDER BY parent_node_id,iteration_index`;
-    return { ...visible, nodes, approvals, tools, suspensions, children };
+    const actionExecutions =
+      await sql`SELECT e.id,e.node_id,e.action_id,e.connector,e.operation,e.connection_id,e.side_effect,e.risk_level,e.idempotency,e.status,e.attempts,e.error_code,e.duration_ms,e.created_at,e.finished_at,COALESCE((SELECT jsonb_agg(jsonb_build_object('attempt',a.attempt,'status',a.status,'error_code',a.error_code,'duration_ms',a.duration_ms) ORDER BY a.attempt) FROM workflow_action_attempts a WHERE a.execution_id=e.id),'[]'::jsonb) AS attempt_history FROM workflow_action_executions e WHERE e.run_id=${run.id} ORDER BY e.created_at`;
+    return {
+      ...visible,
+      nodes,
+      approvals,
+      tools,
+      suspensions,
+      children,
+      actionExecutions,
+    };
   });
   app.post("/workflow-runs/:runId/cancel", async (r) => {
     const { u, run } = await ownedRun(r, "workflow:execute");
