@@ -371,7 +371,7 @@ export async function registerKnowledgeRoutes(
   });
   app.get("/knowledge-bases/:knowledgeBaseId/sources", async (r) => {
     const { kb } = await ownedKnowledge(r);
-    return sql`SELECT s.id,s.kind,s.title,s.filename,s.source_url,s.byte_size,s.metadata,s.status,s.error_code,s.revision,s.created_at,count(DISTINCT d.id)::int AS document_count,count(c.id)::int AS chunk_count FROM knowledge_sources s LEFT JOIN knowledge_documents d ON d.source_id=s.id LEFT JOIN knowledge_chunks c ON c.document_id=d.id WHERE s.knowledge_base_id=${kb.id} AND s.status<>'deleted' GROUP BY s.id ORDER BY s.created_at DESC`;
+    return sql`SELECT s.id,s.kind,s.title,s.filename,s.source_url,s.byte_size,CASE WHEN s.metadata ? 'provenance' THEN s.metadata ELSE s.metadata || COALESCE((SELECT jsonb_build_object('provenance',jsonb_build_object('conversationId',m.conversation_id,'messageId',m.id)) FROM conversation_reviews cr JOIN messages m ON m.id=cr.message_id AND m.workspace_id=s.workspace_id AND m.organization_id=s.organization_id WHERE cr.id::text=s.metadata->>'reviewId' AND cr.workspace_id=s.workspace_id AND cr.organization_id=s.organization_id LIMIT 1),'{}'::jsonb) END AS metadata,s.status,s.error_code,s.revision,s.created_at,count(DISTINCT d.id)::int AS document_count,count(c.id)::int AS chunk_count FROM knowledge_sources s LEFT JOIN knowledge_documents d ON d.source_id=s.id LEFT JOIN knowledge_chunks c ON c.document_id=d.id WHERE s.knowledge_base_id=${kb.id} AND s.status<>'deleted' GROUP BY s.id ORDER BY s.created_at DESC`;
   });
   app.post(
     "/knowledge-bases/:knowledgeBaseId/upload",
