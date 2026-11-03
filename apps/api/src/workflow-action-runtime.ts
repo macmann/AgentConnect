@@ -225,6 +225,11 @@ export async function validateWorkflowAction(
   const [tool] = await validateToolIds([action.toolId], ctx);
   if (!tool) throw new ToolError("TOOL_UNAVAILABLE");
   if (
+    (tool.config.kind === "api" && tool.config.method !== "GET") ||
+    (tool.config.kind === "mcp" && tool.config.allowMutations)
+  )
+    throw new ToolError("ACTION_TOOL_SIDE_EFFECT_MISMATCH");
+  if (
     (action.connector === "agentconnect.mcp") !==
     (tool.config.kind === "mcp")
   )

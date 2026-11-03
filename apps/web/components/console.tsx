@@ -1,5 +1,4 @@
 "use client";
-import { WorkflowActionConnections } from "./workflow-action-connections";
 import { WorkflowOperations } from "./workflow-operations";
 import { SkillsStudio } from "./skills-studio";
 import { CreationAssistantSettings } from "./creation-assistant-settings";
@@ -92,8 +91,7 @@ const pageDescriptions: Record<string, string> = {
   Models: "Manage model providers, credentials and connection settings.",
   Knowledge: "Add sources and build knowledge bases for grounded answers.",
   Tools: "Manage Agent Tools and existing MCP servers and operations.",
-  Connections:
-    "Manage reusable workflow HTTP connections and explicit MCP Action permissions.",
+  Connections: "Connect services and manage tools available to your agents.",
   Workflows:
     "Build no-code orchestration with Agents, Actions and human review.",
   "Workflow runs": "Inspect workflow execution, waits, retries and failures.",
@@ -875,20 +873,12 @@ function Studio() {
                 role={currentWorkspace?.role ?? "viewer"}
               />
             ) : view === "Connections" ? (
-              <section className="panel">
-                <h2>Connections</h2>
-                <p>
-                  Reuse encrypted Secrets for workflow HTTP authentication and
-                  explicit MCP Action grants. MCP servers and Agent Tools remain
-                  managed in Tools.
-                </p>
-                <WorkflowActionConnections
-                  workspaceId={wid}
-                  canManage={["owner", "org_admin", "workspace_admin"].includes(
-                    currentWorkspace?.role ?? "",
-                  )}
-                />
-              </section>
+              <ToolStudio
+                key={wid + "connections"}
+                workspaceId={wid}
+                role={currentWorkspace?.role ?? "viewer"}
+                connections
+              />
             ) : view === "Workflow runs" || view === "Human Tasks" ? (
               <WorkflowOperations
                 key={wid + view}

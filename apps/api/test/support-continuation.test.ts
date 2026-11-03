@@ -79,7 +79,7 @@ const app = await buildApp({
           ? JSON.stringify({ ...suggestion, resolution: facts })
           : input.system.includes("request_human_handoff")
             ? JSON.stringify(decision)
-            : input.system.includes("Choose useful read-only tools")
+            : input.system.includes("Choose useful approved tools")
               ? JSON.stringify({
                   calls: [{ toolId: maliciousToolId, arguments: {} }],
                 })
@@ -387,7 +387,7 @@ test("Approved blocked tools are filtered before planning and malicious replays 
   });
   assert.equal(done.statusCode, 200, done.body);
   await chat(c, "Please run the lookup again");
-  assert.ok(!lastChat!.system.includes("Choose useful read-only tools"));
+  assert.ok(!lastChat!.system.includes("Choose useful approved tools"));
   cfg.tools.toolIds = [blocked, allowed];
   await sql`UPDATE conversations SET config_snapshot=${sql.json(cfg)} WHERE id=${c}`;
   maliciousToolId = blocked;

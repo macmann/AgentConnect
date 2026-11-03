@@ -144,7 +144,7 @@ config.TOOL_PRIVATE_HOSTS = `127.0.0.1:${port}`;
 const app = await buildApp({
   providerFactory: () => ({
     async *stream(input) {
-      if (input.system.startsWith("Choose useful read-only tools")) {
+      if (input.system.startsWith("Choose useful approved tools")) {
         yield {
           type: "token",
           text: invalidPlan

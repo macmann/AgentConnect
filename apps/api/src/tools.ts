@@ -1,3 +1,5 @@
+import { registerToolSetupRoutes } from "./tool-setup.js";
+import { validateStdio } from "./tool-stdio.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -38,6 +40,7 @@ async function owned(
   return { u, w, row };
 }
 export async function registerToolRoutes(app: FastifyInstance) {
+  await registerToolSetupRoutes(app);
   const schema = (body: z.ZodType) => {
     // Defaults inside a discriminated union are applied by Zod, not Fastify's AJV.
     const json = z.toJSONSchema(body, { io: "input", target: "draft-7" });
@@ -59,11 +62,18 @@ export async function registerToolRoutes(app: FastifyInstance) {
   };
   async function prepare(data: z.infer<typeof toolInput>, c: ToolContext) {
     const conf = data.config;
-    if (conf.kind === "http") {
+    if (conf.kind === "http" || conf.kind === "api") {
       validateToolUrl(conf.url);
       if (conf.auth !== "none" && !conf.secretId)
         throw new ToolError("TOOL_CREDENTIAL_REQUIRED");
-      if (conf.auth === "api-key" && !/^x-[a-z0-9-]+$/i.test(conf.headerName))
+      if (
+        conf.auth === "api-key" &&
+        (conf.kind === "http"
+          ? !/^x-[a-z0-9-]+$/i.test(conf.headerName)
+          : /^(authorization|cookie|host|content-|proxy-|connection|transfer-)/i.test(
+              conf.headerName,
+            ))
+      )
         throw new ToolError("TOOL_API_KEY_HEADER_INVALID");
     }
     if (conf.kind === "search")
@@ -204,11 +214,12 @@ export async function registerToolRoutes(app: FastifyInstance) {
         "tool:manage",
       );
       const data = connectorInput.parse(r.body);
-      validateToolUrl(data.url);
+      if (data.transport === "stdio") validateStdio(data.stdio);
+      else validateToolUrl(data.url);
       await toolSecret(data.secretId, context(w));
       const connectorId = randomUUID();
       await sql.begin(async (tx) => {
-        await tx`INSERT INTO mcp_connectors(id,workspace_id,organization_id,name,url,secret_id,enabled) VALUES (${connectorId},${w.id},${w.organization_id},${data.name},${data.url},${data.secretId},${data.enabled})`;
+        await tx`INSERT INTO mcp_connectors(id,workspace_id,organization_id,name,url,secret_id,enabled,transport,stdio,auth_header) VALUES (${connectorId},${w.id},${w.organization_id},${data.name},${data.url},${data.secretId},${data.enabled},${data.transport},${tx.json(data.stdio)},${data.authHeader})`;
         await audit(
           tx,
           r,
@@ -228,11 +239,12 @@ export async function registerToolRoutes(app: FastifyInstance) {
     async (r) => {
       const { u, w, row } = await owned(r, "mcp_connectors", "tool:manage");
       const data = connectorUpdate.parse(r.body);
-      validateToolUrl(data.url);
+      if (data.transport === "stdio") validateStdio(data.stdio);
+      else validateToolUrl(data.url);
       await toolSecret(data.secretId, context(w));
       return sql.begin(async (tx) => {
         const [saved] =
-          await tx`UPDATE mcp_connectors SET name=${data.name},url=${data.url},secret_id=${data.secretId},enabled=${data.enabled},capabilities='{}'::jsonb,discovered_at=NULL,revision=revision+1 WHERE id=${row.id} AND revision=${data.revision} RETURNING revision`;
+          await tx`UPDATE mcp_connectors SET name=${data.name},url=${data.url},transport=${data.transport},stdio=${tx.json(data.stdio)},auth_header=${data.authHeader},secret_id=${data.secretId},enabled=${data.enabled},capabilities='{}'::jsonb,discovered_at=NULL,revision=revision+1 WHERE id=${row.id} AND revision=${data.revision} RETURNING revision`;
         if (!saved)
           throw new HttpError(409, "Connector changed; reload before saving");
         await audit(
