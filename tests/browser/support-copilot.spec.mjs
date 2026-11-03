@@ -197,7 +197,7 @@ test("Private copilot drafts require operator review, preserve manual support on
     .click();
   await expect(create).toBeHidden();
   await page
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await expect(
     page.getByRole("heading", { name: "Conversation", exact: true }),
@@ -220,7 +220,7 @@ test("Private copilot drafts require operator review, preserve manual support on
   const operator = await operatorContext.newPage();
   await openSupport(operator);
   await operator
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await operator
     .getByRole("button", { name: "Accept case", exact: true })
@@ -339,7 +339,7 @@ test("Private copilot drafts require operator review, preserve manual support on
   const analyst = await analystContext.newPage();
   await openSupport(analyst);
   await analyst
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await expect(
     analyst.getByRole("button", { name: "Suggest reply", exact: true }),

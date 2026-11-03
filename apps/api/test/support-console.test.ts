@@ -140,6 +140,18 @@ test("Console filters, counts and identity projections use tenant data", async (
   });
   assert.equal(c.statusCode, 201, c.body);
   caseId = c.json().id;
+  await sql`UPDATE users SET name='   ' WHERE id=${users.owner!}`;
+  try {
+    const anonymous = await call(
+      "GET",
+      base + "/cases?scope=all&search=Anonymous",
+    );
+    assert.equal(anonymous.json().items[0].customer_name, "Anonymous");
+    const detail = await call("GET", base + `/cases/${caseId}`);
+    assert.equal(detail.json().customer_name, "Anonymous");
+  } finally {
+    await sql`UPDATE users SET name='owner' WHERE id=${users.owner!}`;
+  }
   const summary = await call("GET", base + "/summary");
   assert.deepEqual(summary.json(), {
     waiting: 1,
@@ -354,6 +366,8 @@ test("Guest APIs cannot read internal notes; timeline pagination is bounded and 
   );
   const [s] =
     await sql`SELECT id FROM support_cases WHERE conversation_id=${guestConversation}`;
+  const guestIdentity = await call("GET", base + `/cases/${s!.id}`);
+  assert.equal(guestIdentity.json().customer_name, "Anonymous");
   assert.equal(
     (await call("POST", base + `/cases/${s!.id}/claim`, {}, "operator"))
       .statusCode,

@@ -33,6 +33,19 @@ import {
   statusLabel,
   supportTime,
 } from "./support-utils";
+const inboxFilterOptions = [
+  ["queue", "Queue"],
+  ["status", "Status"],
+  ["operator", "Assigned operator"],
+  ["priority", "Priority"],
+  ["channel", "Channel"],
+  ["sla", "SLA state"],
+  ["language", "Detected language"],
+  ["fromDate", "Created from (UTC)"],
+  ["toDate", "Created through (UTC)"],
+] as const;
+type InboxFilter = (typeof inboxFilterOptions)[number][0];
+
 export function SupportStudio({
   workspaceId,
   userId,
@@ -63,6 +76,9 @@ export function SupportStudio({
     [toDate, setToDate] = useState(""),
     [searchDraft, setSearchDraft] = useState(""),
     [search, setSearch] = useState("");
+  const [visibleFilters, setVisibleFilters] = useState<InboxFilter[]>([
+    "queue",
+  ]);
   const draft = useRef(false);
   const onPolicyDraft = useCallback((dirty: boolean) => {
     draft.current = dirty;
@@ -160,6 +176,166 @@ export function SupportStudio({
   function filter(change: () => void) {
     if (select("")) change();
   }
+  const filterControls = {
+    sla: (
+      <label>
+        SLA state
+        <select
+          aria-label="SLA state"
+          value={sla}
+          onChange={(e) => filter(() => setSla(e.target.value))}
+        >
+          <option value="">Any SLA state</option>
+          {["on_track", "warning", "breached"].map((v) => (
+            <option key={v} value={v}>
+              {statusLabel(v)}
+            </option>
+          ))}
+        </select>
+      </label>
+    ),
+    language: (
+      <label>
+        Detected language
+        <input
+          value={language}
+          onChange={(e) =>
+            filter(() => setLanguage(e.target.value.trim().toLowerCase()))
+          }
+          maxLength={12}
+          placeholder="e.g. en"
+        />
+      </label>
+    ),
+    fromDate: (
+      <label>
+        Created from (UTC)
+        <input
+          type="date"
+          value={fromDate}
+          onChange={(e) => filter(() => setFromDate(e.target.value))}
+        />
+      </label>
+    ),
+    toDate: (
+      <label>
+        Created through (UTC)
+        <input
+          type="date"
+          value={toDate}
+          onChange={(e) => filter(() => setToDate(e.target.value))}
+        />
+      </label>
+    ),
+    queue: (
+      <label>
+        Queue
+        <select
+          aria-label="Queue"
+          value={queue}
+          onChange={(e) => filter(() => setQueue(e.target.value))}
+        >
+          <option value="">All queues</option>
+          {allQueues.map((q) => (
+            <option key={q.id} value={q.id}>
+              {q.name}
+              {q.enabled ? "" : " (disabled)"}
+            </option>
+          ))}
+        </select>
+      </label>
+    ),
+    operator: (
+      <label>
+        Assigned operator
+        <select
+          aria-label="Assigned operator"
+          value={operator}
+          onChange={(e) =>
+            filter(() => {
+              setOperator(e.target.value);
+              if (e.target.value) setScope("all");
+            })
+          }
+        >
+          <option value="">Any operator</option>
+          {operators.data?.pages
+            .flatMap((p) => p.items)
+            .map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name}
+              </option>
+            ))}
+        </select>
+      </label>
+    ),
+    status: (
+      <label>
+        Status
+        <select
+          aria-label="Status"
+          value={status}
+          onChange={(e) =>
+            filter(() => {
+              setStatus(e.target.value);
+              if (["resolved", "closed", "cancelled"].includes(e.target.value))
+                setScope("all");
+            })
+          }
+        >
+          <option value="">Any status</option>
+          {supportCaseStatus.options.map((s) => (
+            <option key={s} value={s}>
+              {statusLabel(s)}
+            </option>
+          ))}
+        </select>
+      </label>
+    ),
+    priority: (
+      <label>
+        Priority
+        <select
+          aria-label="Priority"
+          value={priority}
+          onChange={(e) => filter(() => setPriority(e.target.value))}
+        >
+          <option value="">Any priority</option>
+          {["low", "normal", "high", "urgent"].map((p) => (
+            <option key={p} value={p}>
+              {statusLabel(p)}
+            </option>
+          ))}
+        </select>
+      </label>
+    ),
+    channel: (
+      <label>
+        Channel
+        <select
+          aria-label="Channel"
+          value={channel}
+          onChange={(e) => filter(() => setChannel(e.target.value))}
+        >
+          <option value="">Any channel</option>
+          <option value="widget">Website widget</option>
+          <option value="hosted">Hosted chat</option>
+          <option value="playground">Playground</option>
+        </select>
+      </label>
+    ),
+  };
+  const clearFilter = {
+    queue: () => setQueue(""),
+    status: () => setStatus(""),
+    operator: () => setOperator(""),
+    priority: () => setPriority(""),
+    channel: () => setChannel(""),
+    sla: () => setSla(""),
+    language: () => setLanguage(""),
+    fromDate: () => setFromDate(""),
+    toDate: () => setToDate(""),
+  };
   if (!canView)
     return (
       <section className="panel">
@@ -274,7 +450,10 @@ export function SupportStudio({
         <SupportTeam workspaceId={workspaceId} role={role} />
       ) : (
         <>
-          <section aria-label="Support overview" className="support-summary">
+          <section
+            aria-label="Support overview"
+            className="support-summary support-inbox-summary"
+          >
             {(
               [
                 ["Waiting", "waiting", "waiting"],
@@ -286,6 +465,7 @@ export function SupportStudio({
               <button
                 key={key}
                 className="support-count"
+                aria-pressed={scope === target && !status}
                 onClick={() =>
                   filter(() => {
                     setScope(target);
@@ -310,216 +490,109 @@ export function SupportStudio({
             </p>
           )}
           <section className="panel support-filters" aria-label="Case filters">
-            <label>
-              SLA state
-              <select
-                aria-label="SLA state"
-                value={sla}
-                onChange={(e) => filter(() => setSla(e.target.value))}
-              >
-                <option value="">Any SLA state</option>
-                {["on_track", "warning", "breached"].map((v) => (
-                  <option key={v} value={v}>
-                    {statusLabel(v)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Detected language
-              <input
-                value={language}
-                onChange={(e) =>
-                  filter(() => setLanguage(e.target.value.trim().toLowerCase()))
-                }
-                maxLength={12}
-                placeholder="e.g. en"
-              />
-            </label>
-            <label>
-              Created from (UTC)
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => filter(() => setFromDate(e.target.value))}
-              />
-            </label>
-            <label>
-              Created through (UTC)
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => filter(() => setToDate(e.target.value))}
-              />
-            </label>
-            <label>
-              Cases
-              <select
-                aria-label="Cases"
-                value={scope}
-                onChange={(e) => filter(() => setScope(e.target.value))}
-              >
-                <option value="open">Open cases</option>
-                <option value="waiting">Waiting cases</option>
-                <option value="active">Active cases</option>
-                <option value="mine">My open cases</option>
-                <option value="unassigned">Unassigned cases</option>
-                <option value="all">All cases</option>
-              </select>
-            </label>
-            <label>
-              Queue
-              <select
-                aria-label="Queue"
-                value={queue}
-                onChange={(e) => filter(() => setQueue(e.target.value))}
-              >
-                <option value="">All queues</option>
-                {allQueues.map((q) => (
-                  <option key={q.id} value={q.id}>
-                    {q.name}
-                    {q.enabled ? "" : " (disabled)"}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Assigned operator
-              <select
-                aria-label="Assigned operator"
-                value={operator}
-                onChange={(e) =>
-                  filter(() => {
-                    setOperator(e.target.value);
-                    if (e.target.value) setScope("all");
-                  })
-                }
-              >
-                <option value="">Any operator</option>
-                {operators.data?.pages
-                  .flatMap((p) => p.items)
-                  .map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <label>
-              Status
-              <select
-                aria-label="Status"
-                value={status}
-                onChange={(e) =>
-                  filter(() => {
-                    setStatus(e.target.value);
-                    if (
-                      ["resolved", "closed", "cancelled"].includes(
-                        e.target.value,
-                      )
-                    )
-                      setScope("all");
-                  })
-                }
-              >
-                <option value="">Any status</option>
-                {supportCaseStatus.options.map((s) => (
-                  <option key={s} value={s}>
-                    {statusLabel(s)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Priority
-              <select
-                aria-label="Priority"
-                value={priority}
-                onChange={(e) => filter(() => setPriority(e.target.value))}
-              >
-                <option value="">Any priority</option>
-                {["low", "normal", "high", "urgent"].map((p) => (
-                  <option key={p} value={p}>
-                    {statusLabel(p)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Channel
-              <select
-                aria-label="Channel"
-                value={channel}
-                onChange={(e) => filter(() => setChannel(e.target.value))}
-              >
-                <option value="">Any channel</option>
-                <option value="widget">Website widget</option>
-                <option value="hosted">Hosted chat</option>
-                <option value="playground">Playground</option>
-              </select>
-            </label>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                filter(() => setSearch(searchDraft.trim()));
-              }}
-              className="support-search"
-            >
+            <div className="support-filter-bar">
               <label>
-                Search cases
-                <input
-                  maxLength={100}
-                  placeholder="Name, issue, case or conversation ID"
-                  value={searchDraft}
-                  onChange={(e) => setSearchDraft(e.target.value)}
-                />
+                Cases
+                <select
+                  aria-label="Cases"
+                  value={scope}
+                  onChange={(e) => filter(() => setScope(e.target.value))}
+                >
+                  <option value="open">Open cases</option>
+                  <option value="waiting">Waiting cases</option>
+                  <option value="active">Active cases</option>
+                  <option value="mine">My open cases</option>
+                  <option value="unassigned">Unassigned cases</option>
+                  <option value="all">All cases</option>
+                </select>
               </label>
-              <Button
-                type="submit"
-                className="secondary"
-                aria-label="Search cases"
-              >
-                <Search size={16} />
-              </Button>
-            </form>
-            <div className="support-filter-actions">
-              <Button
-                className="secondary"
-                onClick={() => {
-                  if (!select("")) return;
-                  setOperator("");
-                  setScope("open");
-                  setStatus("");
-                  setQueue("");
-                  setPriority("");
-                  setChannel("");
-                  setSla("");
-                  setLanguage("");
-                  setFromDate("");
-                  setToDate("");
-                  setSearch("");
-                  setSearchDraft("");
+              {visibleFilters.map((id) => (
+                <div key={id} className="support-filter-field">
+                  {filterControls[id]}
+                  <Button
+                    className="secondary support-remove-filter"
+                    aria-label={`Remove ${inboxFilterOptions.find(([key]) => key === id)![1]} filter`}
+                    onClick={() =>
+                      filter(() => {
+                        clearFilter[id]();
+                        setVisibleFilters((current) =>
+                          current.filter((key) => key !== id),
+                        );
+                      })
+                    }
+                  >
+                    <X size={12} />
+                  </Button>
+                </div>
+              ))}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  filter(() => setSearch(searchDraft.trim()));
                 }}
+                className="support-search"
               >
-                Reset filters
-              </Button>
-              <Button
-                className="secondary"
-                aria-label="Refresh support inbox"
-                disabled={cases.isFetching}
-                onClick={() =>
-                  void cache.invalidateQueries({
-                    queryKey: ["support", workspaceId],
-                  })
-                }
-              >
-                <RefreshCw size={16} />
-              </Button>
-              {permitted(role, "support:queue:manage") && (
-                <CreateQueue base={base} workspaceId={workspaceId} />
-              )}
+                <label>
+                  <span className="sr-only">Search cases</span>
+                  <input
+                    maxLength={100}
+                    placeholder="Search name, issue or case…"
+                    value={searchDraft}
+                    onChange={(e) => setSearchDraft(e.target.value)}
+                  />
+                </label>
+                <Button
+                  type="submit"
+                  className="secondary"
+                  aria-label="Search cases"
+                >
+                  <Search size={16} />
+                </Button>
+              </form>
+              <AddInboxFilter
+                options={inboxFilterOptions.filter(
+                  ([id]) => !visibleFilters.includes(id),
+                )}
+                onAdd={(id) => setVisibleFilters((current) => [...current, id])}
+              />
+              <div className="support-filter-actions">
+                <Button
+                  className="secondary"
+                  aria-label="Reset filters"
+                  onClick={() => {
+                    if (!select("")) return;
+                    setOperator("");
+                    setScope("open");
+                    setStatus("");
+                    setQueue("");
+                    setPriority("");
+                    setChannel("");
+                    setSla("");
+                    setLanguage("");
+                    setFromDate("");
+                    setToDate("");
+                    setSearch("");
+                    setSearchDraft("");
+                    setVisibleFilters(["queue"]);
+                  }}
+                >
+                  Reset
+                </Button>
+                <Button
+                  className="secondary"
+                  aria-label="Refresh support inbox"
+                  disabled={cases.isFetching}
+                  onClick={() =>
+                    void cache.invalidateQueries({
+                      queryKey: ["support", workspaceId],
+                    })
+                  }
+                >
+                  <RefreshCw size={16} />
+                </Button>
+              </div>
             </div>
-            {operators.hasNextPage && (
+            {visibleFilters.includes("operator") && operators.hasNextPage && (
               <Button
                 className="secondary"
                 disabled={operators.isFetchingNextPage}
@@ -536,7 +609,7 @@ export function SupportStudio({
                 </Button>
               </p>
             )}
-            {queues.hasNextPage && (
+            {visibleFilters.includes("queue") && queues.hasNextPage && (
               <Button
                 className="secondary"
                 disabled={queues.isFetchingNextPage}
@@ -571,6 +644,9 @@ export function SupportStudio({
               <div className="panel-header">
                 <h2>Inbox</h2>
                 <small>{items.length} loaded</small>
+                {permitted(role, "support:queue:manage") && (
+                  <CreateQueue base={base} workspaceId={workspaceId} />
+                )}
               </div>
               {cases.isPending && (
                 <p className="empty" role="status">
@@ -611,29 +687,38 @@ export function SupportStudio({
                 >
                   <span className="support-card-heading">
                     <strong>{s.customer_name}</strong>
-                    <span className={"support-badge sla-" + s.sla_state}>
-                      SLA: {statusLabel(s.sla_state)}
-                    </span>
-                    <span className={"support-badge priority-" + s.priority}>
-                      {statusLabel(s.priority)}
-                    </span>
-                  </span>
-                  <span className="support-case-issue">
-                    {s.reason_text || s.latest_message || s.agent_name}
-                  </span>
-                  <span className="support-card-meta">
-                    <span>{statusLabel(s.status)}</span>
-                    <span>{s.queue_name ?? "No queue"}</span>
-                  </span>
-                  <span className="support-card-meta">
-                    <span>{s.assigned_operator_name ?? "Unassigned"}</span>
-                    <time dateTime={s.created_at}>
+                    <time
+                      dateTime={s.created_at}
+                      title={supportTime(s.created_at)}
+                    >
                       {supportTime(s.created_at)}
                     </time>
                   </span>
-                  <small>
-                    {caseLabel(s.id)} · {statusLabel(s.channel)}
-                  </small>
+                  <span className="support-case-issue">
+                    {s.latest_message || s.reason_text || s.agent_name}
+                  </span>
+                  <span className="support-card-meta">
+                    <span>
+                      {statusLabel(s.status)} · {s.queue_name ?? "No queue"}
+                    </span>
+                    {(s.priority === "high" || s.priority === "urgent") && (
+                      <span className={"support-badge priority-" + s.priority}>
+                        {statusLabel(s.priority)}
+                      </span>
+                    )}
+                    {(s.sla_state === "warning" ||
+                      s.sla_state === "breached") && (
+                      <span className={"support-badge sla-" + s.sla_state}>
+                        SLA: {statusLabel(s.sla_state)}
+                      </span>
+                    )}
+                  </span>
+                  <span className="support-card-meta">
+                    <span>{s.assigned_operator_name ?? "Unassigned"}</span>
+                    <small>
+                      {caseLabel(s.id)} · {statusLabel(s.channel)}
+                    </small>
+                  </span>
                 </button>
               ))}
               {cases.hasNextPage && (
@@ -676,6 +761,57 @@ export function SupportStudio({
     </div>
   );
 }
+function AddInboxFilter({
+  options,
+  onAdd,
+}: {
+  options: readonly (readonly [InboxFilter, string])[];
+  onAdd: (id: InboxFilter) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      <Dialog.Trigger asChild>
+        <Button
+          className="secondary support-add-filter"
+          disabled={!options.length}
+        >
+          <Plus size={16} /> Add filter
+        </Button>
+      </Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className="dialog-content support-add-filter-dialog">
+          <Dialog.Title>Add inbox filter</Dialog.Title>
+          <Dialog.Description>
+            Choose a filter to narrow your inbox.
+          </Dialog.Description>
+          <div className="support-filter-options">
+            {options.map(([id, label]) => (
+              <Button
+                key={id}
+                className="secondary"
+                onClick={() => {
+                  onAdd(id);
+                  setOpen(false);
+                }}
+              >
+                <Plus size={14} />
+                {label}
+              </Button>
+            ))}
+          </div>
+          <Dialog.Close asChild>
+            <button className="dialog-close" aria-label="Close filter picker">
+              <X size={18} />
+            </button>
+          </Dialog.Close>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 function CreateQueue({
   base,
   workspaceId,

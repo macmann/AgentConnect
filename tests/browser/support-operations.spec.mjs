@@ -300,7 +300,7 @@ test("Complete support lifecycle includes automatic assignment, reviewed assista
   const [s] =
     await sql`SELECT * FROM support_cases WHERE workspace_id=${workspace}`;
   await operator
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await operator
     .getByRole("button", { name: "Accept case", exact: true })
@@ -406,7 +406,7 @@ test("Complete support lifecycle includes automatic assignment, reviewed assista
   ).toBeVisible();
   await page.getByRole("button", { name: "Inbox", exact: true }).click();
   await page
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await page
     .getByRole("button", { name: "Change priority", exact: true })
