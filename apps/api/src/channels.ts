@@ -15,6 +15,8 @@ import { permitted } from "@agentconnect/schemas/foundation";
 import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { branding } from "@agentconnect/schemas/customer-experience";
+import { agentConfig } from "@agentconnect/schemas/agents";
 import { widgetSettings, webOrigin } from "@agentconnect/schemas/channels";
 import { actor, audit, id, params, workspaceAccess } from "./app.js";
 import { sql } from "./db.js";
@@ -128,8 +130,51 @@ export async function registerChannelRoutes(app: FastifyInstance) {
         id(params(r).workspaceId),
         "operations:view",
       );
-    return sql`SELECT d.id,d.name,d.enabled,d.widget_settings,d.branding,a.name AS agent_name FROM deployments d JOIN agents a ON a.id=d.agent_id WHERE d.workspace_id=${w.id} AND d.organization_id=${w.organization_id} ORDER BY d.created_at DESC LIMIT 100`;
+    const rows =
+      await sql`SELECT d.id,d.name,d.enabled,d.widget_settings,d.branding,a.name AS agent_name,v.name AS published_name,v.config->>'welcomeMessage' AS published_welcome,v.config->'conversationStarters' AS conversation_starters,v.config->'quickActions' AS quick_actions FROM deployments d JOIN agents a ON a.id=d.agent_id JOIN agent_versions v ON v.id=d.version_id WHERE d.workspace_id=${w.id} AND d.organization_id=${w.organization_id} ORDER BY d.created_at DESC LIMIT 100`;
+    return rows.map((d) => ({
+      ...d,
+      published_welcome: agentConfig.shape.welcomeMessage.parse(
+        d.published_welcome ?? undefined,
+      ),
+      conversation_starters: agentConfig.shape.conversationStarters.parse(
+        d.conversation_starters ?? undefined,
+      ),
+      quick_actions: agentConfig.shape.quickActions.parse(
+        d.quick_actions ?? undefined,
+      ),
+    }));
   });
+  app.put(
+    "/workspaces/:workspaceId/channels/:deploymentId/settings",
+    async (r) => {
+      const u = await actor(r),
+        w = await workspaceAccess(
+          u.id,
+          id(params(r).workspaceId),
+          "operations:manage",
+        );
+      const data = z
+        .object({ widget: widgetSettings, branding })
+        .strict()
+        .parse(r.body);
+      await sql.begin(async (tx) => {
+        const [d] =
+          await tx`UPDATE deployments SET widget_settings=${tx.json(data.widget)},branding=${tx.json(data.branding)} WHERE id=${id(params(r).deploymentId)} AND workspace_id=${w.id} AND organization_id=${w.organization_id} RETURNING id`;
+        if (!d) throw new HttpError(404, "Deployment not found");
+        await audit(
+          tx,
+          r,
+          u.id,
+          "deployment.presentation_updated",
+          d.id,
+          w.organization_id,
+          w.id,
+        );
+      });
+      return { ok: true };
+    },
+  );
   app.put("/workspaces/:workspaceId/channels/:deploymentId", async (r) => {
     const u = await actor(r),
       w = await workspaceAccess(
