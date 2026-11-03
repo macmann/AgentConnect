@@ -99,6 +99,7 @@ const schema = z.object({
   TOOL_PRIVATE_HOSTS: z.string().default(""),
   TOOL_STDIO_PROFILES: z.string().default("[]"),
   TOOL_DATABASE_HOSTS: z.string().default(""),
+  // Deprecated: accepted for older deployments, ignored by website crawling.
   KNOWLEDGE_ALLOWED_HOSTS: z.string().default(""),
   KNOWLEDGE_PRIVATE_HOSTS: z.string().default(""),
   OCR_ENABLED: z

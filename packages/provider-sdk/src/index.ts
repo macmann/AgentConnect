@@ -174,6 +174,34 @@ for (const [ip, prefix] of [
   ["240.0.0.0", 4],
 ] as const)
   blocked.addSubnet(ip, prefix, "ipv4");
+/** User-selected website targets, with the same private-address policy as the transport.
+ * Model/tool/connector callers keep using the administrator-scoped validateEndpoint.
+ * DNS answers are checked and direct connections pinned by safeHttpTransport at fetch time.
+ */
+export function validatePublicEndpoint(
+  url: string,
+  privateHosts: string[] = [],
+) {
+  const target = new URL(url);
+  validateEndpoint(url, [target.host], privateHosts);
+  if (!privateHosts.includes(target.host)) {
+    const hostname = target.hostname
+      .replace(/^\[|\]$/g, "")
+      .replace(/\.$/, "")
+      .toLowerCase();
+    const family = isIP(hostname);
+    if (
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname.endsWith(".local") ||
+      hostname.endsWith(".internal") ||
+      family === 6 ||
+      (family === 4 && blocked.check(hostname, "ipv4"))
+    )
+      throw new ProviderError("PRIVATE_ENDPOINT_BLOCKED");
+  }
+  return target;
+}
 export function safeTransport(
   allowedHosts: string[],
   privateHosts: string[] = [],

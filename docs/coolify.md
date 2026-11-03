@@ -50,7 +50,8 @@ Before redeploying a schema-changing release, back up state and review compatibi
 See [`environment.example`](../deploy/coolify/environment.example) for settings you can supply. Coolify's generated secrets persist across deployments. The shipped Compose environment is the source of which variables reach each container; adding an unrelated variable only to Coolify's UI does not automatically expose it to an application process.
 
 - **Provider keys:** register encrypted workspace secrets and models in the application. Do not bake model API keys into images.
-- **Website crawling/tools/connectors:** add the exact destination hosts to their corresponding allowlist. API and worker share these settings. Network/firewall policy must permit them too.
+- **Website crawling:** users choose public HTTPS domains without an application allowlist. The deployment network/firewall policy must permit outbound traffic. Local/private endpoints remain blocked unless explicitly configured in `KNOWLEDGE_PRIVATE_HOSTS`.
+- **Tools/connectors:** add exact destination hosts to their corresponding allowlist. API and worker share these settings. Network/firewall policy must permit them too.
 - **Multilingual AI extraction:** PDF rendering is included in the default worker build with `ENABLE_AI_EXTRACTION=true`. Select a vision model per knowledge base in the application. Provider usage can incur cost.
 - **Local English OCR:** set `ENABLE_OCR=true` at build time and `OCR_ENABLED=true` at runtime, then rebuild the worker. This is separate from multilingual vision extraction.
 - **Langfuse:** set all three connection values in Coolify; leave all empty to disable tracing. Content capture is disabled by default.

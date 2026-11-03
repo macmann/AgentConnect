@@ -810,47 +810,64 @@ test("Empty knowledge fails before generation and records NO_RELEVANT_SOURCES", 
     200,
   );
 });
-test("Website registration accepts the exact approved Yoma hostname and explains mismatches without queuing them", async () => {
+test("Website registration accepts user-selected public domains without an allowlist and rejects unsafe targets before queuing", async () => {
   const previous = config.KNOWLEDGE_ALLOWED_HOSTS;
-  config.KNOWLEDGE_ALLOWED_HOSTS = "www.yomabank.com";
   try {
-    const body = {
-      url: "https://www.yomabank.com/",
-      crawler: "builtin",
-      secretId: null,
-      maxPages: 20,
-      maxDepth: 2,
-      allowedPaths: ["/"],
-      blockedPaths: [],
-    };
-    const registered = await call(
-      "POST",
-      `/knowledge-bases/${kbId}/website`,
-      body,
-    );
-    assert.equal(registered.statusCode, 202, registered.body);
-    const [source] =
-      await sql`SELECT kind,metadata FROM knowledge_sources WHERE id=${registered.json().id}`;
-    assert.equal(source!.kind, "website");
-    assert.equal(source!.metadata.url, body.url);
-    assert.equal(source!.metadata.secretId, null);
-    // Registration only: never fetch the real bank or send it to an external service.
-    await call(
-      "DELETE",
-      `/knowledge-bases/${kbId}/sources/${registered.json().id}`,
-    );
-    const denied = await call("POST", `/knowledge-bases/${kbId}/website`, {
-      ...body,
-      url: "https://yomabank.com/",
-    });
-    assert.equal(denied.statusCode, 400);
-    assert.match(denied.json().error, /KNOWLEDGE_ALLOWED_HOSTS/);
-    assert.match(denied.json().error, /restart both/);
-    assert.match(denied.json().error, /ENDPOINT_NOT_ALLOWED/);
-    config.KNOWLEDGE_ALLOWED_HOSTS = "";
-    const stale = await call("POST", `/knowledge-bases/${kbId}/website`, body);
-    assert.equal(stale.statusCode, 400);
-    assert.match(stale.json().error, /running API/);
+    for (const legacy of ["", "unrelated.example"]) {
+      config.KNOWLEDGE_ALLOWED_HOSTS = legacy;
+      for (const url of [
+        "https://www.yomabank.com/",
+        "https://yomabank.com/",
+        "https://customer-selected.example/help",
+      ]) {
+        const registered = await call(
+          "POST",
+          `/knowledge-bases/${kbId}/website`,
+          {
+            url,
+            crawler: "builtin",
+            maxPages: 20,
+            maxDepth: 2,
+            allowedPaths: ["/"],
+            blockedPaths: [],
+          },
+        );
+        assert.equal(registered.statusCode, 202, registered.body);
+        const [source] =
+          await sql`SELECT kind,metadata FROM knowledge_sources WHERE id=${registered.json().id}`;
+        assert.equal(source!.kind, "website");
+        assert.equal(source!.metadata.url, url);
+        // Registration only: archive before processing; never fetch real sites in fixtures.
+        await call(
+          "DELETE",
+          `/knowledge-bases/${kbId}/sources/${registered.json().id}`,
+        );
+      }
+    }
+    const [before] =
+      await sql`SELECT count(*)::int AS n FROM knowledge_sources WHERE knowledge_base_id=${kbId}`;
+    for (const url of [
+      "https://127.0.0.1/",
+      "https://169.254.169.254/",
+      "https://metadata.google.internal/",
+      "http://example.com/",
+    ]) {
+      const rejected = await call("POST", `/knowledge-bases/${kbId}/website`, {
+        url,
+        maxPages: 1,
+        maxDepth: 0,
+        allowedPaths: ["/"],
+        blockedPaths: [],
+      });
+      assert.equal(rejected.statusCode, 400, rejected.body);
+      assert.doesNotMatch(
+        rejected.body,
+        /KNOWLEDGE_ALLOWED_HOSTS|restart both|not approved/,
+      );
+    }
+    const [after] =
+      await sql`SELECT count(*)::int AS n FROM knowledge_sources WHERE knowledge_base_id=${kbId}`;
+    assert.equal(after!.n, before!.n);
   } finally {
     config.KNOWLEDGE_ALLOWED_HOSTS = previous;
   }

@@ -887,10 +887,8 @@ export function KnowledgeStudio({
                 <p className="muted">
                   Crawl only this website, within the page and depth limits.
                   Path prefixes are comma-separated (for example /help,
-                  /products). Website hosts must match the exact hostname
-                  (including www) approved in the API and worker
-                  KNOWLEDGE_ALLOWED_HOSTS settings. Restart both after editing
-                  the repository-root .env. The built-in crawler respects
+                  /products). Choose any public HTTPS website; no domain
+                  allowlist is required. The built-in crawler respects
                   robots.txt, follows bounded same-origin redirects and extracts
                   static HTML; use Firecrawl for rendered content.
                 </p>

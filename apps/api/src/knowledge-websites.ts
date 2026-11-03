@@ -1,6 +1,6 @@
 import {
   safeHttpTransport,
-  validateEndpoint,
+  validatePublicEndpoint,
 } from "@agentconnect/provider-sdk";
 import {
   parseHTML,
@@ -20,9 +20,8 @@ export interface CrawlConfig {
 }
 function safeURL(url: string) {
   const u = new URL(url);
-  validateEndpoint(
+  validatePublicEndpoint(
     `${u.origin}${u.pathname}`,
-    hosts(config.KNOWLEDGE_ALLOWED_HOSTS),
     hosts(config.KNOWLEDGE_PRIVATE_HOSTS),
   );
   if (u.username || u.password) throw new KnowledgeError("INVALID_WEBSITE_URL");
@@ -56,7 +55,7 @@ export async function fetchWebsitePage(
     seen.add(current.href);
     checkAccess?.(current);
     const response = await safeHttpTransport(
-      hosts(config.KNOWLEDGE_ALLOWED_HOSTS),
+      [current.host],
       hosts(config.KNOWLEDGE_PRIVATE_HOSTS),
     )(
       current.href,
@@ -82,7 +81,7 @@ export async function fetchWebsitePage(
         if (next.origin !== origin || next.username || next.password)
           throw new KnowledgeError("WEBSITE_REDIRECT_BLOCKED");
         if (hops === 5) throw new KnowledgeError("WEBSITE_REDIRECT_LIMIT");
-        // Recheck exact grants here and pin/check DNS again in the transport at every hop.
+        // Revalidate the destination and pin/check DNS again at every hop.
         current = safeURL(next.href);
         continue;
       }

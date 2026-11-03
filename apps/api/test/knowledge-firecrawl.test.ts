@@ -1,17 +1,9 @@
-import { test, before, after } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import { crawlFirecrawl } from "../src/knowledge-firecrawl.js";
-import { config } from "../src/config.js";
 import { websiteInput } from "@agentconnect/schemas/knowledge";
 import { KnowledgeError, parseHTML } from "@agentconnect/rag/parsers";
 import type { safeHttpTransport } from "@agentconnect/provider-sdk";
-const previous = config.KNOWLEDGE_ALLOWED_HOSTS;
-before(() => {
-  config.KNOWLEDGE_ALLOWED_HOSTS = "crawl.example.com";
-});
-after(() => {
-  config.KNOWLEDGE_ALLOWED_HOSTS = previous;
-});
 const options = {
   url: "https://crawl.example.com/",
   maxPages: 3,
