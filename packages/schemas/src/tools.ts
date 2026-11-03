@@ -1,7 +1,42 @@
 import { z } from "zod";
 const name = z.string().trim().min(1).max(100);
 const identifier = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,62}$/);
+export const apiOperationConfig = z.object({
+  kind: z.literal("api"),
+  url: z.url().max(1000),
+  path: z.string().regex(/^\//).max(1000),
+  method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+  parameters: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(100),
+        in: z.enum(["path", "query"]),
+        required: z.boolean(),
+        schema: z.record(z.string(), z.json()),
+      }),
+    )
+    .max(30),
+  bodySchema: z.record(z.string(), z.json()).nullable().default(null),
+  bodyRequired: z.boolean().default(false),
+  secretId: z.uuid().nullable().default(null),
+  auth: z.enum(["none", "bearer", "api-key"]).default("none"),
+  headerName: z
+    .string()
+    .regex(/^[A-Za-z][A-Za-z0-9-]{0,62}$/)
+    .default("X-API-Key"),
+  inputSchema: z.record(z.string(), z.json()),
+});
+export const stdioSettings = z.object({
+  command: z.string().min(1).max(1000),
+  args: z.array(z.string().max(2000)).max(30).default([]),
+  credentialEnv: z
+    .string()
+    .regex(/^[A-Z][A-Z0-9_]{0,62}$/)
+    .nullable()
+    .default(null),
+});
 export const toolConfig = z.discriminatedUnion("kind", [
+  apiOperationConfig,
   z.object({
     kind: z.literal("financial"),
     requireEvidence: z.boolean().default(true),
@@ -44,6 +79,7 @@ export const toolConfig = z.discriminatedUnion("kind", [
     kind: z.literal("mcp"),
     connectorId: z.uuid(),
     remoteName: z.string().min(1).max(128),
+    allowMutations: z.boolean().default(false),
   }),
 ]);
 export const toolInput = z.object({
@@ -60,7 +96,15 @@ export const toolUpdate = toolInput.extend({
 });
 export const connectorInput = z.object({
   name,
-  url: z.url().max(1000),
+  url: z.string().max(1000).default(""),
+  transport: z.enum(["http", "stdio"]).default("http"),
+  authHeader: z
+    .string()
+    .regex(
+      /^(?:Authorization|(?!(?:host$|cookie$|content-|proxy-|connection$|transfer-|set-cookie$|te$|trailer$))[A-Za-z][A-Za-z0-9_-]{0,62})$/i,
+    )
+    .default("Authorization"),
+  stdio: stdioSettings.nullable().default(null),
   secretId: z.uuid().nullable().default(null),
   enabled: z.boolean().default(true),
 });

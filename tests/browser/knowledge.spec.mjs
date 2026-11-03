@@ -1070,29 +1070,27 @@ test("Financial calculator setup supports progressive help and explicit evidence
   ]);
   await page.goto("/");
   await page.getByRole("button", { name: "Tools", exact: true }).click();
-  await page.getByRole("button", { name: "Tool setup", exact: true }).click();
+  await page.getByRole("button", { name: "Add tools", exact: true }).click();
+  await page.getByRole("button", { name: /Financial calculator/ }).click();
   await page
-    .getByLabel("Name", { exact: true })
+    .getByLabel("Tool name", { exact: true })
     .fill("Verified statement calculator");
-  await page.getByLabel("Tool type", { exact: true }).selectOption("financial");
+  await expect(page.getByLabel("API key / token", { exact: true })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Validate & continue" }).click();
+  await page.getByRole("checkbox", { name: /I reviewed/ }).check();
+  await page.getByRole("button", { name: "Save tool", exact: true }).click();
   await page
-    .getByLabel("Description for the agent")
-    .fill("Calculate sums and revenue changes from financial statements.");
-  await expect(
-    page.getByRole("checkbox", { name: /Require retrieved evidence/ }),
-  ).toBeChecked();
-  await expect(page.getByLabel("Encrypted credential")).toBeHidden();
-  await page
-    .getByRole("checkbox", { name: /I verified this integration/ })
-    .check();
-  await page
-    .getByRole("button", { name: "Register tool", exact: true })
-    .click();
-  await expect(
-    page.getByText("Tool registered. Attach it in an agent's configuration.", {
+    .getByRole("button", {
+      name: "Actions for Verified statement calculator",
       exact: true,
-    }),
-  ).toBeVisible();
+    })
+    .click();
+  await page.getByRole("menuitem", { name: "Edit tool", exact: true }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "Require retrieved evidence" }),
+  ).toBeChecked();
   await page.screenshot({
     path: "/tmp/financial-tool-setup.png",
     fullPage: true,

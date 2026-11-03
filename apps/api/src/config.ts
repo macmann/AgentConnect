@@ -97,6 +97,7 @@ const schema = z.object({
   CONNECTOR_PRIVATE_HOSTS: z.string().default(""),
   TOOL_ALLOWED_HOSTS: z.string().default(""),
   TOOL_PRIVATE_HOSTS: z.string().default(""),
+  TOOL_STDIO_PROFILES: z.string().default("[]"),
   TOOL_DATABASE_HOSTS: z.string().default(""),
   KNOWLEDGE_ALLOWED_HOSTS: z.string().default(""),
   KNOWLEDGE_PRIVATE_HOSTS: z.string().default(""),

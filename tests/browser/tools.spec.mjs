@@ -27,14 +27,16 @@ const fixture = createServer(async (req, res) => {
   const data = JSON.parse(raw);
   let text;
   const system = data.messages[0].content;
-  if (system.startsWith("Choose useful read-only tools")) {
+  if (system.startsWith("Choose useful approved tools")) {
     plans++;
     const catalogLine = system
       .split("\n")
       .find((line) => line.startsWith("[") && line.includes('"toolId"'));
     const tools = JSON.parse(catalogLine ?? "[]");
     text = JSON.stringify({
-      calls: [{ toolId: tools[0].toolId, arguments: { city: "Yangon" } }],
+      calls: [
+        { toolId: tools[0].toolId, arguments: { query: { city: "Yangon" } } },
+      ],
     });
   } else {
     grounded = system.includes("<tool_results>") && system.includes("sunny");
@@ -124,34 +126,60 @@ test("register, test, attach and trace a read-only tool in playground and hosted
   ]);
   await page.goto("/");
   await page.getByRole("button", { name: "Tools", exact: true }).click();
-  await page.getByRole("button", { name: "Tool setup", exact: true }).click();
-  await page.getByLabel("Name", { exact: true }).fill("Weather lookup");
+  await page.getByRole("button", { name: "Add tools", exact: true }).click();
+  await page.getByRole("button", { name: /API \/ OpenAPI/ }).click();
+  await page.getByLabel("Tool name", { exact: true }).fill("Weather lookup");
+  await page.getByLabel("OpenAPI specification", { exact: true }).fill(
+    JSON.stringify({
+      openapi: "3.1.0",
+      info: { title: "Weather", version: "1" },
+      servers: [{ url: "http://127.0.0.1:4547" }],
+      paths: {
+        "/weather": {
+          get: {
+            operationId: "weather",
+            summary: "Weather lookup",
+            description: "Read the weather for a city",
+            parameters: [
+              {
+                name: "city",
+                in: "query",
+                required: true,
+                schema: { type: "string" },
+              },
+            ],
+          },
+        },
+      },
+    }),
+  );
   await page
-    .getByLabel("Description for the agent")
-    .fill("Read the weather for a city.");
+    .getByRole("combobox", { name: "Credential", exact: true })
+    .selectOption("none");
+  await page.getByText("Description & access", { exact: true }).click();
   await page
-    .getByLabel("Fixed endpoint URL")
-    .fill("http://127.0.0.1:4547/weather");
+    .getByRole("checkbox", { name: "Allow use by anonymous published agents" })
+    .check();
+  await page.getByRole("button", { name: "Validate & continue" }).click();
   await page
-    .getByLabel("Allowed query parameters (comma separated)")
-    .fill("city");
-  await page.getByRole("checkbox", { name: /Allow anonymous hosted/ }).check();
-  await page.getByRole("checkbox", { name: /I verified/ }).check();
-  await page
-    .getByRole("button", { name: "Register tool", exact: true })
-    .click();
+    .getByRole("checkbox", { name: /I reviewed the selected tools/ })
+    .check();
+  await page.getByRole("button", { name: "Save tool", exact: true }).click();
   await expect(
-    page.getByText("Tool registered. Attach it in an agent's configuration."),
+    page.getByRole("status").filter({ hasText: "1 tool saved." }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Test", exact: true }).click();
-  await page.getByLabel("Tool test arguments").fill('{"city":"Yangon"}');
-  await page.getByRole("button", { name: "Execute read-only test" }).click();
+  await page
+    .getByLabel("Tool test arguments")
+    .fill('{"query":{"city":"Yangon"}}');
+  await page.getByRole("button", { name: "Run test" }).click();
   await expect(
     page
       .locator(".tool-traces")
       .first()
       .getByText(/Weather lookup · completed/),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
   await page.getByRole("button", { name: "Models", exact: true }).click();
   await page
     .getByRole("button", { name: "Register model", exact: true })
@@ -235,8 +263,17 @@ test("register, test, attach and trace a read-only tool in playground and hosted
   await page
     .getByRole("button", { name: "Conversations", exact: true })
     .click();
-  await page.locator(".conversation-row").first().click();
-  await expect(page.getByText(/Weather lookup · completed/)).toBeVisible();
+  await page.locator(".history-session").first().click();
+  await expect(
+    page
+      .locator(".history-messages")
+      .getByText("The weather in Yangon is sunny.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Tools", exact: true }).click();
+  await page.getByRole("button", { name: "Executions", exact: true }).click();
+  await expect(
+    page.getByRole("dialog").locator(".tool-traces details"),
+  ).toHaveCount(3);
   const [count] =
     await sql`SELECT count(*) AS n FROM tool_executions WHERE workspace_id=${workspace} AND status='completed'`;
   expect(Number(count.n)).toBe(3);
