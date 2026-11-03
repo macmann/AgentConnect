@@ -40,6 +40,7 @@ let plannerOutput: string | undefined;
 let embeddedQueries: string[] = [];
 let wrongDimension = false,
   omitCitation = false,
+  emptyProviderResponse = false,
   retryEmbedding = false,
   receivedKey = false,
   receivedGrounding = false;
@@ -72,6 +73,8 @@ const chat: ProviderFactory = () => ({
       return;
     }
     generationCalls++;
+    if (emptyProviderResponse)
+      throw new ProviderError("EMPTY_PROVIDER_RESPONSE");
     receivedGrounding =
       input.system.includes("<reference_passages>") &&
       input.system.includes("30 days");
@@ -704,6 +707,20 @@ test("Workflow agent snapshots honor knowledge skip, retrieval and disabled poli
   );
   assert.equal(disabled.citations.length, 0);
   assert.equal(receivedGrounding, false);
+});
+test("Empty provider responses remain provider errors rather than citation failures", async () => {
+  emptyProviderResponse = true;
+  try {
+    const response = await call("POST", `/agents/${agentId}/chat`, {
+      message: "refund within 30 days",
+    });
+    const error = frames(response.body).at(-1)!.data;
+    assert.equal(error.code, "EMPTY_PROVIDER_RESPONSE");
+    assert.match(error.message, /model returned no response text/i);
+    assert.doesNotMatch(error.message, /source references/i);
+  } finally {
+    emptyProviderResponse = false;
+  }
 });
 test("Missing citations and revoked public knowledge access are explicit failed runs", async () => {
   omitCitation = true;

@@ -396,6 +396,7 @@ export function createProvider(
         input.signal,
       );
       let finished = false;
+      let hasVisibleText = false;
       let inputTokens: number | null = null;
       try {
         if (response.status < 200 || response.status >= 300)
@@ -428,8 +429,10 @@ export function createProvider(
             if (
               data.type === "content_block_delta" &&
               typeof delta.text === "string"
-            )
+            ) {
+              if (delta.text.trim()) hasVisibleText = true;
               yield { type: "token", text: delta.text };
+            }
             const usage = object(
               data.type === "message_start"
                 ? object(data.message).usage
@@ -453,7 +456,10 @@ export function createProvider(
             if (Array.isArray(parts))
               for (const part of parts) {
                 const text = object(part).text;
-                if (typeof text === "string") yield { type: "token", text };
+                if (typeof text === "string") {
+                  if (text.trim()) hasVisibleText = true;
+                  yield { type: "token", text };
+                }
               }
             if (candidate.finishReason) {
               if (
@@ -474,7 +480,10 @@ export function createProvider(
             const choices = Array.isArray(data.choices) ? data.choices : [];
             const choice = object(choices[0]);
             const text = object(choice.delta).content;
-            if (typeof text === "string") yield { type: "token", text };
+            if (typeof text === "string") {
+              if (text.trim()) hasVisibleText = true;
+              yield { type: "token", text };
+            }
             if (choice.finish_reason) {
               if (!["stop", "length"].includes(String(choice.finish_reason)))
                 throw new ProviderError("RESPONSE_BLOCKED");
@@ -490,6 +499,7 @@ export function createProvider(
           }
         }
         if (!finished) throw new ProviderError("INCOMPLETE_STREAM");
+        if (!hasVisibleText) throw new ProviderError("EMPTY_PROVIDER_RESPONSE");
       } finally {
         await response.close();
       }
