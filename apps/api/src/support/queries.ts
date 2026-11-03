@@ -2,7 +2,7 @@ import { sql } from "../db.js";
 import type { z } from "zod";
 import type { supportCaseQuery } from "@agentconnect/schemas/support";
 // Projection is shared by list/detail so the console never invents customer or operator context.
-const projection = sql`s.*,c.channel,c.conversation_mode,c.active_support_case_id,c.ai_resume_case_id,a.name AS agent_name,COALESCE(customer.name,'Guest visitor') AS customer_name,q.name AS queue_name,operator.name AS assigned_operator_name`;
+const projection = sql`s.*,c.channel,c.conversation_mode,c.active_support_case_id,c.ai_resume_case_id,a.name AS agent_name,COALESCE(NULLIF(btrim(customer.name),''),'Anonymous') AS customer_name,q.name AS queue_name,operator.name AS assigned_operator_name`;
 const joins = sql`FROM support_cases s JOIN conversations c ON c.id=s.conversation_id JOIN agents a ON a.id=c.agent_id LEFT JOIN users customer ON customer.id=c.user_id LEFT JOIN users operator ON operator.id=s.assigned_operator_id LEFT JOIN support_queues q ON q.id=s.queue_id`;
 export async function caseDetail(caseId: string, workspaceId: string) {
   const [row] =
@@ -34,7 +34,7 @@ export async function listCases(
  AND (${q.channel ?? null}::text IS NULL OR c.channel=${q.channel ?? null})
  AND (${q.scope}='all' OR (s.status NOT IN ('resolved','closed','cancelled') AND
   (${q.scope}='open' OR (${q.scope}='waiting' AND s.status IN ('requested','triaging','queued','assigned')) OR (${q.scope}='active' AND s.status IN ('active','waiting_customer','waiting_external')) OR (${q.scope}='mine' AND s.assigned_operator_id=${userId}) OR (${q.scope}='unassigned' AND s.assigned_operator_id IS NULL))))
- AND (${term}='' OR strpos(lower(s.id::text),${term})>0 OR strpos(lower(c.id::text),${term})>0 OR strpos(lower(COALESCE(customer.name,'Guest visitor')),${term})>0 OR strpos(lower(s.reason_text),${term})>0)
+ AND (${term}='' OR strpos(lower(s.id::text),${term})>0 OR strpos(lower(c.id::text),${term})>0 OR strpos(lower(COALESCE(NULLIF(btrim(customer.name),''),'Anonymous')),${term})>0 OR strpos(lower(s.reason_text),${term})>0)
  AND (s.created_at,s.id)<(${q.before ?? new Date().toISOString()},${q.beforeId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"})
  ORDER BY s.created_at DESC,s.id DESC LIMIT ${q.limit + 1}`;
 }

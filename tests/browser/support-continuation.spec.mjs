@@ -203,7 +203,7 @@ test("Approved resolution continues the same customer journey without private st
     .click();
   await expect(create).toBeHidden();
   await page
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await expect(
     page.getByRole("heading", { name: "Conversation", exact: true }),
@@ -226,7 +226,7 @@ test("Approved resolution continues the same customer journey without private st
   const operator = await operatorContext.newPage();
   await openSupport(operator);
   await operator
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await operator
     .getByRole("button", { name: "Accept case", exact: true })

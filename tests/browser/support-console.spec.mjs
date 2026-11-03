@@ -112,6 +112,96 @@ async function openSupport(page) {
     page.getByRole("heading", { name: "Human Support", exact: true }),
   ).toBeVisible();
 }
+test("Inbox starts with one filter row and supports adding, removing and resetting filters", async ({
+  page,
+  context,
+}, testInfo) => {
+  await staff(context, "owner");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openSupport(page);
+  const filters = page.getByRole("region", {
+    name: "Case filters",
+    exact: true,
+  });
+  await expect(filters.getByRole("combobox")).toHaveCount(2);
+  await expect(
+    filters.getByRole("combobox", { name: "Cases", exact: true }),
+  ).toHaveValue("open");
+  await expect(
+    filters.getByRole("combobox", { name: "Queue", exact: true }),
+  ).toBeVisible();
+  await expect(
+    filters.getByRole("combobox", { name: "Priority", exact: true }),
+  ).toHaveCount(0);
+  const row = await filters.locator(".support-filter-bar").boundingBox();
+  expect(row.height).toBeLessThan(70);
+  await filters
+    .getByRole("button", { name: "Add filter", exact: true })
+    .click();
+  const picker = page.getByRole("dialog", { name: "Add inbox filter" });
+  await picker.getByRole("button", { name: "Priority", exact: true }).click();
+  await expect(picker).toBeHidden();
+  const applied = page.waitForRequest(
+    (r) =>
+      r.url().includes("/support/cases?") &&
+      new URL(r.url()).searchParams.get("priority") === "urgent",
+  );
+  await filters
+    .getByRole("combobox", { name: "Priority", exact: true })
+    .selectOption("urgent");
+  await applied;
+  const cleared = page.waitForRequest(
+    (r) =>
+      r.url().includes("/support/cases?") &&
+      !new URL(r.url()).searchParams.has("priority"),
+  );
+  await filters
+    .getByRole("button", { name: "Remove Priority filter", exact: true })
+    .click();
+  // Removing returns to the cached default query; refreshing proves no hidden priority remains.
+  await filters
+    .getByRole("button", { name: "Refresh support inbox", exact: true })
+    .click();
+  await cleared;
+  await expect(
+    filters.getByRole("combobox", { name: "Priority", exact: true }),
+  ).toHaveCount(0);
+  await filters
+    .getByRole("button", { name: "Remove Queue filter", exact: true })
+    .click();
+  await expect(filters.getByRole("combobox")).toHaveCount(1);
+  await filters
+    .getByRole("button", { name: "Add filter", exact: true })
+    .click();
+  await expect(
+    picker.getByRole("button", { name: "Queue", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await filters
+    .getByRole("button", { name: "Reset filters", exact: true })
+    .click();
+  await expect(filters.getByRole("combobox")).toHaveCount(2);
+  await page.screenshot({
+    path: testInfo.outputPath("support-inbox-default.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.screenshot({
+    path: testInfo.outputPath("support-inbox-mobile.png"),
+    fullPage: true,
+  });
+
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBeTruthy();
+  await expect(filters.locator(".support-filter-bar")).toHaveCSS(
+    "flex-wrap",
+    "nowrap",
+  );
+});
+
 test("Support console assigns, accepts, notes privately, replies and restores customer AI chat", async ({
   page,
   context,
@@ -173,7 +263,7 @@ test("Support console assigns, accepts, notes privately, replies and restores cu
     .click();
   await expect(create).toBeHidden();
   await page
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await expect(
     page.getByRole("heading", { name: "Conversation", exact: true }),
@@ -199,7 +289,7 @@ test("Support console assigns, accepts, notes privately, replies and restores cu
   const operator = await operatorContext.newPage();
   await openSupport(operator);
   await operator
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await operator
     .getByRole("button", { name: "Accept case", exact: true })
@@ -256,7 +346,7 @@ test("Support console assigns, accepts, notes privately, replies and restores cu
   const analyst = await analystContext.newPage();
   await openSupport(analyst);
   await analyst
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await expect(analyst.getByRole("log")).toContainText(
     "PRIVATE: identity reviewed by staff",
@@ -308,13 +398,18 @@ test("Support console assigns, accepts, notes privately, replies and restores cu
   await page
     .getByLabel("Queue", { exact: true })
     .selectOption({ label: "Billing" });
+  await page.getByRole("button", { name: "Add filter", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Add inbox filter" })
+    .getByRole("button", { name: "Status", exact: true })
+    .click();
   await page.getByLabel("Status", { exact: true }).selectOption("resolved");
   await expect(
-    page.getByRole("button", { name: /Open Case .* for Guest visitor/ }),
+    page.getByRole("button", { name: /Open Case .* for Anonymous/ }),
   ).toBeVisible();
   await page.setViewportSize({ width: 360, height: 800 });
   await page
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await expect(
     page.getByRole("heading", { name: "Conversation", exact: true }),
@@ -337,11 +432,11 @@ test("Support console assigns, accepts, notes privately, replies and restores cu
     .getByRole("button", { name: "Back to inbox", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: /Open Case .* for Guest visitor/ }),
+    page.getByRole("button", { name: /Open Case .* for Anonymous/ }),
   ).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await visitor
     .getByRole("button", { name: "Request human support", exact: true })
@@ -350,10 +445,10 @@ test("Support console assigns, accepts, notes privately, replies and restores cu
     .getByRole("button", { name: "Reset filters", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: /Open Case .* for Guest visitor/ }),
+    page.getByRole("button", { name: /Open Case .* for Anonymous/ }),
   ).toBeVisible({ timeout: 15000 });
   await page
-    .getByRole("button", { name: /Open Case .* for Guest visitor/ })
+    .getByRole("button", { name: /Open Case .* for Anonymous/ })
     .click();
   await page.getByRole("button", { name: "Claim case", exact: true }).click();
   await expect(
@@ -543,9 +638,7 @@ test("Playground persists through navigation and reload and shares its composer 
     await expect(
       chat.getByText("Remember this billing test", { exact: true }),
     ).toHaveCount(0);
-    await expect(chat.getByRole("log")).not.toContainText(
-      "My reference is TEST-123",
-    );
+    await expect(chat).not.toContainText("My reference is TEST-123");
   } finally {
     await staffContext.close();
   }
