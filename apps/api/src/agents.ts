@@ -951,23 +951,25 @@ async function streamChat(
             write("error", {
               code: errorCode,
               message:
-                errorCode === "KNOWLEDGE_PLAN_INVALID"
-                  ? "The knowledge usage decision was invalid. Check your model and usage instructions, then retry."
-                  : errorCode === "GROUNDED_RESPONSE_INVALID"
-                    ? "The answer could not be verified. Please clarify your question or request customer care."
-                    : errorCode === "TOOL_REQUIRED"
-                      ? "Your tool policy requires a call, but no relevant safe call was selected. Review the usage policy and tool descriptions."
-                      : errorCode === "NO_RELEVANT_SOURCES"
-                        ? "No relevant knowledge was found. Try another question or check the knowledge sources."
-                        : errorCode === "CITATION_REQUIRED" ||
-                            errorCode === "INVALID_CITATION"
-                          ? "The response could not be verified against its source references."
-                          : errorCode === "KNOWLEDGE_NOT_PUBLIC"
-                            ? "This knowledge is unavailable in public chat."
-                            : errorCode.startsWith("TOOL_") ||
-                                errorCode.startsWith("MCP_")
-                              ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
-                              : c.fallbackResponse,
+                errorCode === "EMPTY_PROVIDER_RESPONSE"
+                  ? "The model returned no response text. Retry, or check the model output limit and provider configuration."
+                  : errorCode === "KNOWLEDGE_PLAN_INVALID"
+                    ? "The knowledge usage decision was invalid. Check your model and usage instructions, then retry."
+                    : errorCode === "GROUNDED_RESPONSE_INVALID"
+                      ? "The answer could not be verified. Please clarify your question or request customer care."
+                      : errorCode === "TOOL_REQUIRED"
+                        ? "Your tool policy requires a call, but no relevant safe call was selected. Review the usage policy and tool descriptions."
+                        : errorCode === "NO_RELEVANT_SOURCES"
+                          ? "No relevant knowledge was found. Try another question or check the knowledge sources."
+                          : errorCode === "CITATION_REQUIRED" ||
+                              errorCode === "INVALID_CITATION"
+                            ? "The response could not be verified against its source references."
+                            : errorCode === "KNOWLEDGE_NOT_PUBLIC"
+                              ? "This knowledge is unavailable in public chat."
+                              : errorCode.startsWith("TOOL_") ||
+                                  errorCode.startsWith("MCP_")
+                                ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
+                                : c.fallbackResponse,
               status,
             });
           else {

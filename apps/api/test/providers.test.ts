@@ -39,6 +39,21 @@ function fixtureTransport(
     };
   };
 }
+function completedTextFrames(provider: ProviderName): string[] {
+  if (provider === "anthropic")
+    return [
+      'data: {"type":"content_block_delta","delta":{"text":"Hello"}}\n\n',
+      'data: {"type":"message_stop"}\n\n',
+    ];
+  if (provider === "gemini")
+    return [
+      'data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]},"finishReason":"STOP"}]}\n\n',
+    ];
+  return [
+    'data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":"stop"}]}\n\n',
+    "data: [DONE]\n\n",
+  ];
+}
 async function output(
   provider: ProviderName,
   frames: string[],
@@ -195,6 +210,47 @@ test("Provider failures and incomplete streams are explicit and redact upstream 
       ]),
     (e) => e instanceof Error && "code" in e && e.code === "INCOMPLETE_STREAM",
   );
+});
+test("Completed streams without visible text fail before citation validation", async () => {
+  for (const provider of ["openai", "openai-compatible"] as const) {
+    for (const reason of ["stop", "length"]) {
+      for (const delta of [
+        {},
+        { content: "" },
+        { content: " \n\t" },
+        { reasoning_content: "internal reasoning" },
+      ]) {
+        await assert.rejects(
+          () =>
+            output(provider, [
+              `data: ${JSON.stringify({ choices: [{ delta, finish_reason: reason }] })}\n\n`,
+              "data: [DONE]\n\n",
+            ]),
+          (e) =>
+            e instanceof ProviderError && e.code === "EMPTY_PROVIDER_RESPONSE",
+        );
+      }
+    }
+    await assert.rejects(
+      () => output(provider, ["data: [DONE]\n\n"]),
+      (e) => e instanceof ProviderError && e.code === "EMPTY_PROVIDER_RESPONSE",
+    );
+  }
+  for (const [provider, frame] of [
+    ["anthropic", 'data: {"type":"message_stop"}\n\n'],
+    ["gemini", 'data: {"candidates":[{"finishReason":"STOP"}]}\n\n'],
+  ] as const) {
+    await assert.rejects(
+      () => output(provider, [frame]),
+      (e) => e instanceof ProviderError && e.code === "EMPTY_PROVIDER_RESPONSE",
+    );
+  }
+});
+test("Visible output at the token limit remains available", async () => {
+  const events = await output("openai-compatible", [
+    'data: {"choices":[{"delta":{"content":"Answer [1]"},"finish_reason":"length"}]}\n\n',
+  ]);
+  assert.deepEqual(events, [{ type: "token", text: "Answer [1]" }]);
 });
 test("Endpoint validation blocks unapproved hosts, credentials, insecure URLs and private IPs", async () => {
   assert.throws(() =>
@@ -374,12 +430,7 @@ test("Knowledge schema uses native OpenAI/Gemini output while compatible and Ant
     "anthropic",
   ] as const) {
     let payload: Record<string, unknown> = {};
-    const frames =
-      provider === "gemini"
-        ? ['data: {"candidates":[{"finishReason":"STOP"}]}\n\n']
-        : provider === "anthropic"
-          ? ['data: {"type":"message_stop"}\n\n']
-          : ["data: [DONE]\n\n"];
+    const frames = completedTextFrames(provider);
     const p = createProvider(
       {
         provider,
@@ -429,9 +480,12 @@ test("Vision images use native provider payloads while text messages retain thei
         apiKey: "fixture",
         capabilities: { temperature: false, topP: false },
       },
-      fixtureTransport(["data: [DONE]\n\n"], (_url, _headers, body) => {
-        captured = JSON.stringify(body);
-      }),
+      fixtureTransport(
+        completedTextFrames(provider),
+        (_url, _headers, body) => {
+          captured = JSON.stringify(body);
+        },
+      ),
     );
     for await (const event of client.stream({
       ...input,
