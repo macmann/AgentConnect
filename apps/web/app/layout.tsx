@@ -2,13 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 export const metadata: Metadata = {
   title: "API Toolz · Workspace",
-  icons: {
-    icon: {
-      url: "https://apitoolz.com/brand/apitoolz-icon.svg",
-      type: "image/svg+xml",
-      sizes: "any",
-    },
-  },
+  icons: { icon: [], apple: [], shortcut: [] },
   description: "Build, orchestrate, and govern enterprise AI agents.",
 };
 export default function Layout({ children }: { children: React.ReactNode }) {

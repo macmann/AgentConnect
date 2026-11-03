@@ -237,7 +237,7 @@ export async function registerPlatformApi(
     { ...options("Stateless MCP Streamable HTTP endpoint"), bodyLimit: 64000 },
     async (r, reply) => {
       const key = await platformKey(r);
-      const server = new McpServer({ name: "agent-connex", version: "1.0.0" });
+      const server = new McpServer({ name: "API Toolz", version: "1.0.0" });
       if (key.workflow_id)
         throw new HttpError(
           400,

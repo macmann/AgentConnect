@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-test("Product logo and theme persist across reloads, system changes and mobile layouts", async ({
+test("Product name and theme persist across reloads, system changes and mobile layouts", async ({
   page,
 }) => {
   const errors = [];
@@ -8,16 +8,12 @@ test("Product logo and theme persist across reloads, system changes and mobile l
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(
-    page.getByRole("img", { name: "API Toolz", exact: true }),
-  ).toBeVisible();
+  await expect(page.locator(".product-brand")).toBeVisible();
   await page
     .getByRole("button", { name: "Switch to light theme", exact: true })
     .click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await expect(
-    page.getByRole("img", { name: "API Toolz", exact: true }),
-  ).toBeVisible();
+  await expect(page.locator(".product-brand")).toBeVisible();
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await page.emulateMedia({ colorScheme: "light" });
@@ -41,9 +37,9 @@ test("Product logo and theme persist across reloads, system changes and mobile l
       fullPage: true,
     });
   await expect(page).toHaveTitle("API Toolz · Workspace");
-  await expect(
-    page.getByRole("img", { name: "API Toolz", exact: true }),
-  ).toHaveAttribute("src", "https://apitoolz.com/brand/apitoolz-icon.svg");
+  await expect(page.locator(".product-brand")).toHaveText("API Toolz");
+  await expect(page.locator(".product-brand img")).toHaveCount(0);
+  await expect(page.locator('link[rel="icon"]')).toHaveCount(0);
   const legacy = await page.request.get(
     "http://localhost:4000/brand/agent-connex-logo.svg",
     { maxRedirects: 0 },

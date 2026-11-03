@@ -4689,19 +4689,8 @@ footer {
   font-weight: 750;
   white-space: nowrap;
 }
-.product-brand .product-logo {
-  display: block;
-  width: 40px;
-  height: 40px;
-  flex: none;
-  object-fit: contain;
-}
 .auth-story .product-brand {
   font-size: 30px;
-}
-.auth-story .product-brand .product-logo {
-  width: 52px;
-  height: 52px;
 }
 .global-theme-control {
   position: fixed;

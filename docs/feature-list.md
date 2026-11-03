@@ -1,4 +1,4 @@
-# Agent Connex feature list
+# API Toolz feature list
 
 This inventory describes implemented product capabilities, not every requirement in the master specification. Provider integrations require configured accounts and permissions; local protocol tests do not certify external-provider acceptance.
 
@@ -124,10 +124,10 @@ Salesforce, Zendesk and Zoho integrations are deferred. Advanced workflow extens
 
 ## Branding and display
 
-- Agent Connex branding with the supplied cyan/violet SVG logo.
+- Text-only API Toolz product branding; the platform logo is temporarily hidden.
 - Consistent semantic colors across workspace screens, authentication, hosted chat and workflow canvases.
 - Light/dark display modes, a top theme switcher, device preference defaults and saved browser preferences.
-- Independent light/dark widget switching, with customer deployment branding preserved.
+- Customer widgets follow their configured deployment palette and customer branding.
 
 ## Website crawling
 
