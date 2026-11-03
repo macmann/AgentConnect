@@ -11,7 +11,7 @@ export const configureSections = [
   "advanced",
 ] as const;
 export type ConfigureSection = (typeof configureSections)[number];
-export type StudioStage = "configure" | "playground" | "publish";
+export type StudioStage = "configure" | "playground" | "publish" | "history";
 export type KnowledgeOption = {
   id: string;
   name: string;

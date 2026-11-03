@@ -8,16 +8,10 @@ import { useState, useRef, useEffect, type FormEvent } from "react";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import { Plus, ArrowUpRight, Upload, ChevronLeft } from "lucide-react";
 import { Button } from "./button";
-import { Citations, type Citation } from "./citations";
-import { ToolTraces, type ToolTrace } from "./tool-studio";
 import { ChatPanel } from "./chat-panel";
-import { GenerativeResponse } from "./generative-response";
-import {
-  blockNames,
-  type RenderedBlock,
-} from "@agentconnect/schemas/generative";
-import { MessageReview } from "./message-review";
-import { permitted, type Role } from "@agentconnect/schemas/foundation";
+import { blockNames } from "@agentconnect/schemas/generative";
+import { Conversations } from "./conversation-history";
+export { Conversations } from "./conversation-history";
 import { AgentConfigure, AgentReadiness } from "./agent-configure";
 import {
   agentReadiness,
@@ -723,9 +717,7 @@ export function AgentStudio({
     onNavigate(destination);
     approvedLeave.current = false;
   }
-  const [tab, setTab] = useState<"configure" | "playground" | "publish">(
-    "configure",
-  );
+  const [tab, setTab] = useState<StudioStage>("configure");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -857,7 +849,7 @@ export function AgentStudio({
       )
         ? (p.get("section") as ConfigureSection)
         : "overview";
-      const stage = ["configure", "playground", "publish"].includes(
+      const stage = ["configure", "playground", "publish", "history"].includes(
         p.get("stage") ?? "",
       )
         ? (p.get("stage") as StudioStage)
@@ -1075,21 +1067,31 @@ export function AgentStudio({
               role="navigation"
               aria-label="Agent lifecycle"
             >
-              {(["configure", "playground", "publish"] as const).map((t) => (
-                <button
-                  className={tab === t ? "active" : ""}
-                  key={t}
-                  aria-current={tab === t ? "page" : undefined}
-                  onClick={() => {
-                    setTab(t);
-                    studioURL(draft.id, t, section);
-                  }}
-                  disabled={(!draft.id || dirty) && t !== "configure"}
-                >
-                  {t}
-                </button>
-              ))}
+              {(["configure", "playground", "publish", "history"] as const).map(
+                (t) => (
+                  <button
+                    className={tab === t ? "active" : ""}
+                    key={t}
+                    aria-current={tab === t ? "page" : undefined}
+                    onClick={() => {
+                      setTab(t);
+                      studioURL(draft.id, t, section);
+                    }}
+                    disabled={(!draft.id || dirty) && t !== "configure"}
+                  >
+                    {t === "history" ? "Conversation history" : t}
+                  </button>
+                ),
+              )}
             </div>
+            {tab === "history" && draft.id && (
+              <Conversations
+                key={draft.id}
+                workspaceId={workspaceId}
+                role={role}
+                agentId={draft.id}
+              />
+            )}
             {tab === "configure" && canBuild && (
               <>
                 <Button
@@ -1358,234 +1360,5 @@ export function AgentStudio({
         )}
       </section>
     </>
-  );
-}
-export function Conversations({
-  workspaceId,
-  role,
-}: {
-  workspaceId: string;
-  role: string;
-}) {
-  const [status, setStatus] = useState(""),
-    [rating, setRating] = useState(""),
-    [channel, setChannel] = useState(""),
-    [filterAgent, setFilterAgent] = useState(""),
-    [days, setDays] = useState(30);
-  const agents = useQuery({
-    queryKey: ["agents", workspaceId],
-    queryFn: () =>
-      requestJson<AgentSummary[]>(`/workspaces/${workspaceId}/agents`),
-  });
-  function resetFilters() {
-    setPages([]);
-    setBefore("");
-    setBeforeId("");
-    setSelected("");
-  }
-  const [pages, setPages] = useState<
-    { id: string; name: string; created_at: string }[]
-  >([]);
-  const [before, setBefore] = useState("");
-  const [beforeId, setBeforeId] = useState("");
-  const [selected, setSelected] = useState("");
-  const conversations = useQuery({
-    queryKey: [
-      "conversations",
-      workspaceId,
-      before,
-      beforeId,
-      status,
-      rating,
-      channel,
-      filterAgent,
-      days,
-    ],
-    queryFn: () =>
-      requestJson<{ id: string; name: string; created_at: string }[]>(
-        `/workspaces/${workspaceId}/operations/conversations?${new URLSearchParams({ days: String(days), ...(status ? { status } : {}), ...(rating ? { rating } : {}), ...(channel ? { channel } : {}), ...(filterAgent ? { agentId: filterAgent } : {}), ...(before ? { before, beforeId } : {}) })}`,
-      ),
-  });
-  const messages = useQuery({
-    queryKey: ["conversation-messages", selected],
-    queryFn: () =>
-      requestJson<
-        {
-          id: string;
-          role: string;
-          content: string;
-          status: string;
-          citations: Citation[];
-          ui_blocks: RenderedBlock[];
-        }[]
-      >(`/conversations/${selected}/messages`),
-    enabled: !!selected,
-  });
-  const toolTraces = useQuery({
-    queryKey: ["conversation-tools", selected],
-    queryFn: () =>
-      requestJson<ToolTrace[]>(`/conversations/${selected}/tool-executions`),
-    enabled: !!selected,
-  });
-  const rows = [...pages, ...(conversations.data ?? [])];
-  return (
-    <section className="panel">
-      <div className="panel-header">
-        <h3>Conversation history</h3>
-        <p>Workspace-scoped conversation records and run outcomes.</p>
-      </div>
-      <div className="operations-filters">
-        <label>
-          Agent
-          <select
-            value={filterAgent}
-            onChange={(e) => {
-              resetFilters();
-              setFilterAgent(e.target.value);
-            }}
-          >
-            <option value="">All agents</option>
-            {agents.data?.map((a) => (
-              <option value={a.id} key={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Run status
-          <select
-            value={status}
-            onChange={(e) => {
-              resetFilters();
-              setStatus(e.target.value);
-            }}
-          >
-            <option value="">All statuses</option>
-            {["running", "completed", "failed", "cancelled"].map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Rating
-          <select
-            aria-label="Rating filter"
-            value={rating}
-            onChange={(e) => {
-              resetFilters();
-              setRating(e.target.value);
-            }}
-          >
-            <option value="">All ratings</option>
-            <option value="like">Like</option>
-            <option value="dislike">Dislike</option>
-          </select>
-        </label>
-        <label>
-          Channel
-          <select
-            value={channel}
-            onChange={(e) => {
-              resetFilters();
-              setChannel(e.target.value);
-            }}
-          >
-            <option value="">All channels</option>
-            <option value="playground">Playground</option>
-            <option value="hosted">Hosted chat</option>
-            <option value="widget">Website widget</option>
-          </select>
-        </label>
-        <label>
-          Period
-          <select
-            value={days}
-            onChange={(e) => {
-              resetFilters();
-              setDays(Number(e.target.value));
-            }}
-          >
-            <option value={7}>Last 7 days</option>
-            <option value={30}>Last 30 days</option>
-            <option value={90}>Last 90 days</option>
-          </select>
-        </label>
-      </div>
-      {conversations.isPending && (
-        <p role="status" className="empty">
-          Loading conversations…
-        </p>
-      )}
-      {conversations.error && (
-        <p className="error-banner">{conversations.error.message}</p>
-      )}
-      <div className="conversation-grid">
-        <div>
-          {rows.map((c) => (
-            <button
-              key={c.id}
-              className={`conversation-row ${selected === c.id ? "selected" : ""}`}
-              onClick={() => setSelected(c.id)}
-            >
-              <strong>{c.name}</strong>
-              <small>{new Date(c.created_at).toLocaleString()}</small>
-            </button>
-          ))}
-          {conversations.data?.length === 30 && (
-            <Button
-              className="secondary"
-              onClick={() => {
-                setPages(rows);
-                const last = rows[rows.length - 1]!;
-                setBefore(last.created_at);
-                setBeforeId(last.id);
-              }}
-            >
-              Load more
-            </Button>
-          )}
-          {!rows.length && !conversations.isPending && !conversations.error && (
-            <p className="empty">
-              No conversations match these filters. Try a wider period or start
-              a playground chat.
-            </p>
-          )}
-        </div>
-        <div className="conversation-detail">
-          <ToolTraces traces={toolTraces.data ?? []} />
-          {messages.isPending && selected && <p>Loading messages…</p>}
-          {messages.error && <p className="error">{messages.error.message}</p>}
-          {messages.data?.map((m) => (
-            <div key={m.id} className={`chat-message ${m.role}`}>
-              <small>
-                {m.role} · {m.status}
-              </small>
-              <div>{m.content}</div>
-              {m.ui_blocks?.length > 0 && (
-                <GenerativeResponse
-                  blocks={m.ui_blocks}
-                  messageId={m.id}
-                  interactive={false}
-                />
-              )}
-              <Citations sources={m.citations ?? []} />
-              {m.role === "assistant" && (
-                <MessageReview
-                  messageId={m.id}
-                  conversationId={selected}
-                  canReview={permitted(role as Role, "conversation:review")}
-                />
-              )}
-            </div>
-          ))}
-          {!selected && (
-            <p className="empty">
-              Select a conversation to inspect its messages.
-            </p>
-          )}
-        </div>
-      </div>
-    </section>
   );
 }

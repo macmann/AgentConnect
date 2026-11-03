@@ -1,3 +1,4 @@
+import { registerConversationHistory } from "./conversation-history.js";
 import { validateCustomerActions } from "./customer-workflows.js";
 import { registerCustomerReports } from "./customer-reports.js";
 import { registerKnowledgeGaps } from "./knowledge-gaps.js";
@@ -36,6 +37,7 @@ export async function registerOperationsRoutes(
   app: FastifyInstance,
   embeddingFactory?: import("@agentconnect/provider-sdk/embeddings").EmbeddingFactory,
 ) {
+  await registerConversationHistory(app);
   await registerCustomerReports(app);
   await registerKnowledgeGaps(app, embeddingFactory);
   app.get("/workspaces/:workspaceId/operations/audit", async (r) => {

@@ -12,6 +12,7 @@ import {
   metadataFilter as metadataFilterSchema,
   type MetadataFilter,
 } from "@agentconnect/schemas/knowledge-metadata";
+import { WorkspaceRecordLink } from "./workspace-record-link";
 import { KnowledgeUploads, useKnowledgeUploads } from "./knowledge-uploads";
 import { ExtractionUsage } from "./extraction-usage";
 import { ExtractionReview, type ExtractionPage } from "./extraction-review";
@@ -88,6 +89,9 @@ type Source = {
     maxDepth?: number;
     ocrPages?: number;
     unrecognizedPages?: number;
+    provenance?: { conversationId?: string; messageId?: string };
+    reviewId?: string;
+    goldenAnswer?: boolean;
     question?: string;
     answer?: string;
     tags?: string[];
@@ -125,6 +129,9 @@ export function KnowledgeStudio({
   const canRead = canManage || ["operator", "analyst"].includes(role);
   const canRetrieve = canManage || role === "analyst";
   const canModel = ["owner", "org_admin", "workspace_admin"].includes(role);
+  const [sourceKind, setSourceKind] = useState<"knowledge" | "qa">("knowledge");
+  const [qaOrigin, setQaOrigin] = useState("");
+  const [qaSearch, setQaSearch] = useState("");
   const [selected, setSelected] = useState("");
   const [tab, setTab] = useState<
     "sources" | "playground" | "releases" | "settings"
@@ -207,7 +214,8 @@ export function KnowledgeStudio({
     const baseId = params.get("knowledgeBase");
     if (baseId) {
       setSelected(baseId);
-      setTab("settings");
+      setTab(params.get("knowledgeView") === "qa" ? "sources" : "settings");
+      if (params.get("knowledgeView") === "qa") setSourceKind("qa");
     } else if (params.get("createResource") === "knowledge" && canManage)
       setForm("base");
   }, [workspaceId, canManage]);
@@ -249,6 +257,21 @@ export function KnowledgeStudio({
         ? 2000
         : false,
   });
+  const visibleSources = (sources.data ?? []).filter(
+    (s) =>
+      (sourceKind === "qa" ? s.kind === "qa" : s.kind !== "qa") &&
+      (sourceKind !== "qa" ||
+        ((!qaSearch ||
+          `${s.title} ${s.metadata.answer ?? ""}`
+            .toLowerCase()
+            .includes(qaSearch.toLowerCase())) &&
+          (!qaOrigin ||
+            (qaOrigin === "history"
+              ? !!(s.metadata.provenance?.conversationId || s.metadata.reviewId)
+              : !(
+                  s.metadata.provenance?.conversationId || s.metadata.reviewId
+                ))))),
+  );
   const taggingJobs = useQuery({
     queryKey: ["metadata-suggestions", selected],
     queryFn: () =>
@@ -412,6 +435,7 @@ export function KnowledgeStudio({
         await requestJson(path + "/qa/import", "POST", {
           csv: await file.text(),
         });
+        setSourceKind("qa");
         setNotice("Q&A import queued");
       }
       setForm(null);
@@ -1092,6 +1116,63 @@ export function KnowledgeStudio({
           )}
           {tab === "sources" && (
             <>
+              <div className="knowledge-kind-toolbar">
+                <div role="group" aria-label="Knowledge content type">
+                  <Button
+                    className={sourceKind === "knowledge" ? "" : "secondary"}
+                    aria-pressed={sourceKind === "knowledge"}
+                    onClick={() => {
+                      setSourceKind("knowledge");
+                      setSelectedSourceIds([]);
+                    }}
+                  >
+                    Knowledge (
+                    {sources.data?.filter((s) => s.kind !== "qa").length ?? 0})
+                  </Button>
+                  <Button
+                    className={sourceKind === "qa" ? "" : "secondary"}
+                    aria-pressed={sourceKind === "qa"}
+                    onClick={() => {
+                      setSourceKind("qa");
+                      setSelectedSourceIds([]);
+                    }}
+                  >
+                    Q&A (
+                    {sources.data?.filter((s) => s.kind === "qa").length ?? 0})
+                  </Button>
+                </div>
+                {sourceKind === "qa" && (
+                  <>
+                    <label>
+                      Origin
+                      <select
+                        value={qaOrigin}
+                        onChange={(e) => {
+                          setQaOrigin(e.target.value);
+                          setSelectedSourceIds([]);
+                        }}
+                      >
+                        <option value="">All Q&A</option>
+                        <option value="manual">Added here</option>
+                        <option value="history">
+                          Moderated from chat history
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      Search Q&A
+                      <input
+                        value={qaSearch}
+                        onChange={(e) => {
+                          setQaSearch(e.target.value);
+                          setSelectedSourceIds([]);
+                        }}
+                        placeholder="Question or answer"
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
               <div className="knowledge-toolbar">
                 {canManage && (
                   <>
@@ -1111,6 +1192,7 @@ export function KnowledgeStudio({
                       className="secondary"
                       onClick={() => {
                         setEditing(null);
+                        setSourceKind("qa");
                         setForm("qa");
                       }}
                     >
@@ -1152,7 +1234,7 @@ export function KnowledgeStudio({
                     onSaved={refreshMetadata}
                   />
                 )}
-              {sources.data?.length ? (
+              {visibleSources.length ? (
                 <div className="table-wrap">
                   <table>
                     <thead>
@@ -1163,8 +1245,8 @@ export function KnowledgeStudio({
                               type="checkbox"
                               aria-label="Select up to 100 sources"
                               checked={
-                                !!sources.data?.length &&
-                                sources.data
+                                !!visibleSources.length &&
+                                visibleSources
                                   .slice(0, 100)
                                   .every((s) =>
                                     selectedSourceIds.includes(s.id),
@@ -1173,8 +1255,8 @@ export function KnowledgeStudio({
                               onChange={(e) =>
                                 setSelectedSourceIds(
                                   e.target.checked
-                                    ? sources
-                                        .data!.slice(0, 100)
+                                    ? visibleSources
+                                        .slice(0, 100)
                                         .map((s) => s.id)
                                     : [],
                                 )
@@ -1182,14 +1264,16 @@ export function KnowledgeStudio({
                             />
                           </th>
                         )}
-                        <th>Source</th>
+                        <th>
+                          {sourceKind === "qa" ? "Question & answer" : "Source"}
+                        </th>
                         <th>Status</th>
                         <th>Chunks</th>
                         <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {sources.data.map((s) => (
+                      {visibleSources.map((s) => (
                         <tr key={s.id}>
                           {canManage && (
                             <td>
@@ -1215,6 +1299,41 @@ export function KnowledgeStudio({
                           )}
                           <td>
                             <strong>{s.title}</strong>
+                            {s.kind === "qa" && (
+                              <div className="knowledge-qa-summary">
+                                <span className="support-badge">
+                                  {s.metadata.provenance?.conversationId ||
+                                  s.metadata.reviewId
+                                    ? "Moderated from chat history"
+                                    : "Added here"}
+                                </span>
+                                {s.metadata.goldenAnswer && (
+                                  <span className="support-badge">
+                                    Golden answer
+                                  </span>
+                                )}
+                                <details>
+                                  <summary>View answer</summary>
+                                  <p>
+                                    {s.metadata.answer ??
+                                      "No answer text available"}
+                                  </p>
+                                </details>
+                                {s.metadata.provenance?.conversationId && (
+                                  <WorkspaceRecordLink
+                                    workspaceId={workspaceId}
+                                    view="Conversations"
+                                    record={{
+                                      conversation:
+                                        s.metadata.provenance.conversationId,
+                                    }}
+                                  >
+                                    View source conversation
+                                  </WorkspaceRecordLink>
+                                )}
+                              </div>
+                            )}
+
                             {canManage ? (
                               <SourceMetadataEditor
                                 key={s.id}
@@ -1410,6 +1529,7 @@ export function KnowledgeStudio({
                                       className="text-button"
                                       onClick={() => {
                                         setEditing(s);
+                                        setSourceKind("qa");
                                         setForm("qa");
                                       }}
                                     >
@@ -1448,7 +1568,11 @@ export function KnowledgeStudio({
                 </div>
               ) : (
                 <div className="empty">
-                  <h3>Add your first source</h3>
+                  <h3>
+                    {sourceKind === "qa"
+                      ? "No Q&A matches this view"
+                      : "Add your first source"}
+                  </h3>
                   <p>
                     Documents become searchable after the ingestion worker
                     finishes.
