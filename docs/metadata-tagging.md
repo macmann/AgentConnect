@@ -6,7 +6,7 @@ Use metadata to organize knowledge and narrow the evidence an agent can retrieve
 
 | Method                 | Where                                                    | Behavior                                                                                                     |
 | ---------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Manual editing         | Sources → Tags & metadata                                | Replace that source's tags and custom fields; preserve internal ingestion/connector metadata.                |
+| Manual editing         | Sources → ⋯ → Advanced settings → Tags & metadata                                | Replace that source's tags and custom fields; preserve internal ingestion/connector metadata.                |
 | Shared upload metadata | Upload document → Shared metadata for all selected files | Copy the same values to one file or a batch of up to 100.                                                    |
 | Bulk editing           | Select source checkboxes                                 | Preview additions, removals and field updates, then apply to up to 100 sources atomically.                   |
 | AI suggestions         | Suggest metadata with AI                                 | Generate document-specific suggestions using a selected workspace model; review each source before applying. |
@@ -26,10 +26,12 @@ Example source metadata:
 }
 ```
 
+Each source occupies one compact row. Click its title for full details, Q&A answer text, origin links and warnings. The row’s **⋯** menu contains inspection, extraction, usage, editing, reingestion and removal actions. Advanced metadata controls open in a dialog rather than expanding the table. Closing the metadata editor warns before unsaved edits are discarded.
+
 ## Tag individual sources
 
 1. Open **Knowledge**, select a knowledge base and stay on **Sources**.
-2. Expand **Tags & metadata** beneath a source.
+2. Open the source’s **⋯** menu, choose **Advanced settings**, and select **Tags & metadata**.
 3. Enter comma-separated tags. Use **Add metadata field** for each key/value pair.
 4. Select **Save metadata**.
 
@@ -63,7 +65,7 @@ The batch commits all changes or none. A stale revision, unavailable source or e
 
 AI tagging is **off by default**. It is separate from OCR and AI document extraction.
 
-For new uploads, enable **Suggest metadata with AI** and select a registered workspace chat model before starting uploads. The same switch works when uploading one file. For existing sources, expand **AI metadata tagging**, or use **AI suggestions for selected sources** in the bulk editor, then enable the switch, select a model and generate suggestions.
+For new uploads, enable **Suggest metadata with AI** and select a registered workspace chat model before starting uploads. The same switch works when uploading one file. For existing sources, choose **⋯ → Advanced settings → AI metadata tagging**, or use **AI suggestions for selected sources** in the bulk editor, then enable the switch, select a model and generate suggestions.
 
 The worker waits for ready indexed content, then sends a bounded excerpt to the selected provider. It normally makes one generation call per file and can incur provider cost. It uses a separate worker lane, so tagging does not hold up other ingestion jobs. An active request for a source is reused; reject pending suggestions before requesting a replacement.
 

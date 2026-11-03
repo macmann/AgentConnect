@@ -100,7 +100,7 @@ test("Source metadata saves, reloads safely, filters retrieval and fits mobile",
   );
   await page.getByRole("button", { name: /Loan knowledge/ }).click();
   const row = page.getByRole("row").filter({ hasText: "Loan policy" });
-  await row.locator("summary").filter({ hasText: "Tags & metadata" }).click();
+  await openAdvanced(page, row);
   const editor = page.getByRole("form", { name: "Metadata for Loan policy" });
   await editor.getByLabel("Tags", { exact: true }).fill("policy, retail");
   await editor
@@ -130,17 +130,19 @@ test("Source metadata saves, reloads safely, filters retrieval and fits mobile",
   await expect(editor.getByRole("status")).toContainText("Metadata saved");
   await page.reload();
   await page.getByRole("button", { name: /Loan knowledge/ }).click();
-  await page
-    .getByRole("row")
-    .filter({ hasText: "Loan policy" })
-    .locator("summary")
-    .filter({ hasText: "Tags & metadata" })
-    .click();
+  await openAdvanced(
+    page,
+    page.getByRole("row").filter({ hasText: "Loan policy" }),
+  );
   await expect(
     page
       .getByRole("form", { name: "Metadata for Loan policy" })
       .getByLabel("Tags", { exact: true }),
   ).toHaveValue("policy, retail");
+  await page
+    .getByRole("dialog", { name: "Advanced settings", exact: true })
+    .getByRole("button", { name: "Done", exact: true })
+    .click();
   await page
     .getByRole("button", { name: "Retrieval playground", exact: true })
     .click();
@@ -231,29 +233,39 @@ test("Shared upload metadata, bulk patch preview and optional AI review work tog
   await expect(row.getByText("ready", { exact: true })).toBeVisible({
     timeout: 30000,
   });
-  await row.getByText("AI metadata tagging", { exact: true }).click();
+  await openAdvanced(page, row);
+  const settings = page.getByRole("dialog", {
+    name: "Advanced settings",
+    exact: true,
+  });
+  await settings
+    .getByRole("button", { name: "AI metadata tagging", exact: true })
+    .click();
   await expect(
-    row.getByText("Review AI metadata suggestions", { exact: true }),
+    settings.getByRole("heading", {
+      name: "Review AI metadata suggestions",
+      exact: true,
+    }),
   ).toBeVisible({ timeout: 30000 });
   let [stored] =
     await sql`SELECT metadata FROM knowledge_sources WHERE knowledge_base_id=${kb} AND title='shared-policy.txt'`;
   expect(stored.metadata.tags).toEqual(["shared", "policy"]);
   expect(stored.metadata.attributes).toEqual({ department: "retail" });
-  await row
-    .getByText("Review AI metadata suggestions", { exact: true })
-    .click();
-  await row
+  await settings
     .getByRole("button", { name: "Apply reviewed suggestions", exact: true })
     .click();
   await expect(
-    row.getByText("AI tagging: applied", { exact: true }),
+    settings.getByText("AI tagging: applied", { exact: true }),
   ).toBeVisible();
-  await row.locator("summary").filter({ hasText: "Tags & metadata" }).click();
+  await settings
+    .getByRole("button", { name: "Tags & metadata", exact: true })
+    .click();
   await expect(
-    row
+    settings
       .getByRole("form", { name: "Metadata for shared-policy.txt" })
       .getByLabel("Tags", { exact: true }),
   ).toHaveValue(/ai-policy/);
+  await settings.getByRole("button", { name: "Done", exact: true }).click();
   await page.getByLabel("Select source Loan policy", { exact: true }).check();
   await page
     .getByLabel("Select source shared-policy.txt", { exact: true })
@@ -291,3 +303,10 @@ test("Shared upload metadata, bulk patch preview and optional AI review work tog
     document_type: "policy",
   });
 });
+
+async function openAdvanced(page, row) {
+  await row.getByRole("button", { name: /More actions for/ }).click();
+  await page
+    .getByRole("menuitem", { name: "Advanced settings", exact: true })
+    .click();
+}
