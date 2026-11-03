@@ -164,11 +164,6 @@ export async function registerKnowledgeRoutes(
         hostname,
         crawler: body?.crawler === "firecrawl" ? "firecrawl" : "builtin",
         httpStatus: error.statusCode,
-        hostApproved: hostname
-          ? hosts(config.KNOWLEDGE_ALLOWED_HOSTS).includes(hostname) ||
-            hosts(config.KNOWLEDGE_PRIVATE_HOSTS).includes(hostname)
-          : false,
-        approvedHostCount: hosts(config.KNOWLEDGE_ALLOWED_HOSTS).length,
         fields:
           error.validation?.map((v) => v.instancePath) ??
           (error instanceof z.ZodError
@@ -706,16 +701,17 @@ export async function registerKnowledgeRoutes(
         if (
           error instanceof ProviderError &&
           [
-            "ENDPOINT_NOT_ALLOWED",
+            "PRIVATE_ENDPOINT_BLOCKED",
             "HTTPS_REQUIRED",
             "INVALID_ENDPOINT",
           ].includes(error.code)
         ) {
-          const hostname = new URL(data.url).host;
           const message =
-            error.code === "ENDPOINT_NOT_ALLOWED"
-              ? `Website host ${hostname} is not approved by the running API (ENDPOINT_NOT_ALLOWED). Add this exact host to KNOWLEDGE_ALLOWED_HOSTS in the repository-root .env for both API and worker, preserving existing entries, then restart both services. If already configured, check for an older running process or an overriding environment variable. Hostnames with and without www are separate.`
-              : "Use an HTTPS website URL. HTTP requires an administrator-approved private endpoint (HTTPS_REQUIRED).";
+            error.code === "PRIVATE_ENDPOINT_BLOCKED"
+              ? "Use a public HTTPS website URL. Internal and private network destinations cannot be crawled."
+              : error.code === "INVALID_ENDPOINT"
+                ? "Use a valid website URL without embedded credentials."
+                : "Use an HTTPS website URL. HTTP is supported only for explicitly configured private endpoints.";
           throw Object.assign(new HttpError(400, message), {
             crawlCode: error.code,
           });
