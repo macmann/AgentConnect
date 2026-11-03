@@ -563,3 +563,36 @@ test("Empty-stream diagnostics retain finish reason, token usage and reasoning-o
     },
   );
 });
+
+test("Planner JSON object mode is explicit for OpenAI/compatible and Gemini; other requests keep their prior format", async () => {
+  for (const provider of [
+    "openai",
+    "openai-compatible",
+    "gemini",
+    "anthropic",
+  ] as const) {
+    let payload: Record<string, unknown> = {};
+    const p = createProvider(
+      {
+        provider,
+        modelId: "fixture",
+        baseUrl: "https://example.com/v1",
+        apiKey: "fixture-only",
+        capabilities: { temperature: true, topP: true },
+      },
+      fixtureTransport(completedTextFrames(provider), (_u, _h, body) => {
+        payload = body as Record<string, unknown>;
+      }),
+    );
+    for await (const event of p.stream({ ...input, responseFormat: "json" }))
+      void event;
+    if (provider === "openai" || provider === "openai-compatible")
+      assert.deepEqual(payload.response_format, { type: "json_object" });
+    else if (provider === "gemini")
+      assert.equal(
+        (payload.generationConfig as Record<string, unknown>).responseMimeType,
+        "application/json",
+      );
+    else assert.equal(payload.response_format, undefined);
+  }
+});

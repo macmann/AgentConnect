@@ -1,3 +1,5 @@
+import { ProviderError, type ChatRequest } from "@agentconnect/provider-sdk";
+import type { ToolPlanDiagnostic } from "../src/tool-planning.js";
 import { executeAgentSnapshot } from "../src/workflow-agents.js";
 import { modelSnapshot } from "../src/agents.js";
 import { capturedSpans } from "./tracing-fixture.js";
@@ -533,6 +535,17 @@ test("Agent tool planning is bounded, grounded and traced with combined provider
     message: "Weather?",
   });
   assert(bad.body.includes("TOOL_PLAN_INVALID"));
+  assert(bad.body.includes("No tools were executed"));
+  assert(!bad.body.includes("A configured tool is unavailable"));
+  const [failed] =
+    await sql`SELECT context_breakdown FROM agent_runs WHERE conversation_id IN (SELECT id FROM conversations WHERE agent_id=${agent}) ORDER BY started_at DESC LIMIT 1`;
+  const rejected = failed!.context_breakdown
+    .toolPlanning as ToolPlanDiagnostic[];
+  assert.equal(rejected.length, 2);
+  assert.equal(rejected[1]!.reason, "invalid_json");
+  assert.equal(rejected[1]!.attempt, 2);
+  assert.equal(rejected[1]!.willRetry, false);
+
   invalidPlan = false;
   overBudget = true;
   const many = await call("POST", `/agents/${agent}/chat`, {
@@ -805,6 +818,266 @@ test("Snapshot agent execution tolerates optional stale attachments, Disabled by
     ),
     { code: "TOOL_UNAVAILABLE" },
   );
+});
+test("Tool planning repairs once, accepts complete JSON fences, respects output budgets and meters both attempts", async () => {
+  const c = agentConfig.parse({
+      modelId: model,
+      maxOutputTokens: 20000,
+      tools: { toolIds: [httpTool] },
+    }),
+    diagnostics: ToolPlanDiagnostic[] = [];
+  let attempts = 0;
+  const provider = {
+    async *stream(request: ChatRequest) {
+      attempts++;
+      assert.equal(request.responseFormat, "json");
+      assert.equal(request.maxOutputTokens, attempts === 1 ? 4096 : 8192);
+      assert(!request.system.includes("private-fixture-key"));
+      yield {
+        type: "token" as const,
+        text:
+          attempts === 1
+            ? "private-fixture-key"
+            : "```json\n" +
+              JSON.stringify({
+                calls: [{ toolId: httpTool, arguments: { city: "Yangon" } }],
+              }) +
+              "\n```",
+      };
+      yield { type: "usage" as const, inputTokens: 2, outputTokens: 1 };
+    },
+  };
+  const [before] =
+    await sql`SELECT count(*)::int AS n FROM tool_executions WHERE tool_id=${httpTool}`;
+  const result = await runAgentTools(
+    c,
+    provider,
+    "weather",
+    {
+      workspaceId: workspace,
+      organizationId: org,
+      onPlanDiagnostic: (d) => diagnostics.push(d),
+    },
+    new AbortController().signal,
+    () => {},
+  );
+  assert.equal(attempts, 2);
+  assert.match(result.grounding, /sunny/);
+  assert.equal(result.inputTokens, 4);
+  assert.equal(result.outputTokens, 2);
+  assert.equal(diagnostics[0]!.reason, "invalid_json");
+  assert.equal(diagnostics[0]!.willRetry, true);
+  assert.equal(diagnostics[1]!.status, "validated");
+  assert.equal(diagnostics[1]!.fencedJson, true);
+  assert(!JSON.stringify(diagnostics).includes("private-fixture-key"));
+  const [after] =
+    await sql`SELECT count(*)::int AS n FROM tool_executions WHERE tool_id=${httpTool}`;
+  assert.equal(after!.n, before!.n + 1);
+});
+test("Rejected multi-call plans never execute their valid prefix and produce value-free diagnostics", async () => {
+  const c = agentConfig.parse({
+      modelId: model,
+      tools: { toolIds: [httpTool] },
+    }),
+    diagnostics: ToolPlanDiagnostic[] = [];
+  const [before] =
+    await sql`SELECT count(*)::int AS n FROM tool_executions WHERE tool_id=${httpTool}`;
+  let attempts = 0;
+  const provider = {
+    async *stream() {
+      attempts++;
+      yield {
+        type: "token" as const,
+        text: JSON.stringify({
+          calls: [
+            { toolId: httpTool, arguments: { city: "Yangon" } },
+            {
+              toolId: "private-fixture-key",
+              arguments: { token: "private-argument" },
+            },
+          ],
+        }),
+      };
+    },
+  };
+  await assert.rejects(
+    () =>
+      runAgentTools(
+        c,
+        provider,
+        "weather",
+        {
+          workspaceId: workspace,
+          organizationId: org,
+          onPlanDiagnostic: (d) => diagnostics.push(d),
+        },
+        new AbortController().signal,
+        () => {},
+      ),
+    (error: unknown) => {
+      assert.equal((error as { code: string }).code, "TOOL_PLAN_INVALID");
+      assert.equal(
+        (error as { planning: ToolPlanDiagnostic }).planning.reason,
+        "unknown_tool",
+      );
+      return true;
+    },
+  );
+  const [after] =
+    await sql`SELECT count(*)::int AS n FROM tool_executions WHERE tool_id=${httpTool}`;
+  assert.equal(attempts, 2);
+  assert.equal(after!.n, before!.n);
+  assert.equal(diagnostics[1]!.invalidCallIndex, 1);
+  assert(!JSON.stringify(diagnostics).includes("private-fixture-key"));
+  assert(!JSON.stringify(diagnostics).includes("private-argument"));
+});
+test("JSON-mode rejection retries portably once, while provider errors and cancellation cannot start tool calls", async () => {
+  const c = agentConfig.parse({
+      modelId: model,
+      maxOutputTokens: 1000,
+      tools: { toolIds: [httpTool] },
+    }),
+    diagnostics: ToolPlanDiagnostic[] = [];
+  let attempts = 0;
+  const provider = {
+    async *stream(request: ChatRequest) {
+      attempts++;
+      assert.equal(request.maxOutputTokens, 1000);
+      if (attempts === 1) {
+        assert.equal(request.responseFormat, "json");
+        throw new ProviderError("PROVIDER_HTTP_ERROR", false, 400, {
+          parameter: "response_format",
+          providerCode: "unsupported_parameter",
+        });
+      }
+      assert.equal(request.responseFormat, undefined);
+      yield { type: "token" as const, text: '{"calls":[]}' };
+    },
+  };
+  await runAgentTools(
+    c,
+    provider,
+    "hi",
+    {
+      workspaceId: workspace,
+      organizationId: org,
+      onPlanDiagnostic: (d) => diagnostics.push(d),
+    },
+    new AbortController().signal,
+    () => {},
+  );
+  assert.equal(attempts, 2);
+  assert.equal(diagnostics[0]!.reason, "json_mode_unsupported");
+  assert.equal(diagnostics[1]!.jsonMode, false);
+  let failedCalls = 0;
+  const failedProvider = {
+    async *stream() {
+      failedCalls++;
+      if (failedCalls === 1)
+        throw new ProviderError("AUTHENTICATION_FAILED", false, 401);
+      yield { type: "token" as const, text: '{"calls":[]}' };
+    },
+  };
+  await assert.rejects(
+    () =>
+      runAgentTools(
+        c,
+        failedProvider,
+        "hi",
+        { workspaceId: workspace, organizationId: org },
+        new AbortController().signal,
+        () => {},
+      ),
+    { code: "AUTHENTICATION_FAILED" },
+  );
+  assert.equal(failedCalls, 1);
+  const controller = new AbortController();
+  let cancelledCalls = 0;
+  const cancelled = {
+    async *stream() {
+      cancelledCalls++;
+      controller.abort();
+      yield { type: "token" as const, text: "invalid" };
+    },
+  };
+  await assert.rejects(() =>
+    runAgentTools(
+      c,
+      cancelled,
+      "hi",
+      { workspaceId: workspace, organizationId: org },
+      controller.signal,
+      () => {},
+    ),
+  );
+  assert.equal(cancelledCalls, 1);
+});
+test("Planner token-limit evidence and oversized output are logged without running tools", async () => {
+  const c = agentConfig.parse({
+      modelId: model,
+      maxOutputTokens: 64,
+      tools: { toolIds: [httpTool] },
+    }),
+    diagnostics: ToolPlanDiagnostic[] = [];
+  let count = 0;
+  const truncated = {
+    async *stream() {
+      count++;
+      yield { type: "token" as const, text: '{"calls":[' };
+      yield { type: "usage" as const, inputTokens: 2, outputTokens: 64 };
+    },
+  };
+  await assert.rejects(
+    () =>
+      runAgentTools(
+        c,
+        truncated,
+        "weather",
+        {
+          workspaceId: workspace,
+          organizationId: org,
+          onPlanDiagnostic: (d) => diagnostics.push(d),
+        },
+        new AbortController().signal,
+        () => {},
+      ),
+    { code: "TOOL_PLAN_INVALID" },
+  );
+  assert.equal(count, 2);
+  assert.equal(diagnostics[1]!.outputLimitReached, true);
+  assert.equal(diagnostics[1]!.maxOutputTokens, 64);
+  assert.equal(diagnostics[1]!.jsonStart, "object");
+  let oversizedCalls = 0;
+  const large = {
+    async *stream() {
+      oversizedCalls++;
+      yield { type: "token" as const, text: "x".repeat(16001) };
+    },
+  };
+  await assert.rejects(
+    () =>
+      runAgentTools(
+        c,
+        large,
+        "weather",
+        {
+          workspaceId: workspace,
+          organizationId: org,
+          onPlanDiagnostic: (d) => diagnostics.push(d),
+        },
+        new AbortController().signal,
+        () => {},
+      ),
+    (e: unknown) => {
+      assert.equal(
+        (e as { planning: ToolPlanDiagnostic }).planning.reason,
+        "plan_size",
+      );
+      return true;
+    },
+  );
+  assert.equal(oversizedCalls, 1);
+  assert.equal(diagnostics.at(-1)!.willRetry, false);
 });
 test("Optimistic updates, tool revocation and connector disabling prevent subsequent execution", async () => {
   const update = { ...input(), revision: 1, enabled: false };
