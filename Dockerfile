@@ -6,12 +6,14 @@ ARG NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 # One build layer keeps the package store and build tooling out of final images.
 # Optional session CA is a transient BuildKit secret, never copied into a layer.
+# Git omits empty directories; create public even when no static assets are tracked.
 RUN --mount=type=secret,id=proxy_ca \
     --mount=type=cache,target=/root/.local/share/pnpm/store \
     if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
     test -n "$NEXT_PUBLIC_API_URL" \
     && npm install --global pnpm@11.19.0 \
     && pnpm install --frozen-lockfile --prod=false \
+    && mkdir -p /app/apps/web/public \
     && pnpm build \
     && pnpm --filter=@agentconnect/api deploy --legacy --prod --frozen-lockfile /out/api \
     && pnpm --filter=@agentconnect/worker deploy --legacy --prod --frozen-lockfile /out/worker \
