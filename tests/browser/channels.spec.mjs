@@ -138,18 +138,17 @@ test("Configure website widget, stream, hand off to operator, resolve and test b
   deployment = deployed.id;
   await page.goto("/");
   await page.getByRole("button", { name: "Channels", exact: true }).click();
-  await page
-    .getByText("Website support · Website assistant", { exact: true })
-    .click();
+  await page.getByRole("tab", { name: "Setup", exact: true }).click();
   await page.getByLabel("Enable website widget", { exact: true }).check();
   await page
     .getByLabel(/^Allowed website origins/)
     .fill("http://localhost:4500");
-  await page
-    .getByRole("button", { name: "Save widget settings", exact: true })
-    .click();
-  await expect(page.getByText("Widget settings saved.")).toBeVisible();
-  await expect(page.getByLabel("Website embed code")).toHaveValue(
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(
+    page.getByText("Widget settings and branding saved."),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "Install", exact: true }).click();
+  await expect(page.getByLabel("Floating chat widget embed code")).toHaveValue(
     new RegExp(deployment),
   );
   const guest = await browser.newContext();

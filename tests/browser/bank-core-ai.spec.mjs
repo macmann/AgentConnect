@@ -362,33 +362,15 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
   );
   await page.screenshot({ path: test.info().outputPath("publish-embed.png") });
   await page.goto(url("Channels"));
-  await page
-    .getByText("Bank support · Bank support draft", { exact: true })
-    .count()
-    .then(async (count) => {
-      if (count)
-        await page
-          .getByText("Bank support · Bank support draft", { exact: true })
-          .click();
-      else
-        await page
-          .locator("details")
-          .filter({ hasText: "Bank support" })
-          .first()
-          .locator("summary")
-          .first()
-          .click();
-    });
+  await page.getByRole("tab", { name: "Branding", exact: true }).click();
   await page.getByLabel("Chatbot name", { exact: true }).fill("Bank Care");
   await page
     .getByLabel("Welcome message", { exact: true })
     .fill("Welcome to Bank Care");
   await page.getByLabel("Button color", { exact: true }).fill("#123456");
-  await page
-    .getByRole("button", { name: "Save branding", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(
-    page.getByText("Branding saved for hosted chat and widget.", {
+    page.getByText("Widget settings and branding saved.", {
       exact: true,
     }),
   ).toBeVisible();

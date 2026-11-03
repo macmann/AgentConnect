@@ -5,7 +5,13 @@ import { Button } from "./button";
 import { apiBase } from "./agent-client";
 
 /** Only public deployment identifiers belong in installation snippets. */
-export function DeploymentEmbed({ deploymentId }: { deploymentId: string }) {
+export function DeploymentEmbed({
+  deploymentId,
+  expanded = false,
+}: {
+  deploymentId: string;
+  expanded?: boolean;
+}) {
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState("");
   const [error, setError] = useState("");
@@ -25,9 +31,14 @@ export function DeploymentEmbed({ deploymentId }: { deploymentId: string }) {
       code: `<script async src="${escape(apiBase)}/widget.js" data-deployment="${escape(deploymentId)}" data-chat-url="${escape(url)}"></script>`,
     },
   ];
+  const Container = expanded ? "section" : "details";
   return (
-    <details className="deployment-embed">
-      <summary>Embed on your website</summary>
+    <Container className="deployment-embed">
+      {expanded ? (
+        <h3>Embed on your website</h3>
+      ) : (
+        <summary>Embed on your website</summary>
+      )}
       <div className="deployment-embed-body">
         {snippets.map(({ name, hint, code }) => (
           <div className="embed-snippet" key={name}>
@@ -69,6 +80,6 @@ export function DeploymentEmbed({ deploymentId }: { deploymentId: string }) {
           required.
         </small>
       </div>
-    </details>
+    </Container>
   );
 }

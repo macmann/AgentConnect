@@ -477,3 +477,48 @@ test("Playground handoff ownership, in-flight guard, disabled deployment and pub
     404,
   );
 });
+
+test("Widget and branding drafts save atomically with tenant permissions and published preview defaults", async () => {
+  const path = `/workspaces/${workspace}/channels/${deployment}/settings`;
+  const [prior] =
+    await sql`SELECT widget_settings,branding FROM deployments WHERE id=${deployment}`;
+  const data = {
+    widget: {
+      ...widgetSettings.parse(prior!.widget_settings),
+      launcher: "Help",
+      greeting: "Draft greeting",
+    },
+    branding: { name: "Support preview", primaryColor: "#123456" },
+  };
+  try {
+    assert.equal((await call("PUT", path, data, "operator")).statusCode, 403);
+    assert.equal((await call("PUT", path, data, "outsider")).statusCode, 403);
+    assert.equal(
+      (
+        await call("PUT", path, {
+          ...data,
+          branding: { primaryColor: "invalid" },
+        })
+      ).statusCode,
+      400,
+    );
+    const [unchanged] =
+      await sql`SELECT widget_settings FROM deployments WHERE id=${deployment}`;
+    assert.deepEqual(unchanged!.widget_settings, prior!.widget_settings);
+    assert.equal((await call("PUT", path, data)).statusCode, 200);
+    const [saved] =
+      await sql`SELECT widget_settings,branding FROM deployments WHERE id=${deployment}`;
+    assert.equal(saved!.widget_settings.launcher, "Help");
+    assert.equal(saved!.branding.name, "Support preview");
+    const list = await call("GET", `/workspaces/${workspace}/channels`);
+    assert.equal(list.statusCode, 200);
+    const row = list.json().find((d: { id: string }) => d.id === deployment);
+    assert.equal(row.published_name, "Channel agent");
+    assert.equal(typeof row.published_welcome, "string");
+    assert.ok(Array.isArray(row.quick_actions));
+    assert.equal(row.config, undefined);
+    assert.equal(row.model_snapshot, undefined);
+  } finally {
+    await sql`UPDATE deployments SET widget_settings=${sql.json(prior!.widget_settings)},branding=${sql.json(prior!.branding)} WHERE id=${deployment}`;
+  }
+});
