@@ -166,11 +166,8 @@ test("Visual workflow publishes, pauses for review and resumes two agent handoff
   await page.goto("/");
   await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
     "href",
-    "/agent-connex-icon-light.svg",
+    "https://apitoolz.com/brand/apitoolz-icon.svg",
   );
-  const favicon = await page.request.get("/agent-connex-icon-light.svg");
-  expect(favicon.ok()).toBe(true);
-  expect(await favicon.text()).not.toContain("<text");
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
   await page.getByRole("button", { name: "Create workflow" }).click();
   await page.getByRole("button", { name: /Manual setup/ }).click();
