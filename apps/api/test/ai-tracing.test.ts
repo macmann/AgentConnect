@@ -317,3 +317,52 @@ test("API and worker initialization uses the supplied project environment and fl
   assert(!stderr.includes("sk-fixture"));
   assert(JSON.stringify(batches).includes("worker.startup.fixture"));
 });
+
+test("Provider stream diagnostics reach Langfuse attributes without raw provider content", async () => {
+  const diagnosticProvider: ChatProvider = {
+    async *stream() {
+      throw new ProviderError("EMPTY_PROVIDER_RESPONSE", false, undefined, {
+        providerStream: {
+          provider: "openai-compatible",
+          modelId: "fixture-diagnostics",
+          hostname: "example.test",
+          responseFormat: "event-stream",
+          responseStatus: 200,
+          finishReason: "length",
+          frameCount: 3,
+          contentCharacters: 0,
+          reasoningCharacters: 57,
+          reasoningTokens: 100,
+          refusalObserved: false,
+          nonTextContentObserved: false,
+          toolCallsObserved: false,
+          inputTokens: 8,
+          outputTokens: 100,
+        },
+      });
+      yield { type: "token", text: "unreachable" };
+    },
+  };
+  await assert.rejects(async () => {
+    for await (const event of tracedProvider(diagnosticProvider, {
+      provider: "openai-compatible",
+      modelId: "fixture-diagnostics",
+    }).stream(request()))
+      void event;
+  }, ProviderError);
+  const span = exporter
+    .getFinishedSpans()
+    .find(
+      (s) =>
+        s.attributes["langfuse.observation.model.name"] ===
+        "fixture-diagnostics",
+    )!;
+  assert.equal(span.attributes["provider.stream.finishReason"], "length");
+  assert.equal(span.attributes["provider.stream.reasoningCharacters"], 57);
+  assert.equal(span.attributes["provider.stream.outputTokens"], 100);
+  assert.equal(
+    span.attributes["provider.stream.responseFormat"],
+    "event-stream",
+  );
+  assert.equal(span.status.code, 2);
+});

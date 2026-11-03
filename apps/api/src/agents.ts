@@ -1,3 +1,7 @@
+import {
+  parseGenerativeResponse,
+  responseValidation,
+} from "./generative-diagnostics.js";
 import { resolveAgentSkills, validateSkillSelection } from "./agent-skills.js";
 import {
   startObservation,
@@ -37,7 +41,6 @@ import {
 import { assertQualityGate } from "./quality-gate.js";
 import { requireWidgetOrigin } from "./channels.js";
 import {
-  responseEnvelope,
   generativePrompt,
   type RenderedBlock,
 } from "@agentconnect/schemas/generative";
@@ -429,6 +432,7 @@ async function streamChat(
       let outputTokens: number | null = null;
       let status = "completed";
       let errorCode: string | null = null;
+      let failureDiagnostics: ProviderError["details"];
       let sources: Citation[] = [];
       let citations: Citation[] = [];
       let retrievalMs: number | null = null;
@@ -758,13 +762,10 @@ async function streamChat(
             }
             if (c.generative.enabled) {
               try {
-                const envelope = responseEnvelope.parse(JSON.parse(output));
-                if (
-                  envelope.blocks.some(
-                    (b) => !c.generative.allowedBlocks.includes(b.type),
-                  )
-                )
-                  throw new Error("Unsupported component");
+                const envelope = parseGenerativeResponse(
+                  output,
+                  c.generative.allowedBlocks,
+                );
                 const prepared = await prepareArtifacts(
                   envelope,
                   conversation.workspace_id,
@@ -783,9 +784,15 @@ async function streamChat(
                   .filter(Boolean)
                   .join("\n\n");
               } catch (error) {
+                const diagnostic = responseValidation(output, "artifacts");
                 output = "";
                 if (error instanceof ProviderError) throw error;
-                throw new ProviderError("INVALID_UI_RESPONSE");
+                throw new ProviderError(
+                  "INVALID_UI_RESPONSE",
+                  false,
+                  undefined,
+                  { responseValidation: diagnostic },
+                );
               }
             }
           }
@@ -806,6 +813,7 @@ async function streamChat(
             throw new KnowledgeError("INVALID_CITATION");
         }
       } catch (e) {
+        failureDiagnostics = e instanceof ProviderError ? e.details : undefined;
         citations = citedSources(output, sources);
         status = controller.signal.aborted ? "cancelled" : "failed";
         errorCode = controller.signal.aborted
@@ -823,33 +831,56 @@ async function streamChat(
           );
           artifacts = [];
         }
-        observationError(span, { code: errorCode });
+        observationError(span, {
+          code: errorCode,
+          details: e instanceof ProviderError ? e.details : undefined,
+        });
         r.log.warn(
           {
             runId,
             traceId,
             code: errorCode,
-            provider: model.provider,
-            modelId: model.modelId,
-            hostname: new URL(model.baseUrl).hostname,
+            provider:
+              failureDiagnostics?.providerStream?.provider ?? model.provider,
+            modelId:
+              failureDiagnostics?.providerStream?.modelId ?? model.modelId,
+            hostname:
+              failureDiagnostics?.providerStream?.hostname ??
+              new URL(model.baseUrl).hostname,
+            configuredModelRegistryId: model.id,
+            modelRouting: metered.usage().routing,
             httpStatus: e instanceof ProviderError ? e.httpStatus : undefined,
             providerCode:
               e instanceof ProviderError ? e.details?.providerCode : undefined,
             parameter:
               e instanceof ProviderError ? e.details?.parameter : undefined,
             retryable: e instanceof ProviderError ? e.retryable : false,
+            providerStream:
+              e instanceof ProviderError
+                ? e.details?.providerStream
+                : undefined,
+            responseValidation:
+              e instanceof ProviderError
+                ? e.details?.responseValidation
+                : undefined,
+            richResponsesEnabled: c.generative.enabled,
+            answerMode: c.answerPolicy.mode,
             temperature: c.temperature,
             topP: c.topP,
             maxOutputTokens: c.maxOutputTokens,
             credentialSelected: !!model.secretId,
             hint:
-              errorCode === "PROVIDER_HTTP_ERROR"
-                ? "Check model identifier, account access, output token limit and supported sampling parameters."
-                : errorCode === "AUTHENTICATION_FAILED"
-                  ? "Check the selected workspace credential."
-                  : errorCode === "RATE_LIMITED"
-                    ? "Check provider quota and retry later."
-                    : "Use the failure code and trace ID to investigate the run.",
+              errorCode === "EMPTY_PROVIDER_RESPONSE"
+                ? "Inspect providerStream.finishReason, token usage, reasoningCharacters and refusal/tool flags. Verify the model supports visible streaming text at the configured API endpoint."
+                : errorCode === "INVALID_UI_RESPONSE"
+                  ? "Inspect responseValidation.stage and issueCodes. This model must produce the configured rich-response JSON; test plain-text mode or a model with reliable structured output."
+                  : errorCode === "PROVIDER_HTTP_ERROR"
+                    ? "Check model identifier, account access, output token limit and supported sampling parameters."
+                    : errorCode === "AUTHENTICATION_FAILED"
+                      ? "Check the selected workspace credential."
+                      : errorCode === "RATE_LIMITED"
+                        ? "Check provider quota and retry later."
+                        : "Use the failure code and trace ID to investigate the run.",
           },
           "Agent chat failed",
         );
@@ -938,6 +969,7 @@ async function streamChat(
             await settleTokens(tx, runId, metered.usage().reported);
             await tx`UPDATE agent_runs SET context_breakdown=context_breakdown || ${tx.json(
               {
+                ...(failureDiagnostics ? { failureDiagnostics } : {}),
                 providerCalls: metered.usage().requests,
                 quotaChargedTokens: metered.usage().reported,
                 modelRouting: metered.usage().routing,
@@ -1277,6 +1309,7 @@ export async function registerAgentRoutes(
           hostname: new URL(model.baseUrl).hostname,
           httpStatus,
           providerCode: details?.providerCode,
+          providerStream: details?.providerStream,
           parameter: details?.parameter,
           credentialSelected: !!model.secretId,
           temperatureSent: model.capabilities.temperature,
