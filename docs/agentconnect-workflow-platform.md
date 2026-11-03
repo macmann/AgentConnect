@@ -1,6 +1,6 @@
-# AgentConnect platform and Workflows
+# API Toolz platform and Workflows
 
-AgentConnect remains a platform for independently managed Agents, Knowledge, Tools/MCP, model providers, workspaces, authentication, Secrets, administration and operations. Workflows are the no-code orchestration module inside that platform. Existing published Agent configurations, Knowledge/RAG processing, Agent Tool policies, MCP registrations and V1 workflow execution remain authoritative.
+API Toolz remains a platform for independently managed Agents, Knowledge, Tools/MCP, model providers, workspaces, authentication, Secrets, administration and operations. Workflows are the no-code orchestration module inside that platform. Existing published Agent configurations, Knowledge/RAG processing, Agent Tool policies, MCP registrations and V1 workflow execution remain authoritative.
 
 ## Product structure
 
@@ -106,4 +106,4 @@ Use the existing [Docker/self-hosted deployment guide](deployment.md) and [Cooli
 
 ## Remaining limitations
 
-For Each remains sequential, schema inference cannot prove arbitrary dynamic JSON fields, and upstream HTTP/MCP idempotency is required for safe automatic write replay. An uncertain non-idempotent write stops for reconciliation. There is no arbitrary cyclic graph support, automatic OCR deployment, autonomous AI editing, cross-workflow silent publication, unrestricted SQL editor or exactly-once promise. V1 authoring/history remains available alongside V2. These boundaries preserve understandable orchestration and the existing AgentConnect platform.
+For Each remains sequential, schema inference cannot prove arbitrary dynamic JSON fields, and upstream HTTP/MCP idempotency is required for safe automatic write replay. An uncertain non-idempotent write stops for reconciliation. There is no arbitrary cyclic graph support, automatic OCR deployment, autonomous AI editing, cross-workflow silent publication, unrestricted SQL editor or exactly-once promise. V1 authoring/history remains available alongside V2. These boundaries preserve understandable orchestration and the existing API Toolz platform.

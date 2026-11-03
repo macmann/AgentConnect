@@ -1,10 +1,10 @@
-# Agent Connex architecture
+# API Toolz architecture
 
-Agent Connex is a greenfield, provider-neutral enterprise platform. The supplied specification is retained verbatim in product-spec.md. Implementation proceeds by vertical slices; UI alone does not establish feature completion.
+API Toolz is a greenfield, provider-neutral enterprise platform. The supplied specification is retained verbatim in product-spec.md. Implementation proceeds by vertical slices; UI alone does not establish feature completion.
 
 ## Product modules
 
-AgentConnect remains a multi-module product: Agents, Knowledge/RAG, Tools/MCP, Workflows, and Runs/Operations share authentication, organization/workspace authorization, administration, encrypted Secrets and provider/connection registries. Workflows are an orchestration sub-product, not a replacement for these modules. Published assets remain owned and configured in their existing registries.
+API Toolz remains a multi-module product: Agents, Knowledge/RAG, Tools/MCP, Workflows, and Runs/Operations share authentication, organization/workspace authorization, administration, encrypted Secrets and provider/connection registries. Workflows are an orchestration sub-product, not a replacement for these modules. Published assets remain owned and configured in their existing registries.
 
 [Workflow Definition V2](workflows-v2.md) separates semantic execution and resource references from canvas layout. Its compiler targets the existing LangGraph/PostgreSQL runtime, with V1 preserved and no destructive published-workflow migration.
 

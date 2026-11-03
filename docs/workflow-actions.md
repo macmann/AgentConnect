@@ -1,6 +1,6 @@
 # Deterministic Actions and webhook triggers
 
-AgentConnect continues to manage Agents, Knowledge/RAG, Tools/MCP, model providers, workspaces, authentication, Secrets and administration independently. Workflows orchestrate these resources. A Tool is available for an Agent/LLM to choose; an Action is explicitly invoked by a workflow. The two execution paths coexist and reuse security/transport infrastructure without sharing invocation policy.
+API Toolz continues to manage Agents, Knowledge/RAG, Tools/MCP, model providers, workspaces, authentication, Secrets and administration independently. Workflows orchestrate these resources. A Tool is available for an Agent/LLM to choose; an Action is explicitly invoked by a workflow. The two execution paths coexist and reuse security/transport infrastructure without sharing invocation policy.
 
 ## Definition and canvas
 
@@ -18,7 +18,7 @@ HTTP endpoints retain existing private-host allowlists, DNS pinning, protocol/cr
 
 MCP connections are the existing MCP server registrations and discovery results. Read-only discovered operations can be selected directly. Writes require an explicit administrator operation grant bound to its schema/annotation fingerprint, side effect, minimum risk and optional idempotency argument/scopes. Destructive operations require delete/high classification. Workflow authors also acknowledge side effects. Disabled grants, changed capabilities, revoked connections and cross-workspace references fail closed. A write grant does not make that operation available to Agents; Agent MCP Tool registration still rejects non-read-only operations.
 
-Database integration uses friendly MCP operations such as `insert_invoice`, `read_invoice` or `update_invoice`, configured with field mappings. AgentConnect does not expose an unrestricted destructive SQL editor or add a second database client in this phase.
+Database integration uses friendly MCP operations such as `insert_invoice`, `read_invoice` or `update_invoice`, configured with field mappings. API Toolz does not expose an unrestricted destructive SQL editor or add a second database client in this phase.
 
 ## Retries, replay and audit
 

@@ -1,6 +1,6 @@
 # Console UI conventions
 
-Agent Connex keeps common actions visible and technical details available on demand. Existing configuration, permissions, revision checks and runtime behavior remain authoritative.
+API Toolz keeps common actions visible and technical details available on demand. Existing configuration, permissions, revision checks and runtime behavior remain authoritative.
 
 ## Page structure
 

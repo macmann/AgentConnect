@@ -1,6 +1,6 @@
 # Langfuse tracing
 
-Agent Connex exports agent and workflow observations through the official `@langfuse/otel` processor. The existing generic OpenTelemetry exporter can run alongside it. Langfuse is optional: without configuration, requests and workers keep their existing behavior.
+API Toolz exports agent and workflow observations through the official `@langfuse/otel` processor. The existing generic OpenTelemetry exporter can run alongside it. Langfuse is optional: without configuration, requests and workers keep their existing behavior.
 
 ## Connect your project
 

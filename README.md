@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https://apitoolz.com/brand/apitoolz-icon.svg" alt="API Toolz logo" width="80" height="80">
-</p>
-
 # API Toolz
 
 API Toolz is a workspace-based AI assistant platform for building, testing and publishing grounded agents, multi-agent workflows and customer support experiences. Teams manage models, knowledge, tools, customer conversations and human handoffs in one application.
