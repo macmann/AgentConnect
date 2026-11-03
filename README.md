@@ -1,14 +1,10 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="apps/web/public/agent-connex-logo.svg">
-    <source media="(prefers-color-scheme: light)" srcset="apps/web/public/agent-connex-logo-light.svg">
-    <img src="apps/web/public/agent-connex-logo-light.svg" alt="Agent Connex logo" width="360">
-  </picture>
+  <img src="https://apitoolz.com/brand/apitoolz-icon.svg" alt="API Toolz logo" width="80" height="80">
 </p>
 
-# Agent Connex
+# API Toolz
 
-Agent Connex is a workspace-based AI assistant platform for building, testing and publishing grounded agents, multi-agent workflows and customer support experiences. Teams manage models, knowledge, tools, customer conversations and human handoffs in one application.
+API Toolz is a workspace-based AI assistant platform for building, testing and publishing grounded agents, multi-agent workflows and customer support experiences. Teams manage models, knowledge, tools, customer conversations and human handoffs in one application.
 
 An **agent** answers questions using its instructions, selected model and approved attachments. A **workflow** orchestrates a versioned graph of agents, tools, branches and approvals. A **deployment** exposes a published agent through hosted chat, an embedded widget, API access or configured messaging channels.
 

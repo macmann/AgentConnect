@@ -239,7 +239,7 @@ export async function withMcp<T>(
     });
     // Consume bounded SDK pipe without writing potentially secret server stderr to application logs.
     transport.stderr?.on("data", () => {});
-    const client = new Client({ name: "AgentConnect", version: "0.3.0" });
+    const client = new Client({ name: "API Toolz", version: "0.3.0" });
     const abort = () => {
       void client.close().catch(() => {});
     };
@@ -301,7 +301,7 @@ export async function withMcp<T>(
       );
     },
   });
-  const client = new Client({ name: "AgentConnect", version: "0.3.0" });
+  const client = new Client({ name: "API Toolz", version: "0.3.0" });
   const abort = () => {
     void client.close().catch(() => {});
   };

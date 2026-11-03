@@ -1,20 +1,15 @@
 export function ProductBrand() {
   return (
-    <>
+    <span className="product-brand">
       <img
-        className="product-logo product-logo-light"
-        src="/agent-connex-logo-light.svg"
-        alt="Agent Connex"
-        width={520}
-        height={180}
+        className="product-logo"
+        src="https://apitoolz.com/brand/apitoolz-icon.svg"
+        alt="API Toolz"
+        width={40}
+        height={40}
+        referrerPolicy="no-referrer"
       />
-      <img
-        className="product-logo product-logo-dark"
-        src="/agent-connex-logo.svg"
-        alt="Agent Connex"
-        width={520}
-        height={180}
-      />
-    </>
+      <span>API Toolz</span>
+    </span>
   );
 }

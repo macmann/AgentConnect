@@ -22,7 +22,6 @@ import { actor, audit, id, params, workspaceAccess } from "./app.js";
 import { sql } from "./db.js";
 import { digest } from "./security.js";
 import { HttpError } from "./http-error.js";
-import { productLogo, productLogoLight } from "./brand-assets.js";
 import { widgetBundle } from "./widget-bundle.js";
 export function widgetDeploymentPath(r: FastifyRequest) {
   return /^\/public\/widgets\/([0-9a-f-]{36})(?:\/(?:messages\/[0-9a-f-]{36}\/actions\/[a-z][a-z0-9_]{0,39}|artifacts\/[0-9a-f-]{36}\/grant|chat|sessions|history(?:\/[0-9a-f-]{36})?|conversations(?:\/[0-9a-f-]{36}\/(?:handoff(?:\/stream)?|feedback|answer-reports\/[0-9a-f-]{36}|workflows(?:\/[0-9a-f-]{36})?))?))?$/.exec(
@@ -94,28 +93,14 @@ export async function conversationAccess(
 }
 export async function registerChannelRoutes(app: FastifyInstance) {
   await registerCustomerSessions(app);
-  app.get("/brand/agent-connex-logo.svg", async (_r, reply) =>
-    reply
-      .type("image/svg+xml")
-      .header("Cross-Origin-Resource-Policy", "cross-origin")
-      .header("cache-control", "public, max-age=3600")
-      .header(
-        "content-security-policy",
-        "default-src 'none'; style-src 'unsafe-inline'",
-      )
-      .send(productLogo),
-  );
-  app.get("/brand/agent-connex-logo-light.svg", async (_r, reply) =>
-    reply
-      .type("image/svg+xml")
-      .header("Cross-Origin-Resource-Policy", "cross-origin")
-      .header("cache-control", "public, max-age=3600")
-      .header(
-        "content-security-policy",
-        "default-src 'none'; style-src 'unsafe-inline'",
-      )
-      .send(productLogoLight),
-  );
+  // Keep existing embed URLs working while serving the current product identity.
+  for (const route of [
+    "/brand/agent-connex-logo.svg",
+    "/brand/agent-connex-logo-light.svg",
+  ])
+    app.get(route, async (_r, reply) =>
+      reply.redirect("https://apitoolz.com/brand/apitoolz-icon.svg"),
+    );
   app.get("/widget.js", async (_r, reply) =>
     reply
       .type("application/javascript; charset=utf-8")

@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
 export const metadata: Metadata = {
-  title: "Agent Connex · Workspace",
+  title: "API Toolz · Workspace",
   icons: {
     icon: {
-      url: "/agent-connex-icon-light.svg",
+      url: "https://apitoolz.com/brand/apitoolz-icon.svg",
       type: "image/svg+xml",
       sizes: "any",
     },
