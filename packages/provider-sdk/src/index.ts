@@ -27,6 +27,8 @@ export interface ChatRequest {
   signal: AbortSignal;
   /** Optional schema constraint; unsupported compatible providers use prompt-only JSON. */
   responseSchema?: { name: string; schema: Record<string, unknown> };
+  /** JSON object mode for planning; compatible endpoints may explicitly reject it. */
+  responseFormat?: "json";
 }
 export type ProviderEvent =
   | { type: "token"; text: string }
@@ -97,6 +99,7 @@ export async function providerErrorDetails(body: AsyncIterable<Uint8Array>) {
   ]);
   const parameters = new Set([
     "model",
+    "response_format",
     "temperature",
     "top_p",
     "max_tokens",
@@ -385,6 +388,9 @@ export function createProvider(
             ],
           })),
           generationConfig: {
+            ...(input.responseFormat === "json"
+              ? { responseMimeType: "application/json" }
+              : {}),
             ...(input.responseSchema
               ? {
                   responseMimeType: "application/json",
@@ -426,6 +432,9 @@ export function createProvider(
             ? { max_completion_tokens: input.maxOutputTokens }
             : { max_tokens: input.maxOutputTokens }),
           stream: true,
+          ...(input.responseFormat === "json"
+            ? { response_format: { type: "json_object" } }
+            : {}),
           ...(provider === "openai" && input.responseSchema
             ? {
                 response_format: {

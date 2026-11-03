@@ -6,6 +6,14 @@ import type { Citation } from "@agentconnect/rag/tool";
 import { observe, observationContent } from "./ai-tracing.js";
 import { renderPrompt } from "@agentconnect/schemas/agent-prompt";
 import { ToolError } from "./tool-errors.js";
+import {
+  parseToolPlan,
+  unwrapToolPlan,
+  ToolPlanValidationError,
+  type PlannedCall,
+  type ToolPlanDiagnostic,
+  type ToolPlanReason,
+} from "./tool-planning.js";
 export { ToolError } from "./tool-errors.js";
 import { createBraveSearchAdapter } from "./web-search.js";
 import { isDeepStrictEqual } from "node:util";
@@ -23,6 +31,7 @@ import type { stdioSettings } from "@agentconnect/schemas/tools";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
+  ProviderError,
   safeHttpTransport,
   validateEndpoint,
   type ChatProvider,
@@ -58,6 +67,7 @@ export type ToolContext = {
   workflowId?: string;
   workflowNodeId?: string;
   knowledgeSources?: Citation[];
+  onPlanDiagnostic?: (diagnostic: ToolPlanDiagnostic) => void;
 };
 export function validateToolUrl(url: string) {
   try {
@@ -763,8 +773,7 @@ export async function runAgentTools(
           inputTokens: 0,
           outputTokens: 0,
         };
-      let plan = "",
-        inputTokens: number | null = null,
+      let inputTokens: number | null = null,
         outputTokens: number | null = null;
       const financialContext =
         tools.some((t) => t.config.kind === "financial") &&
@@ -789,57 +798,160 @@ export async function runAgentTools(
         contextBudget
       )
         throw new ToolError("TOOL_CONTEXT_LIMIT");
-      for await (const event of provider.stream({
-        system,
-        messages,
-        temperature: 0,
-        topP: null,
-        maxOutputTokens: Math.min(2048, agent.maxOutputTokens),
-        signal,
-      })) {
-        if (event.type === "token") {
-          plan += event.text;
-          if (plan.length > 16000) throw new ToolError("TOOL_PLAN_INVALID");
-        } else {
-          inputTokens = event.inputTokens;
-          outputTokens = event.outputTokens;
-        }
-      }
-      let calls: { toolId: string; arguments: Record<string, unknown> }[];
-      try {
-        const parsed = JSON.parse(plan);
+      let calls: PlannedCall[] = [],
+        jsonMode = true;
+      let previousReason: ToolPlanReason | undefined;
+      const maxAttempts = 2;
+      let inputTotal = 0,
+        outputTotal = 0,
+        inputKnown = true,
+        outputKnown = true;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        signal.throwIfAborted();
+        let plan = "",
+          attemptInput: number | null = null,
+          attemptOutput: number | null = null;
+        const started = performance.now(),
+          maxOutputTokens = Math.min(
+            attempt === 1 ? 4096 : 8192,
+            agent.maxOutputTokens,
+          );
+        const attemptSystem =
+          system +
+          (attempt > 1
+            ? `\nThe previous plan failed validation (${previousReason}). Return a complete JSON object with ONLY calls. Every call must use a listed tool UUID and arguments matching its exact schema. Do not use tool names as IDs, add extra keys or exceed the call limit. If none apply return {"calls":[]}.`
+            : "");
         if (
-          !parsed ||
-          Object.keys(parsed).join() !== "calls" ||
-          !Array.isArray(parsed.calls) ||
-          parsed.calls.length > agent.tools.maxCalls
+          Buffer.byteLength(attemptSystem) +
+            Buffer.byteLength(JSON.stringify(messages)) >
+          contextBudget
         )
-          throw new Error();
-        calls = parsed.calls;
-        for (const c of calls)
-          if (
-            !c ||
-            Object.keys(c).sort().join() !== "arguments,toolId" ||
-            !tools.some((t) => t.id === c.toolId) ||
-            !c.arguments ||
-            Array.isArray(c.arguments) ||
-            typeof c.arguments !== "object"
-          )
-            throw new Error();
-      } catch {
-        throw new ToolError("TOOL_PLAN_INVALID");
+          throw new ToolError("TOOL_CONTEXT_LIMIT");
+        const diagnostic = (
+          status: "validated" | "rejected",
+          willRetry: boolean,
+          error?: ToolPlanValidationError,
+        ): ToolPlanDiagnostic => ({
+          stage: "tool_planning",
+          status,
+          reason: error?.reason,
+          attempt,
+          maxAttempts,
+          willRetry,
+          availableTools: tools.length,
+          maxCalls: agent.tools.maxCalls,
+          maxOutputTokens,
+          jsonMode,
+          planCharacters: plan.length,
+          planBytes: Buffer.byteLength(plan),
+          fencedJson: unwrapToolPlan(plan).fenced,
+          jsonStart: !plan.trim()
+            ? "empty"
+            : plan.trim().startsWith("{")
+              ? "object"
+              : plan.trim().startsWith("[")
+                ? "array"
+                : plan.trim().startsWith("```")
+                  ? "fence"
+                  : "other",
+          ...(status === "validated" ? { plannedCalls: calls.length } : {}),
+          invalidCallIndex: error?.callIndex,
+          issueKeywords: error?.issueKeywords,
+          inputTokens: attemptInput,
+          outputTokens: attemptOutput,
+          outputLimitReached:
+            attemptOutput === null ? null : attemptOutput >= maxOutputTokens,
+          durationMs: Math.round(performance.now() - started),
+        });
+        const report = (value: ToolPlanDiagnostic) => {
+          span.addEvent("tools.plan_validation", {
+            status: value.status,
+            reason: value.reason ?? "valid",
+            attempt: value.attempt,
+            planBytes: value.planBytes,
+            maxOutputTokens: value.maxOutputTokens,
+            willRetry: value.willRetry,
+          });
+          context.onPlanDiagnostic?.(value);
+        };
+        try {
+          for await (const event of provider.stream({
+            system: attemptSystem,
+            messages,
+            temperature: 0,
+            topP: null,
+            maxOutputTokens,
+            signal,
+            ...(jsonMode ? { responseFormat: "json" as const } : {}),
+          })) {
+            signal.throwIfAborted();
+            if (event.type === "token") {
+              plan += event.text;
+              if (Buffer.byteLength(plan) > 16000)
+                throw new ToolPlanValidationError("plan_size");
+            } else {
+              attemptInput = event.inputTokens;
+              attemptOutput = event.outputTokens;
+            }
+          }
+          signal.throwIfAborted();
+          inputKnown = inputKnown && attemptInput !== null;
+          outputKnown = outputKnown && attemptOutput !== null;
+          inputTotal += attemptInput ?? 0;
+          outputTotal += attemptOutput ?? 0;
+          inputTokens = inputKnown ? inputTotal : null;
+          outputTokens = outputKnown ? outputTotal : null;
+          calls = parseToolPlan(
+            plan,
+            tools,
+            agent.tools.maxCalls,
+            validateInputSchema,
+          );
+          report(diagnostic("validated", false));
+          break;
+        } catch (error) {
+          if (signal.aborted) throw error;
+          const unsupported =
+            jsonMode &&
+            error instanceof ProviderError &&
+            error.httpStatus === 400 &&
+            error.details?.parameter === "response_format" &&
+            !plan;
+          if (!(error instanceof ToolPlanValidationError)) {
+            report(
+              diagnostic(
+                "rejected",
+                unsupported && attempt < maxAttempts,
+                new ToolPlanValidationError(
+                  unsupported ? "json_mode_unsupported" : "provider_error",
+                ),
+              ),
+            );
+            if (unsupported && attempt < maxAttempts) {
+              jsonMode = false;
+              previousReason = "json_mode_unsupported";
+              continue;
+            }
+            throw error;
+          }
+          previousReason = error.reason;
+          const retry = attempt < maxAttempts && error.reason !== "plan_size";
+          const info = diagnostic("rejected", retry, error);
+          report(info);
+          if (!retry)
+            throw new ToolError(
+              error.reason.startsWith("arguments_") ||
+                error.reason === "invalid_arguments"
+                ? "TOOL_ARGUMENTS_INVALID"
+                : "TOOL_PLAN_INVALID",
+              false,
+              info,
+            );
+        }
       }
       if (agent.tools.usageMode === "always" && !calls.length)
         throw new ToolError("TOOL_REQUIRED");
       span.setAttribute("tools.planned_calls", calls.length);
-      for (const call of calls) {
-        const tool = tools.find((t) => t.id === call.toolId)!;
-        if (
-          Buffer.byteLength(JSON.stringify(call.arguments)) > 8000 ||
-          !validateInputSchema(tool.input_schema)(call.arguments)
-        )
-          throw new ToolError("TOOL_ARGUMENTS_INVALID");
-      }
       const results = [];
       for (const call of calls) {
         signal.throwIfAborted();

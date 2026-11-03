@@ -182,6 +182,9 @@ export function tracedProvider(
           temperature: input.temperature,
           top_p: input.topP,
           max_output_tokens: input.maxOutputTokens,
+          response_format:
+            input.responseFormat ??
+            (input.responseSchema ? "json_schema" : undefined),
         }),
       });
       observationContent(span, "input", {

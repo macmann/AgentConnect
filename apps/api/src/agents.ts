@@ -60,6 +60,7 @@ import {
   runGroundedFinancialTools,
   ToolError,
 } from "./tool-runtime.js";
+import type { ToolPlanDiagnostic } from "./tool-planning.js";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
@@ -433,6 +434,7 @@ async function streamChat(
       let status = "completed";
       let errorCode: string | null = null;
       let failureDiagnostics: ProviderError["details"];
+      const toolPlanningDiagnostics: ToolPlanDiagnostic[] = [];
       let sources: Citation[] = [];
       let citations: Citation[] = [];
       let retrievalMs: number | null = null;
@@ -689,6 +691,13 @@ async function streamChat(
                 userId: conversation.user_id ?? undefined,
                 runId,
                 knowledgeSources: sources,
+                onPlanDiagnostic: (diagnostic) => {
+                  toolPlanningDiagnostics.push(diagnostic);
+                  const fields = { runId, traceId, toolPlanning: diagnostic };
+                  if (diagnostic.status === "rejected")
+                    r.log.warn(fields, "Tool planning response rejected");
+                  else r.log.info(fields, "Tool planning completed");
+                },
               },
               controller.signal,
               (data) => write("tool", data),
@@ -863,6 +872,10 @@ async function streamChat(
               e instanceof ProviderError
                 ? e.details?.responseValidation
                 : undefined,
+            toolPlanning:
+              e instanceof ToolError
+                ? e.planning
+                : toolPlanningDiagnostics.at(-1),
             richResponsesEnabled: c.generative.enabled,
             answerMode: c.answerPolicy.mode,
             temperature: c.temperature,
@@ -870,17 +883,21 @@ async function streamChat(
             maxOutputTokens: c.maxOutputTokens,
             credentialSelected: !!model.secretId,
             hint:
-              errorCode === "EMPTY_PROVIDER_RESPONSE"
-                ? "Inspect providerStream.finishReason, token usage, reasoningCharacters and refusal/tool flags. Verify the model supports visible streaming text at the configured API endpoint."
-                : errorCode === "INVALID_UI_RESPONSE"
-                  ? "Inspect responseValidation.stage and issueCodes. This model must produce the configured rich-response JSON; test plain-text mode or a model with reliable structured output."
-                  : errorCode === "PROVIDER_HTTP_ERROR"
-                    ? "Check model identifier, account access, output token limit and supported sampling parameters."
-                    : errorCode === "AUTHENTICATION_FAILED"
-                      ? "Check the selected workspace credential."
-                      : errorCode === "RATE_LIMITED"
-                        ? "Check provider quota and retry later."
-                        : "Use the failure code and trace ID to investigate the run.",
+              errorCode === "TOOL_PLAN_INVALID" ||
+              (errorCode === "TOOL_ARGUMENTS_INVALID" &&
+                toolPlanningDiagnostics.at(-1)?.status === "rejected")
+                ? "Inspect toolPlanning.reason, attempt, planBytes, maxCalls, maxOutputTokens and issueKeywords. Planning failed before tool execution; use the trace ID to inspect model generations."
+                : errorCode === "EMPTY_PROVIDER_RESPONSE"
+                  ? "Inspect providerStream.finishReason, token usage, reasoningCharacters and refusal/tool flags. Verify the model supports visible streaming text at the configured API endpoint."
+                  : errorCode === "INVALID_UI_RESPONSE"
+                    ? "Inspect responseValidation.stage and issueCodes. This model must produce the configured rich-response JSON; test plain-text mode or a model with reliable structured output."
+                    : errorCode === "PROVIDER_HTTP_ERROR"
+                      ? "Check model identifier, account access, output token limit and supported sampling parameters."
+                      : errorCode === "AUTHENTICATION_FAILED"
+                        ? "Check the selected workspace credential."
+                        : errorCode === "RATE_LIMITED"
+                          ? "Check provider quota and retry later."
+                          : "Use the failure code and trace ID to investigate the run.",
           },
           "Agent chat failed",
         );
@@ -970,6 +987,9 @@ async function streamChat(
             await tx`UPDATE agent_runs SET context_breakdown=context_breakdown || ${tx.json(
               {
                 ...(failureDiagnostics ? { failureDiagnostics } : {}),
+                ...(toolPlanningDiagnostics.length
+                  ? { toolPlanning: toolPlanningDiagnostics }
+                  : {}),
                 providerCalls: metered.usage().requests,
                 quotaChargedTokens: metered.usage().reported,
                 modelRouting: metered.usage().routing,
@@ -985,23 +1005,28 @@ async function streamChat(
               message:
                 errorCode === "EMPTY_PROVIDER_RESPONSE"
                   ? "The model returned no response text. Retry, or check the model output limit and provider configuration."
-                  : errorCode === "KNOWLEDGE_PLAN_INVALID"
-                    ? "The knowledge usage decision was invalid. Check your model and usage instructions, then retry."
-                    : errorCode === "GROUNDED_RESPONSE_INVALID"
-                      ? "The answer could not be verified. Please clarify your question or request customer care."
-                      : errorCode === "TOOL_REQUIRED"
-                        ? "Your tool policy requires a call, but no relevant safe call was selected. Review the usage policy and tool descriptions."
-                        : errorCode === "NO_RELEVANT_SOURCES"
-                          ? "No relevant knowledge was found. Try another question or check the knowledge sources."
-                          : errorCode === "CITATION_REQUIRED" ||
-                              errorCode === "INVALID_CITATION"
-                            ? "The response could not be verified against its source references."
-                            : errorCode === "KNOWLEDGE_NOT_PUBLIC"
-                              ? "This knowledge is unavailable in public chat."
-                              : errorCode.startsWith("TOOL_") ||
-                                  errorCode.startsWith("MCP_")
-                                ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
-                                : c.fallbackResponse,
+                  : errorCode === "TOOL_PLAN_INVALID"
+                    ? "The model returned an invalid tool plan. No tools were executed. Retry or use a model with reliable JSON output; check API toolPlanning diagnostics with the trace ID."
+                    : errorCode === "TOOL_ARGUMENTS_INVALID" &&
+                        toolPlanningDiagnostics.at(-1)?.status === "rejected"
+                      ? "The model supplied invalid tool arguments. No tools were executed. Check the tool parameter schema and API toolPlanning diagnostics."
+                      : errorCode === "KNOWLEDGE_PLAN_INVALID"
+                        ? "The knowledge usage decision was invalid. Check your model and usage instructions, then retry."
+                        : errorCode === "GROUNDED_RESPONSE_INVALID"
+                          ? "The answer could not be verified. Please clarify your question or request customer care."
+                          : errorCode === "TOOL_REQUIRED"
+                            ? "Your tool policy requires a call, but no relevant safe call was selected. Review the usage policy and tool descriptions."
+                            : errorCode === "NO_RELEVANT_SOURCES"
+                              ? "No relevant knowledge was found. Try another question or check the knowledge sources."
+                              : errorCode === "CITATION_REQUIRED" ||
+                                  errorCode === "INVALID_CITATION"
+                                ? "The response could not be verified against its source references."
+                                : errorCode === "KNOWLEDGE_NOT_PUBLIC"
+                                  ? "This knowledge is unavailable in public chat."
+                                  : errorCode.startsWith("TOOL_") ||
+                                      errorCode.startsWith("MCP_")
+                                    ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
+                                    : c.fallbackResponse,
               status,
             });
           else {
