@@ -1,5 +1,5 @@
 "use client";
-import { useId, useState, type FormEvent } from "react";
+import { useId, useState, useEffect, type FormEvent } from "react";
 import type { MetadataFilter } from "@agentconnect/schemas/knowledge-metadata";
 import { sourceMetadataUpdate } from "@agentconnect/schemas/knowledge-metadata";
 import { HelpTooltip } from "./help-tooltip";
@@ -145,7 +145,11 @@ export function SourceMetadataEditor({
   path,
   source,
   onSaved,
+  expanded = false,
+  onStateChange,
 }: {
+  expanded?: boolean;
+  onStateChange?: (state: { dirty: boolean; busy: boolean }) => void;
   path: string;
   source: {
     id: string;
@@ -179,6 +183,10 @@ export function SourceMetadataEditor({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    onStateChange?.({ dirty, busy });
+  }, [dirty, busy, onStateChange]);
+  const Container = expanded ? "section" : "details";
   async function save(e: FormEvent) {
     e.preventDefault();
     const parsed = sourceMetadataUpdate.safeParse({
@@ -213,13 +221,17 @@ export function SourceMetadataEditor({
     }
   }
   return (
-    <details className="source-metadata-editor">
-      <summary>
-        Tags &amp; metadata
-        {source.metadata.tags?.length
-          ? ` · ${source.metadata.tags.length} tags`
-          : ""}
-      </summary>
+    <Container className="source-metadata-editor">
+      {expanded ? (
+        <h3>Tags &amp; metadata</h3>
+      ) : (
+        <summary>
+          Tags &amp; metadata
+          {source.metadata.tags?.length
+            ? ` · ${source.metadata.tags.length} tags`
+            : ""}
+        </summary>
+      )}
       <form onSubmit={save} aria-label={`Metadata for ${source.title}`}>
         <MetadataFields
           key={reloadKey}
@@ -274,6 +286,6 @@ export function SourceMetadataEditor({
           </Button>
         </div>
       </form>
-    </details>
+    </Container>
   );
 }

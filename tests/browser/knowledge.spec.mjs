@@ -328,9 +328,7 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   await expect(row.getByText("ready", { exact: true })).toBeVisible({
     timeout: 20000,
   });
-  await row
-    .getByRole("button", { name: "Inspect chunks", exact: true })
-    .click();
+  await sourceAction(page, row, "Inspect chunks");
   await page.locator(".chunk-preview summary").click();
   await expect(
     page
@@ -504,9 +502,7 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   await expect(pdfRow.getByText("ready", { exact: true })).toBeVisible({
     timeout: 20000,
   });
-  await pdfRow
-    .getByRole("button", { name: "Inspect chunks", exact: true })
-    .click();
+  await sourceAction(page, pdfRow, "Inspect chunks");
   await expect(page.locator(".chunk-preview summary")).toContainText("Page 1");
   await page.locator(".chunk-preview summary").click();
   await expect(page.locator(".chunk-preview .source-snippet")).toContainText(
@@ -595,9 +591,14 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
     page.getByText("Knowledge settings saved", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "sources", exact: true }).click();
+  await page
+    .getByRole("button", { name: /Review warnings for/ })
+    .first()
+    .click();
   await expect(
-    page.getByText("Processing changed · Reingest to apply").first(),
-  ).toBeVisible();
+    page.getByRole("dialog", { name: "Source details", exact: true }),
+  ).toContainText("Processing changed · Reingest to apply");
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await page
     .getByRole("button", { name: "Upload document", exact: true })
     .click();
@@ -618,9 +619,7 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
   await expect(financial.getByText("ready", { exact: true })).toBeVisible({
     timeout: 20000,
   });
-  await financial
-    .getByRole("button", { name: "Extraction preview", exact: true })
-    .click();
+  await sourceAction(page, financial, "Extraction preview");
   const extracted = page.getByRole("region", {
     name: "Extraction preview",
     exact: true,
@@ -655,9 +654,7 @@ test("knowledge upload and worker ingestion support retrieval, attached agents a
     page.getByText("Knowledge settings saved", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "sources", exact: true }).click();
-  await financial
-    .getByRole("button", { name: "Extraction preview", exact: true })
-    .click();
+  await sourceAction(page, financial, "Extraction preview");
   await expect(
     page
       .getByRole("region", { name: "Extraction preview", exact: true })
@@ -825,9 +822,7 @@ test("AI extraction settings ingest multilingual images and rendered PDF pages w
     await expect(row.getByText("ready", { exact: true })).toBeVisible({
       timeout: 20000,
     });
-    await row
-      .getByRole("button", { name: "Extraction preview", exact: true })
-      .click();
+    await sourceAction(page, row, "Extraction preview");
     const preview = page.getByRole("region", { name: "Extraction preview" });
     await expect(
       preview.getByRole("textbox", {
@@ -905,9 +900,7 @@ test("AI extraction settings ingest multilingual images and rendered PDF pages w
         timeout: 20000,
       });
       expect(visionCalls).toBe(before);
-      await row
-        .getByRole("button", { name: "Extraction preview", exact: true })
-        .click();
+      await sourceAction(page, row, "Extraction preview");
       await expect(
         page.getByLabel("Block 2 row 2 column 3", { exact: true }),
       ).toHaveValue("(950.00)");
@@ -929,9 +922,7 @@ test("AI extraction settings ingest multilingual images and rendered PDF pages w
     await page
       .getByRole("button", { name: "Close extraction preview", exact: true })
       .click();
-    await row
-      .getByRole("button", { name: "Usage & traces", exact: true })
-      .click();
+    await sourceAction(page, row, "Usage & traces");
     await page.getByText("Extraction usage & tracing", { exact: true }).click();
     await expect(page.locator(".extraction-usage")).toContainText(
       "model attempts",
@@ -1107,3 +1098,8 @@ test("Financial calculator setup supports progressive help and explicit evidence
     fullPage: true,
   });
 });
+
+async function sourceAction(page, row, name) {
+  await row.getByRole("button", { name: /More actions for/ }).click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}

@@ -10,6 +10,7 @@
     "@agentconnect/schemas": "workspace:*",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "2.2.1",
     "@tailwindcss/postcss": "^4.2.1",
     "@tanstack/react-query": "^5.90.0",
     "@xyflow/react": "^12.12.0",

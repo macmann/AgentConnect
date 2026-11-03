@@ -130,7 +130,9 @@ export function SuggestionReview({
   path,
   job,
   onSaved,
+  expanded = false,
 }: {
+  expanded?: boolean;
   path: string;
   job: TaggingJob;
   onSaved: () => Promise<unknown>;
@@ -160,10 +162,15 @@ export function SuggestionReview({
       setBusy(false);
     }
   }
+  const Container = expanded ? "section" : "details";
   if (job.status === "pending_review" && job.suggestion)
     return (
-      <details className="source-metadata-editor">
-        <summary>Review AI metadata suggestions</summary>
+      <Container className="source-metadata-editor">
+        {expanded ? (
+          <h4>Review AI metadata suggestions</h4>
+        ) : (
+          <summary>Review AI metadata suggestions</summary>
+        )}
         <p className="muted">
           Choose the suggested values to apply. Existing tags and unrelated
           fields are preserved; selected fields replace their current values.
@@ -223,7 +230,7 @@ export function SuggestionReview({
             Reject suggestions
           </Button>
         </div>
-      </details>
+      </Container>
     );
   return (
     <p className="muted" role="status">

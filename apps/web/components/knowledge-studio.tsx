@@ -1,18 +1,16 @@
 "use client";
+import { KnowledgeSourceRow } from "./knowledge-source-row";
 import {
   AITaggingOptions,
   BulkMetadataEditor,
-  TaggingRequest,
-  SuggestionReview,
   type TaggingJob,
   type TaggingOptions,
 } from "./knowledge-bulk-metadata";
-import { MetadataFields, SourceMetadataEditor } from "./knowledge-metadata";
+import { MetadataFields } from "./knowledge-metadata";
 import {
   metadataFilter as metadataFilterSchema,
   type MetadataFilter,
 } from "@agentconnect/schemas/knowledge-metadata";
-import { WorkspaceRecordLink } from "./workspace-record-link";
 import { KnowledgeUploads, useKnowledgeUploads } from "./knowledge-uploads";
 import { ExtractionUsage } from "./extraction-usage";
 import { ExtractionReview, type ExtractionPage } from "./extraction-review";
@@ -22,20 +20,12 @@ import { websiteInput } from "@agentconnect/schemas/knowledge";
 import {
   AdvancedKnowledgeSettings,
   processingFromForm,
-  processingChanged,
   type ProcessingSettings,
 } from "./advanced-knowledge-settings";
 import { KnowledgeReleases } from "./knowledge-releases";
 import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Plus,
-  Upload,
-  BookOpen,
-  ChevronLeft,
-  Search,
-  RefreshCw,
-} from "lucide-react";
+import { Plus, Upload, BookOpen, ChevronLeft, Search } from "lucide-react";
 import { WorkspaceSections, useWorkspaceSection } from "./workspace-sections";
 import { Button } from "./button";
 import { requestJson, apiBase } from "./agent-client";
@@ -63,7 +53,7 @@ type Embedding = {
   model_id: string;
   dimensions: number;
 };
-type Source = {
+export type Source = {
   id: string;
   kind: string;
   title: string;
@@ -1235,8 +1225,8 @@ export function KnowledgeStudio({
                   />
                 )}
               {visibleSources.length ? (
-                <div className="table-wrap">
-                  <table>
+                <div className="table-wrap knowledge-source-table-wrap">
+                  <table className="knowledge-source-table">
                     <thead>
                       <tr>
                         {canManage && (
@@ -1269,299 +1259,102 @@ export function KnowledgeStudio({
                         </th>
                         <th>Status</th>
                         <th>Chunks</th>
-                        <th>Actions</th>
+                        <th className="knowledge-source-menu-heading">
+                          <span className="sr-only">Actions</span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {visibleSources.map((s) => (
-                        <tr key={s.id}>
-                          {canManage && (
-                            <td>
-                              <input
-                                type="checkbox"
-                                aria-label={`Select source ${s.title}`}
-                                checked={selectedSourceIds.includes(s.id)}
-                                disabled={
-                                  selectedSourceIds.length >= 100 &&
-                                  !selectedSourceIds.includes(s.id)
-                                }
-                                onChange={(e) =>
-                                  setSelectedSourceIds(
-                                    e.target.checked
-                                      ? [...selectedSourceIds, s.id]
-                                      : selectedSourceIds.filter(
-                                          (id) => id !== s.id,
-                                        ),
-                                  )
-                                }
-                              />
-                            </td>
-                          )}
-                          <td>
-                            <strong>{s.title}</strong>
-                            {s.kind === "qa" && (
-                              <div className="knowledge-qa-summary">
-                                <span className="support-badge">
-                                  {s.metadata.provenance?.conversationId ||
-                                  s.metadata.reviewId
-                                    ? "Moderated from chat history"
-                                    : "Added here"}
-                                </span>
-                                {s.metadata.goldenAnswer && (
-                                  <span className="support-badge">
-                                    Golden answer
-                                  </span>
-                                )}
-                                <details>
-                                  <summary>View answer</summary>
-                                  <p>
-                                    {s.metadata.answer ??
-                                      "No answer text available"}
-                                  </p>
-                                </details>
-                                {s.metadata.provenance?.conversationId && (
-                                  <WorkspaceRecordLink
-                                    workspaceId={workspaceId}
-                                    view="Conversations"
-                                    record={{
-                                      conversation:
-                                        s.metadata.provenance.conversationId,
-                                    }}
-                                  >
-                                    View source conversation
-                                  </WorkspaceRecordLink>
-                                )}
-                              </div>
-                            )}
-
-                            {canManage ? (
-                              <SourceMetadataEditor
-                                key={s.id}
-                                path={path}
-                                source={s}
-                                onSaved={async () => {
-                                  await sources.refetch();
-                                }}
-                              />
-                            ) : (
-                              <small>{s.metadata.tags?.join(", ")}</small>
-                            )}
-                            {canManage && (
-                              <details className="source-metadata-editor">
-                                <summary>AI metadata tagging</summary>
-                                <TaggingRequest
-                                  path={path}
-                                  sourceIds={[s.id]}
-                                  models={processingModels.data ?? []}
-                                  onQueued={refreshMetadata}
-                                />
-                                {taggingJobs.data
-                                  ?.filter((j) => j.source_id === s.id)
-                                  .map((j) => (
-                                    <SuggestionReview
-                                      key={j.id + ":" + j.status}
-                                      path={path}
-                                      job={j}
-                                      onSaved={refreshMetadata}
-                                    />
-                                  ))}
-                              </details>
-                            )}
-                            <small>
-                              {s.metadata.connectorId
-                                ? "S3 connector"
-                                : s.kind === "website"
-                                  ? `Website crawl · ${s.metadata.crawler === "firecrawl" ? "Firecrawl" : "Built-in"}`
-                                  : s.kind}{" "}
-                              · revision {s.revision}
-                            </small>
-                            {s.metadata.connectorId && (
-                              <small>
-                                Managed source: {s.metadata.externalKey}. Sync
-                                can restore a deleted file while the connector
-                                is active.
-                              </small>
-                            )}
-                          </td>
-                          <td>
-                            <span className={"source-status " + s.status}>
-                              {s.status}
-                              {s.status === "processing" &&
-                                s.metadata.aiExtractionProgress &&
-                                ` · AI page ${s.metadata.aiExtractionProgress.page} (${s.metadata.aiExtractionProgress.extractedPages}/${s.metadata.aiExtractionProgress.maxPages} allowance)`}
-                            </span>
-                            {!!s.metadata.ocrPages && (
-                              <small>
-                                OCR recognized {s.metadata.ocrPages} pages ·
-                                review accuracy
-                              </small>
-                            )}
-                            {!!s.metadata.unrecognizedPages && (
-                              <small className="error">
-                                {s.metadata.unrecognizedPages} pages may contain
-                                scanned content that was not recognized. Enable
-                                OCR and reindex if needed.
-                              </small>
-                            )}
-                            {s.error_code && (
-                              <small className="error">
-                                {s.error_code}
-                                {s.error_code?.startsWith(
-                                  "FIRECRAWL_AUTHENTICATION",
-                                )
-                                  ? ": Check the selected workspace Firecrawl key."
-                                  : s.error_code ===
-                                      "FIRECRAWL_CREDITS_REQUIRED"
-                                    ? ": Add credits to your Firecrawl account."
-                                    : s.error_code ===
-                                        "WEBSITE_REDIRECT_BLOCKED"
-                                      ? ": Redirect leaves the starting origin or has an invalid target. Use the final website URL and approve its exact host."
-                                      : s.error_code ===
-                                          "WEBSITE_REDIRECT_LIMIT"
-                                        ? ": Redirect loop or more than five redirects. Use the direct landing-page URL."
-                                        : s.error_code ===
-                                            "WEBSITE_PATH_BLOCKED"
-                                          ? ": A redirect target falls outside the allowed path prefixes or into a blocked path."
-                                          : s.error_code === "EMPTY_DOCUMENT"
-                                            ? ": Try Firecrawl for JavaScript-rendered pages."
-                                            : ""}
-                              </small>
-                            )}
-                          </td>
-                          <td>
-                            {s.chunk_count}
-                            {s.kind === "website" &&
-                              s.metadata.crawlPageCount !== undefined && (
-                                <small>
-                                  {s.metadata.crawlPageCount} pages indexed
-                                </small>
-                              )}
-                          </td>
-                          <td>
-                            <div className="studio-actions">
-                              <button
-                                className="text-button"
-                                disabled={busy || !s.chunk_count}
-                                onClick={() =>
-                                  action(async () =>
-                                    setPreview(
-                                      await requestJson(
-                                        path + `/sources/${s.id}/chunks`,
-                                      ),
-                                    ),
-                                  )
-                                }
-                              >
-                                Inspect chunks
-                              </button>
-                              <button
-                                className="text-button"
-                                disabled={busy || s.status !== "ready"}
-                                onClick={() => {
-                                  if (
-                                    !window.dispatchEvent(
-                                      new Event(
-                                        "knowledge-review:before-close",
-                                        { cancelable: true },
-                                      ),
-                                    )
-                                  )
-                                    return;
-                                  return action(async () =>
-                                    setExtraction(
-                                      await requestJson(
-                                        path + `/sources/${s.id}/extraction`,
-                                      ),
-                                    ),
-                                  );
-                                }}
-                              >
-                                Extraction preview
-                              </button>
-                              <button
-                                type="button"
-                                className="text-button"
-                                onClick={() =>
-                                  setUsageSource({ id: s.id, title: s.title })
-                                }
-                              >
-                                Usage &amp; traces
-                              </button>
-                              {!!s.metadata.processingWarnings?.length && (
-                                <span className="muted">
-                                  Extraction needs review
-                                </span>
-                              )}
-                              {s.status === "ready" &&
-                                processingChanged(
-                                  s.metadata.processing,
-                                  base.advanced_processing,
-                                ) && (
-                                  <span className="muted">
-                                    Processing changed · Reingest to apply
-                                  </span>
-                                )}
-                              {canManage && (
-                                <>
-                                  <button
-                                    className="text-button"
-                                    disabled={
-                                      busy ||
-                                      s.status === "processing" ||
-                                      s.status === "queued"
-                                    }
-                                    onClick={() =>
-                                      action(async () => {
-                                        await requestJson(
-                                          path + `/sources/${s.id}/reingest`,
-                                          "POST",
-                                        );
-                                        setNotice(
-                                          "Source queued for reingestion",
-                                        );
-                                      })
-                                    }
-                                  >
-                                    <RefreshCw size={13} /> Reingest
-                                  </button>
-                                  {s.kind === "qa" && (
-                                    <button
-                                      className="text-button"
-                                      onClick={() => {
-                                        setEditing(s);
-                                        setSourceKind("qa");
-                                        setForm("qa");
-                                      }}
-                                    >
-                                      Edit Q&A
-                                    </button>
-                                  )}
-                                  <button
-                                    className="text-button danger"
-                                    disabled={busy}
-                                    onClick={() => {
-                                      if (
-                                        window.confirm(
-                                          "Remove this source and its searchable chunks?",
-                                        )
-                                      )
-                                        void action(async () => {
-                                          await requestJson(
-                                            path + `/sources/${s.id}`,
-                                            "DELETE",
-                                          );
-                                          setPreview(null);
-                                          setExtraction(null);
-                                        });
-                                    }}
-                                  >
-                                    Remove
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
+                        <KnowledgeSourceRow
+                          key={s.id}
+                          source={s}
+                          workspaceId={workspaceId}
+                          path={path}
+                          canManage={canManage}
+                          busy={busy}
+                          selected={selectedSourceIds.includes(s.id)}
+                          selectionDisabled={
+                            selectedSourceIds.length >= 100 &&
+                            !selectedSourceIds.includes(s.id)
+                          }
+                          onSelected={(checked) =>
+                            setSelectedSourceIds(
+                              checked
+                                ? [...selectedSourceIds, s.id]
+                                : selectedSourceIds.filter((id) => id !== s.id),
+                            )
+                          }
+                          models={processingModels.data ?? []}
+                          taggingJobs={
+                            taggingJobs.data?.filter(
+                              (j) => j.source_id === s.id,
+                            ) ?? []
+                          }
+                          baseProcessing={base.advanced_processing}
+                          onMetadataSaved={async () => {
+                            await sources.refetch();
+                          }}
+                          onTaggingQueued={refreshMetadata}
+                          onInspect={() =>
+                            void action(async () =>
+                              setPreview(
+                                await requestJson(
+                                  path + `/sources/${s.id}/chunks`,
+                                ),
+                              ),
+                            )
+                          }
+                          onExtraction={() => {
+                            if (
+                              !window.dispatchEvent(
+                                new Event("knowledge-review:before-close", {
+                                  cancelable: true,
+                                }),
+                              )
+                            )
+                              return;
+                            void action(async () =>
+                              setExtraction(
+                                await requestJson(
+                                  path + `/sources/${s.id}/extraction`,
+                                ),
+                              ),
+                            );
+                          }}
+                          onUsage={() =>
+                            setUsageSource({ id: s.id, title: s.title })
+                          }
+                          onEdit={() => {
+                            setEditing(s);
+                            setSourceKind("qa");
+                            setForm("qa");
+                          }}
+                          onReingest={() =>
+                            void action(async () => {
+                              await requestJson(
+                                path + `/sources/${s.id}/reingest`,
+                                "POST",
+                              );
+                              setNotice("Source queued for reingestion");
+                            })
+                          }
+                          onRemove={() => {
+                            if (
+                              window.confirm(
+                                "Remove this source and its searchable chunks?",
+                              )
+                            )
+                              void action(async () => {
+                                await requestJson(
+                                  path + `/sources/${s.id}`,
+                                  "DELETE",
+                                );
+                                setPreview(null);
+                                setExtraction(null);
+                              });
+                          }}
+                        />
                       ))}
                     </tbody>
                   </table>
