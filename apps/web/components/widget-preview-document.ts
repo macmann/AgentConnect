@@ -1,3 +1,4 @@
+import { customerAppearance } from "@agentconnect/schemas/customer-theme";
 import type { WidgetSettings } from "@agentconnect/schemas/channels";
 import type { Branding } from "@agentconnect/schemas/customer-experience";
 import type { QuickAction } from "@agentconnect/schemas/bank-experience";
@@ -31,7 +32,7 @@ export function widgetPreviewDocument(
   const api = new URL(apiBase).origin;
   const policy = `default-src 'none'; script-src 'unsafe-inline' ${api}; style-src 'unsafe-inline'; img-src ${api} https: data:; connect-src 'none'; base-uri 'none'; form-action 'none'`;
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${attribute(policy)}"><style>html,body{margin:0;background:transparent}</style></head><body><script>
- const config=${json(config)},api=${json(api)},deployment=${json(deploymentId)},parentOrigin=${json(parentOrigin)};
+ const config=${json({ ...config, appearance: customerAppearance(config.branding, config.widget.theme) })},api=${json(api)},deployment=${json(deploymentId)},parentOrigin=${json(parentOrigin)};
  const previewStorage=new Map();Object.defineProperty(window,'localStorage',{value:{getItem:key=>previewStorage.get(key)??null,setItem:(key,value)=>previewStorage.set(key,String(value)),removeItem:key=>previewStorage.delete(key)}});
  const prefix='/public/widgets/'+deployment;
  const respond=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});

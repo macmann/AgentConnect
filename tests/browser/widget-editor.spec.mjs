@@ -117,7 +117,7 @@ async function snapshot(frame) {
       host = panel.getRootNode().host;
     return {
       title: root.querySelector("h2").textContent,
-      greeting: root.querySelector(".messages article").textContent,
+      greeting: root.querySelector(".message-bubble").textContent,
       width: panel.getBoundingClientRect().width,
       height: panel.getBoundingClientRect().height,
       background: style.backgroundColor,
@@ -279,4 +279,119 @@ test("Read-only users can preview and copy installation code but cannot change s
   await expect(
     page.getByRole("button", { name: "Copy widget code", exact: true }),
   ).toBeEnabled();
+});
+
+test("Customer widget and hosted iframe use configured colors without platform branding or theme switches", async ({
+  page,
+  context,
+}, info) => {
+  const colors = {
+    name: "Acme Care",
+    welcomeMessage: "Hi, how can we help you today?",
+    primaryColor: "#ed0039",
+    backgroundColor: "#ffffff",
+    textColor: "#151515",
+    logoUrl: "",
+  };
+  await sql`UPDATE deployments SET branding=${sql.json(colors)},widget_settings=widget_settings||${sql.json({ enabled: true, access: "restricted", allowedOrigins: ["http://localhost:4509"], theme: "dark", launcher: "Chat", position: "right", width: 380, height: 600 })} WHERE id=${deployment}`;
+  await context.addInitScript(() => {
+    localStorage.setItem("agent-connex-theme", "dark");
+    localStorage.setItem(
+      "agent-connex-widget-theme:" + location.pathname.split("/").at(-1),
+      "dark",
+    );
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const requests = [];
+  page.on("request", (req) => requests.push(req.url()));
+  await page.goto("http://localhost:4509");
+  await page.getByRole("button", { name: "Chat", exact: true }).click();
+  const widget = page.getByRole("dialog", { name: "Acme Care", exact: true });
+  await expect(widget).toBeVisible();
+  await expect(widget).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(widget).toHaveCSS("color", "rgb(21, 21, 21)");
+  await expect(page.locator(".chat-header")).toHaveCSS(
+    "background-color",
+    "rgb(237, 0, 57)",
+  );
+  await expect(page.locator(".chat-header")).toHaveCSS(
+    "color",
+    "rgb(255, 255, 255)",
+  );
+  await expect(
+    page.getByRole("button", { name: /Switch to .* theme/ }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("img", { name: /Agent Connex/ })).toHaveCount(0);
+  await expect(widget).not.toContainText("Agent Connex");
+  await expect(page.locator("iframe")).toHaveCount(0);
+  await expect(
+    page.getByText("Previous conversations", { exact: true }),
+  ).toBeHidden();
+  await page.getByLabel("Chat options", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "New chat", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  const box = await widget.boundingBox();
+  expect(Math.round(1280 - box.x - box.width)).toBe(20);
+  expect(Math.round(900 - box.y - box.height)).toBe(20);
+  await page.screenshot({
+    path: info.outputPath("customer-widget-desktop.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobile = await widget.boundingBox();
+  expect(mobile.x).toBeGreaterThanOrEqual(0);
+  expect(mobile.x + mobile.width).toBeLessThanOrEqual(390);
+  expect(mobile.y + mobile.height).toBeLessThanOrEqual(844);
+  await page.screenshot({
+    path: info.outputPath("customer-widget-mobile.png"),
+    fullPage: true,
+  });
+  await page.goto(`http://localhost:3000/chat/${deployment}`);
+  await expect(page.locator(".customer-chat .panel-header h3")).toHaveText(
+    "Acme Care",
+  );
+  await expect(page.locator(".hosted-shell")).toHaveCSS(
+    "background-color",
+    "rgb(255, 255, 255)",
+  );
+  await expect(page.locator(".hosted-shell")).toHaveCSS(
+    "color",
+    "rgb(21, 21, 21)",
+  );
+  await expect(page.locator(".customer-chat>.panel-header")).toHaveCSS(
+    "background-color",
+    "rgb(237, 0, 57)",
+  );
+  await expect(
+    page.getByRole("button", { name: /Switch to .* theme/ }),
+  ).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("Agent Connex");
+  await expect(
+    page.getByText("Published agent · hosted chat", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.locator('link[rel="icon"][href*="agent-connex"]'),
+  ).toHaveCount(0);
+  await expect(page.locator(".customer-chat-shell>.brand")).toHaveCount(0);
+  expect(
+    requests.some((url) => url.includes("/brand/agent-connex")),
+  ).toBeFalsy();
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollHeight <= innerHeight + 1 &&
+        document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBeTruthy();
+  await page.getByLabel("Chat options", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "New chat", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.screenshot({
+    path: info.outputPath("customer-hosted-chat-mobile.png"),
+    fullPage: true,
+  });
 });

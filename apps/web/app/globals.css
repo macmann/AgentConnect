@@ -8743,3 +8743,308 @@ fieldset {
   min-width: 36px;
   padding: 8px;
 }
+
+/* Public customer chat: a single customer-branded surface, including inside an iframe. */
+.hosted-shell.customer-chat-shell {
+  width: 100%;
+  max-width: 680px;
+  height: 100dvh;
+  min-height: 0;
+  padding: 0;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--ink);
+  overflow: hidden;
+}
+.customer-chat-shell > .customer-chat {
+  position: relative;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--surface);
+  color: var(--ink);
+  overflow: hidden;
+}
+.customer-chat > .panel-header {
+  margin: 0;
+  width: 100%;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  padding: 18px 20px;
+  border: 0;
+  background: var(--brand);
+  color: var(--customer-on-primary);
+}
+.customer-chat > .panel-header > div:first-of-type {
+  flex: 1;
+  min-width: 0;
+}
+.customer-chat > .panel-header h3 {
+  color: inherit;
+  display: block;
+  line-height: 1.35;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+.customer-chat > .panel-header p {
+  margin: 3px 0 0;
+  color: inherit;
+  opacity: 0.85;
+  font-size: 12px;
+}
+.customer-avatar {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--customer-on-primary) 18%, transparent);
+  font-size: 22px;
+  font-weight: 700;
+}
+.customer-avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--brand);
+}
+.customer-options > summary {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 36px;
+  padding: 0;
+  list-style: none;
+  border: 1px solid
+    color-mix(in srgb, var(--customer-on-primary) 24%, transparent);
+  border-radius: 10px;
+  color: inherit;
+  font-size: 23px;
+  cursor: pointer;
+}
+.customer-options > summary::-webkit-details-marker {
+  display: none;
+}
+.customer-options-panel {
+  position: absolute;
+  z-index: 10;
+  top: 82px;
+  right: 14px;
+  width: min(310px, calc(100% - 28px));
+  max-height: calc(100% - 110px);
+  overflow: auto;
+  padding: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 8px 30px #0003;
+}
+.customer-options-panel .customer-history {
+  padding: 10px 0;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  max-height: none;
+  overflow: visible;
+}
+.customer-options-panel details {
+  margin: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.customer-options-panel p {
+  font-size: 12px;
+  color: var(--muted) !important;
+  opacity: 1 !important;
+}
+.customer-options-panel summary {
+  font-size: 13px;
+  cursor: pointer;
+}
+.customer-options-panel button {
+  color: var(--ink);
+  font-size: 12px;
+}
+.customer-options-panel > .text-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--surface-subtle) !important;
+  color: var(--ink);
+}
+.customer-chat .chat-messages {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  padding: 20px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.customer-chat .chat-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-items: stretch;
+  align-self: stretch;
+  width: 100%;
+  text-align: left;
+  padding: 0;
+  margin: 0 0 18px;
+  color: var(--ink);
+}
+.customer-chat .chat-welcome small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 10px 5px;
+}
+.customer-chat .customer-greeting {
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  background: var(--surface-subtle);
+  color: var(--ink);
+  padding: 12px 15px;
+  border-radius: 17px 17px 17px 4px;
+  max-width: 94%;
+  margin: 0 0 14px;
+}
+.customer-chat .starters {
+  justify-content: flex-start;
+  gap: 8px;
+}
+.customer-chat .starters button,
+.customer-chat .quick-action-list button {
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface) !important;
+  color: var(--ink);
+  font-size: 12px;
+}
+.customer-chat .chat-message {
+  max-width: 94%;
+  width: fit-content;
+  background: var(--surface-subtle);
+  color: var(--ink);
+  padding: 12px 15px;
+  border-radius: 17px 17px 17px 4px;
+  line-height: 1.6;
+  margin: 0 0 18px;
+  font-size: 14px;
+}
+.customer-chat .chat-message.user {
+  margin-left: auto;
+  background: var(--brand);
+  color: var(--customer-on-primary);
+  border-radius: 17px 17px 4px 17px;
+}
+.customer-chat .chat-message.user small {
+  color: inherit;
+  opacity: 0.8;
+}
+.customer-chat .chat-message p {
+  color: inherit;
+}
+.customer-chat .chat-message small {
+  font-size: 11px;
+  margin-bottom: 5px;
+}
+.customer-chat .chat-message.system {
+  max-width: 100%;
+  margin: 0 auto 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+.customer-chat .chat-composer {
+  margin: 0;
+  width: 100%;
+  flex: none;
+  align-items: center;
+  padding: 16px 18px max(16px, env(safe-area-inset-bottom));
+  gap: 9px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+.customer-chat .chat-composer textarea {
+  height: 46px;
+  min-height: 46px;
+  max-height: 120px;
+  resize: vertical;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 20px;
+}
+.customer-chat .chat-composer textarea::placeholder {
+  color: var(--muted);
+}
+.customer-chat .chat-composer button {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  color: var(--customer-on-primary);
+}
+.customer-chat > .chat-support-status,
+.customer-chat > .error,
+.customer-chat > .chat-error,
+.customer-chat > .quick-action-list {
+  flex: none;
+  padding: 8px 20px;
+  margin: 0;
+}
+.customer-chat > .quick-action-list:empty {
+  display: none;
+}
+.customer-chat .customer-options-panel .customer-feedback {
+  margin: 0;
+  padding: 10px 0;
+}
+.customer-chat .rich-block,
+.customer-chat .generative-response {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.customer-chat > .panel-header > .customer-options > summary:focus-visible {
+  outline-color: var(--customer-on-primary);
+}
+
+.customer-chat-page {
+  height: 100dvh;
+  width: 100%;
+  background: var(--surface);
+  color: var(--ink);
+  overflow: hidden;
+}

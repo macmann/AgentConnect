@@ -46,6 +46,8 @@ export function ChatPanel({
   starters = [],
   quickActions = [],
   diagnostics = false,
+  customerView = false,
+  customerLogo,
 }: {
   endpoint: string;
   name: string;
@@ -53,7 +55,10 @@ export function ChatPanel({
   starters?: string[];
   quickActions?: QuickAction[];
   diagnostics?: boolean;
+  customerView?: boolean;
+  customerLogo?: string;
 }) {
+  const customerOptions = useRef<HTMLDetailsElement>(null);
   const [messages, setMessages] = useState<
     {
       role: "user" | "assistant";
@@ -383,6 +388,7 @@ export function ChatPanel({
     void send(input);
   }
   function reset() {
+    if (customerOptions.current) customerOptions.current.open = false;
     setWorkflowAction(null);
     controller.current?.abort();
     conversation.current = undefined;
@@ -405,121 +411,193 @@ export function ChatPanel({
     setError("");
     setTraceId("");
   }
+  const publicHistory = publicBase ? (
+    <details className="customer-history">
+      <summary>Previous conversations ({history.length})</summary>
+      <p className="muted">
+        Saved on this browser for up to 30 days. Anyone using this browser can
+        reopen these chats.
+      </p>
+      {restoring && <p role="status">Restoring conversation…</p>}
+      {history.map((item) => (
+        <button
+          key={item.id}
+          className="text-button"
+          disabled={busy || restoring}
+          onClick={() =>
+            customer.current &&
+            void resume(item.id, customer.current).catch((e) =>
+              setError(e.message),
+            )
+          }
+        >
+          {item.title || "Conversation"} ·{" "}
+          {new Date(item.created_at).toLocaleDateString()} ·{" "}
+          {item.handoff_status}
+        </button>
+      ))}
+      {history.length >= 30 && (
+        <Button
+          type="button"
+          className="secondary"
+          disabled={busy || restoring}
+          onClick={async () => {
+            if (!customer.current) return;
+            const last = history.at(-1)!;
+            setRestoring(true);
+            try {
+              const q = new URLSearchParams({
+                before: last.created_at,
+                beforeId: last.id,
+              });
+              const older = await customerRequest<typeof history>(
+                publicBase,
+                customer.current,
+                "/history?" + q,
+              );
+              setHistory((h) => [
+                ...h,
+                ...older.filter((o) => !h.some((i) => i.id === o.id)),
+              ]);
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setRestoring(false);
+            }
+          }}
+        >
+          Load older conversations
+        </Button>
+      )}
+      <Button
+        type="button"
+        className="secondary"
+        disabled={busy || restoring}
+        onClick={async () => {
+          if (!customer.current) return;
+          try {
+            await customerRequest(
+              publicBase,
+              customer.current,
+              "/sessions",
+              "DELETE",
+            );
+            writeMemory(publicBase, null);
+            reset();
+            customer.current = null;
+            setHistory([]);
+            setRestoring(true);
+            customer.current = await openCustomerSession(publicBase);
+          } catch (e) {
+            setError((e as Error).message);
+          } finally {
+            setRestoring(false);
+          }
+        }}
+      >
+        Forget this browser session
+      </Button>
+    </details>
+  ) : null;
+  const voiceControls = (
+    <VoiceControls
+      text={
+        [...messages].reverse().find((m) => m.role === "assistant")?.content ??
+        ""
+      }
+      onTranscript={setInput}
+      disabled={
+        busy || support.sending || supportPaused || supportLoading || restoring
+      }
+    />
+  );
+  const customerFeedback =
+    publicBase &&
+    conversation.current &&
+    guest.current &&
+    messages.some((m) => m.role === "assistant") ? (
+      <CustomerFeedback
+        key={"feedback:" + conversation.current}
+        base={publicBase}
+        conversationId={conversation.current}
+        token={guest.current}
+      />
+    ) : null;
   return (
     <section
-      className={`panel chat-panel${diagnostics ? " playground-chat" : ""}`}
+      className={`panel chat-panel${diagnostics ? " playground-chat" : ""}${customerView ? " customer-chat" : ""}`}
+      onKeyDown={(e) => {
+        if (customerView && e.key === "Escape" && customerOptions.current)
+          customerOptions.current.open = false;
+      }}
     >
       <div className="panel-header">
+        {customerView && (
+          <span className="customer-avatar">
+            <span aria-hidden="true">{name.slice(0, 1).toUpperCase()}</span>
+            {customerLogo && (
+              <img
+                src={customerLogo}
+                alt={name + " logo"}
+                width={44}
+                height={44}
+                referrerPolicy="no-referrer"
+                onError={(e) => (e.currentTarget.hidden = true)}
+              />
+            )}
+          </span>
+        )}
         <div>
           <h3>
-            <Sparkles size={17} />
+            {!customerView && <Sparkles size={17} />}
             {diagnostics ? "Conversation" : name}
           </h3>
           {!diagnostics && (
             <p>
-              {endpoint.startsWith("/public")
-                ? "Published agent · hosted chat"
-                : "Test your saved draft"}
+              {customerView
+                ? "AI assistant"
+                : endpoint.startsWith("/public")
+                  ? "Published agent · hosted chat"
+                  : "Test your saved draft"}
             </p>
           )}
         </div>
-        <button
-          className="text-button"
-          disabled={busy || support.sending || restoring}
-          onClick={reset}
-        >
-          <RefreshCw size={14} />
-          New chat
-        </button>
-      </div>
-      {publicBase && (
-        <details className="customer-history">
-          <summary>Previous conversations ({history.length})</summary>
-          <p className="muted">
-            Saved on this browser for up to 30 days. Anyone using this browser
-            can reopen these chats.
-          </p>
-          {restoring && <p role="status">Restoring conversation…</p>}
-          {history.map((item) => (
-            <button
-              key={item.id}
-              className="text-button"
-              disabled={busy || restoring}
-              onClick={() =>
-                customer.current &&
-                void resume(item.id, customer.current).catch((e) =>
-                  setError(e.message),
-                )
-              }
-            >
-              {item.title || "Conversation"} ·{" "}
-              {new Date(item.created_at).toLocaleDateString()} ·{" "}
-              {item.handoff_status}
-            </button>
-          ))}
-          {history.length >= 30 && (
-            <Button
-              type="button"
-              className="secondary"
-              disabled={busy || restoring}
-              onClick={async () => {
-                if (!customer.current) return;
-                const last = history.at(-1)!;
-                setRestoring(true);
-                try {
-                  const q = new URLSearchParams({
-                    before: last.created_at,
-                    beforeId: last.id,
-                  });
-                  const older = await customerRequest<typeof history>(
-                    publicBase,
-                    customer.current,
-                    "/history?" + q,
-                  );
-                  setHistory((h) => [
-                    ...h,
-                    ...older.filter((o) => !h.some((i) => i.id === o.id)),
-                  ]);
-                } catch (e) {
-                  setError((e as Error).message);
-                } finally {
-                  setRestoring(false);
-                }
-              }}
-            >
-              Load older conversations
-            </Button>
-          )}
-          <Button
-            type="button"
-            className="secondary"
-            disabled={busy || restoring}
-            onClick={async () => {
-              if (!customer.current) return;
-              try {
-                await customerRequest(
-                  publicBase,
-                  customer.current,
-                  "/sessions",
-                  "DELETE",
-                );
-                writeMemory(publicBase, null);
-                reset();
-                customer.current = null;
-                setHistory([]);
-                setRestoring(true);
-                customer.current = await openCustomerSession(publicBase);
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setRestoring(false);
-              }
-            }}
+        {!customerView && (
+          <button
+            className="text-button"
+            disabled={busy || support.sending || restoring}
+            onClick={reset}
           >
-            Forget this browser session
-          </Button>
-        </details>
-      )}
+            <RefreshCw size={14} />
+            New chat
+          </button>
+        )}
+        {customerView && (
+          <details ref={customerOptions} className="customer-options">
+            <summary aria-label="Chat options" title="Chat options">
+              ⋯
+            </summary>
+            <div className="customer-options-panel">
+              <button
+                type="button"
+                className="text-button"
+                disabled={busy || support.sending || restoring}
+                onClick={reset}
+              >
+                <RefreshCw size={14} />
+                New chat
+              </button>
+              {publicHistory}
+              <details>
+                <summary>Voice options</summary>
+                {voiceControls}
+              </details>
+              {customerFeedback}
+            </div>
+          </details>
+        )}
+      </div>
+      {!customerView && publicHistory}
       {!!quickActions.length && (
         <div className="quick-action-list" aria-label="Quick actions">
           {quickActions.map((a) => (
@@ -652,9 +730,18 @@ export function ChatPanel({
         )}
         {!messages.length && (
           <div className="chat-welcome">
-            <Sparkles size={30} />
-            <h3>{welcomeMessage}</h3>
-            <p>Messages are saved in the workspace conversation history.</p>
+            {!customerView && <Sparkles size={30} />}
+            {customerView ? (
+              <>
+                <small>{name}</small>
+                <p className="customer-greeting">{welcomeMessage}</p>
+              </>
+            ) : (
+              <>
+                <h3>{welcomeMessage}</h3>
+                <p>Messages are saved in the workspace conversation history.</p>
+              </>
+            )}
             <div className="starters">
               {starters.map((s) => (
                 <Button key={s} className="secondary" onClick={() => send(s)}>
@@ -720,40 +807,15 @@ export function ChatPanel({
           {error}
         </p>
       )}
-      {diagnostics ? (
-        <details className="playground-voice">
-          <summary>Voice options</summary>
-          <VoiceControls
-            text={
-              [...messages].reverse().find((m) => m.role === "assistant")
-                ?.content ?? ""
-            }
-            onTranscript={setInput}
-            disabled={
-              busy ||
-              support.sending ||
-              supportPaused ||
-              supportLoading ||
-              restoring
-            }
-          />
-        </details>
-      ) : (
-        <VoiceControls
-          text={
-            [...messages].reverse().find((m) => m.role === "assistant")
-              ?.content ?? ""
-          }
-          onTranscript={setInput}
-          disabled={
-            busy ||
-            support.sending ||
-            supportPaused ||
-            supportLoading ||
-            restoring
-          }
-        />
-      )}
+      {!customerView &&
+        (diagnostics ? (
+          <details className="playground-voice">
+            <summary>Voice options</summary>
+            {voiceControls}
+          </details>
+        ) : (
+          voiceControls
+        ))}
       {support.state &&
         (support.state.access.canRequest ||
           support.state.access.offer ||
@@ -806,17 +868,7 @@ export function ChatPanel({
           {support.error}
         </p>
       )}
-      {publicBase &&
-        conversation.current &&
-        guest.current &&
-        messages.some((m) => m.role === "assistant") && (
-          <CustomerFeedback
-            key={"feedback:" + conversation.current}
-            base={publicBase}
-            conversationId={conversation.current}
-            token={guest.current}
-          />
-        )}
+      {!customerView && customerFeedback}
       <form onSubmit={submit} className="chat-composer">
         <label className="sr-only" htmlFor={`chat-${name}`}>
           Message
@@ -826,7 +878,11 @@ export function ChatPanel({
           id={`chat-${name}`}
           aria-label="Message"
           placeholder={
-            handoffOpen ? "Message human support…" : "Ask your agent…"
+            handoffOpen
+              ? "Message human support…"
+              : customerView
+                ? "Your message…"
+                : "Ask your agent…"
           }
           value={input}
           onChange={(e) => setInput(e.target.value)}

@@ -28,7 +28,7 @@ export function DeploymentEmbed({
     {
       name: "Floating chat widget",
       hint: "Add before </body>. Enable the widget and approve your website origin in Channels first.",
-      code: `<script async src="${escape(apiBase)}/widget.js" data-deployment="${escape(deploymentId)}" data-chat-url="${escape(url)}"></script>`,
+      code: `<script async src="${escape(apiBase)}/widget.js" data-deployment="${escape(deploymentId)}"></script>`,
     },
   ];
   const Container = expanded ? "section" : "details";

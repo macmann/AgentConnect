@@ -212,34 +212,18 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
   page,
   browser,
 }) => {
+  test.setTimeout(120000);
+  page.setDefaultTimeout(15000);
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("http://localhost:4569");
   await page.getByRole("button", { name: "Chat", exact: true }).click();
   await expect(
     page.getByRole("img", { name: "Agent Connex", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Switch to dark theme", exact: true })
-    .click();
+  ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Switch to light theme", exact: true }),
-  ).toBeVisible();
-  await page.reload();
-  await page.getByRole("button", { name: "Chat", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Switch to light theme", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Switch to light theme", exact: true })
-    .click();
-  await expect
-    .poll(() =>
-      page
-        .getByRole("img", { name: "Agent Connex", exact: true })
-        .evaluate((img) => img.complete && img.naturalWidth > 0),
-    )
-    .toBe(true);
+    page.getByRole("button", { name: /Switch to .* theme/ }),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "Start lookup", exact: true }).click();
   await expect(page.getByLabel("Reference", { exact: true })).toBeVisible();
   await page.getByLabel("Reference", { exact: true }).fill("REF-BROWSER");
@@ -287,6 +271,7 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
   await page.getByRole("button", { name: "Download TXT", exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/Branch-guide.txt/);
+  await page.getByLabel("Chat options", { exact: true }).click();
   await page.getByText("Rate this conversation", { exact: true }).click();
   await page
     .getByLabel("Satisfaction (1–5)", { exact: true })
@@ -305,6 +290,7 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
   await expect(
     page.getByRole("heading", { name: "Branch hours", exact: true }),
   ).toBeVisible();
+  await page.getByLabel("Chat options", { exact: true }).click();
   await page.getByText("Rate this conversation", { exact: true }).click();
   await expect(
     page.getByLabel("Satisfaction (1–5)", { exact: true }),
@@ -318,30 +304,16 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
   await page.screenshot({ path: test.info().outputPath("widget-desktop.png") });
   if (process.env.PRODUCT_SCREENSHOTS) {
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.getByText("Rate this conversation", { exact: true }).click();
     await page
       .getByRole("button", { name: "Close chat", exact: true })
       .locator("..")
       .locator("..")
       .screenshot({ path: "docs/screenshots/chat-widget-desktop.png" });
   }
-  await page
-    .getByRole("button", { name: "Switch to dark theme", exact: true })
-    .click();
-  await expect(page.locator("section.dark .rich-block").first()).toHaveCSS(
-    "background-color",
-    "rgb(18, 22, 32)",
-  );
-  await expect(page.locator("section.dark table").first()).toHaveCSS(
-    "color",
-    "rgb(238, 240, 250)",
-  );
-  if (process.env.PRODUCT_SCREENSHOTS)
-    await page
-      .getByRole("button", { name: "Close chat", exact: true })
-      .locator("..")
-      .locator("..")
-      .screenshot({ path: "docs/screenshots/chat-widget-dark.png" });
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: /Switch to .* theme/ }),
+  ).toHaveCount(0);
   await page.setViewportSize({ width: 360, height: 800 });
   expect(
     await page.evaluate(
@@ -403,10 +375,15 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
     .click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page.getByText("Start from a template", { exact: true }).click();
   await page
     .getByRole("button", { name: "Assisted answer", exact: true })
     .click();
   await page.getByText("Prepare answer", { exact: true }).click();
+  await page
+    .getByLabel("Agent source", { exact: true })
+    .selectOption("existing");
+  await page.getByLabel("Agent", { exact: true }).selectOption(agent);
   await page
     .getByLabel("Published agent version", { exact: true })
     .selectOption(version);
@@ -426,6 +403,7 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
   await expect(
     page.getByText("Workflow draft saved.", { exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
   await page
     .getByRole("button", { name: "Publish workflow", exact: true })
     .click();
@@ -444,6 +422,7 @@ test("Customer workflow, rich widget controls, downloads and feedback persist on
   expect(
     published.graph.nodes.find((n) => n.id === "output").data.resultTitle,
   ).toBe("Lookup summary");
+  await page.getByRole("button", { name: "Build", exact: true }).click();
   await page
     .getByRole("button", { name: "Create reusable copy", exact: true })
     .click();
