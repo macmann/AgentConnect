@@ -240,6 +240,8 @@ test("Configure website widget, stream, hand off to operator, resolve and test b
     window.SpeechRecognition = Recognition;
   });
   await page.goto("/chat/" + deployment);
+  await page.getByLabel("Chat options", { exact: true }).click();
+  await page.getByText("Voice options", { exact: true }).click();
   await page.getByLabel("Enable browser voice", { exact: true }).check();
   await page.getByRole("button", { name: "Dictate message" }).click();
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue(

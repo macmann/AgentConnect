@@ -1,3 +1,5 @@
+import { customerAppearance } from "@agentconnect/schemas/customer-theme";
+import { widgetSettings } from "@agentconnect/schemas/channels";
 import {
   parseGenerativeResponse,
   responseValidation,
@@ -1752,10 +1754,14 @@ export async function registerAgentRoutes(
       const d = await publicDeployment(id(params(r).deploymentId));
       const c = agentConfig.parse(d.config);
       const [presentation] =
-        await sql`SELECT branding FROM deployments WHERE id=${d.id}`;
+        await sql`SELECT branding,widget_settings FROM deployments WHERE id=${d.id}`;
       const b = branding.parse(presentation!.branding);
       return {
         branding: b,
+        appearance: customerAppearance(
+          b,
+          widgetSettings.parse(presentation!.widget_settings).theme,
+        ),
         id: d.id,
         name: b.name || d.name,
         description: d.public_description,

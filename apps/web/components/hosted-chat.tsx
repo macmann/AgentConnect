@@ -1,11 +1,15 @@
 "use client";
-import { useEffect, useState } from "react";
-import { ProductBrand } from "./product-brand";
+import { useEffect, useState, type CSSProperties } from "react";
 import { ChatPanel } from "./chat-panel";
 import { requestJson } from "./agent-client";
+import {
+  customerAppearance,
+  type CustomerAppearance,
+} from "@agentconnect/schemas/customer-theme";
 export function HostedChat({ deploymentId }: { deploymentId: string }) {
   const [deployment, setDeployment] = useState<{
     branding?: import("@agentconnect/schemas/customer-experience").Branding;
+    appearance?: CustomerAppearance;
     name: string;
     description: string;
     welcomeMessage: string;
@@ -17,7 +21,10 @@ export function HostedChat({ deploymentId }: { deploymentId: string }) {
     let active = true;
     requestJson<typeof deployment>(`/public/deployments/${deploymentId}`)
       .then((d) => {
-        if (active) setDeployment(d);
+        if (active) {
+          setDeployment(d);
+          document.title = d?.name || "Chat";
+        }
       })
       .catch((e) => {
         if (active) setError(e.message);
@@ -26,57 +33,54 @@ export function HostedChat({ deploymentId }: { deploymentId: string }) {
       active = false;
     };
   }, [deploymentId]);
+  const a = deployment?.appearance ?? customerAppearance(deployment?.branding);
   return (
-    <main
-      className="hosted-shell"
+    <div
+      className="customer-chat-page"
       style={
-        deployment?.branding
-          ? ({
-              "--brand": deployment.branding.primaryColor,
-              "--accent": deployment.branding.primaryColor,
-              background: deployment.branding.backgroundColor,
-              color: deployment.branding.textColor,
-            } as React.CSSProperties)
-          : undefined
+        {
+          "--brand": a.primary,
+          "--green": a.primary,
+          "--focus": a.primary,
+          "--primary": a.primary,
+          "--accent": a.primary,
+          "--accent-text": a.primary,
+          "--on-accent": a.onPrimary,
+          "--ink": a.text,
+          "--muted": a.muted,
+          "--line": a.line,
+          "--paper": a.background,
+          "--surface": a.background,
+          "--surface-subtle": a.soft,
+          "--accent-soft": a.soft,
+          "--customer-on-primary": a.onPrimary,
+          background: a.background,
+          color: a.text,
+          colorScheme: a.scheme,
+        } as CSSProperties
       }
     >
-      <a className="brand" href="/">
-        {deployment?.branding?.logoUrl ? (
-          <img
-            src={deployment.branding.logoUrl}
-            alt={deployment.name + " logo"}
-            width={36}
-            height={36}
-            referrerPolicy="no-referrer"
-          />
-        ) : (
-          <ProductBrand />
-        )}
-        {deployment?.branding?.name || ""}
-      </a>
-      {error ? (
-        <div className="error-banner" role="alert">
-          {error}
-        </div>
-      ) : deployment ? (
-        <>
-          <h1>{deployment.name}</h1>
-          <p className="muted">{deployment.description}</p>
+      <main className="hosted-shell customer-chat-shell">
+        {error ? (
+          <div className="error-banner" role="alert">
+            {error}
+          </div>
+        ) : deployment ? (
           <ChatPanel
             endpoint={`/public/deployments/${deploymentId}/chat`}
             name={deployment.name}
             welcomeMessage={deployment.welcomeMessage}
             starters={deployment.conversationStarters}
             quickActions={deployment.quickActions ?? []}
+            customerView
+            customerLogo={deployment.branding?.logoUrl}
           />
-        </>
-      ) : (
-        <p className="empty">Loading published agent…</p>
-      )}
-      <p className="fine">
-        Powered by Agent Connex · Conversations are saved by this agent’s
-        workspace.
-      </p>
-    </main>
+        ) : (
+          <p className="empty" role="status">
+            Loading chat…
+          </p>
+        )}
+      </main>
+    </div>
   );
 }

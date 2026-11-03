@@ -438,6 +438,7 @@ test("Reviewed knowledge, banking quick actions, grounded guidance and transfer 
         exact: true,
       }),
     ).toBeVisible({ timeout: 20000 });
+    await chat.getByLabel("Chat options", { exact: true }).click();
     await chat.getByText(/Previous conversations/).click();
     await expect(
       chat.getByRole("button", { name: /I forgot my password/ }),
