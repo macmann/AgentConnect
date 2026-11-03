@@ -396,6 +396,22 @@ test("Malformed or disallowed UI produces a failed run without persisting/render
       }),
       stream = events(chat.body);
     assert.equal(stream.at(-1)!.data.code, "INVALID_UI_RESPONSE");
+    const [run] =
+      await sql`SELECT context_breakdown FROM agent_runs WHERE id=${stream[0]!.data.runId}`;
+    assert.equal(
+      run!.context_breakdown.failureDiagnostics.responseValidation.stage,
+      "schema",
+    );
+    assert.equal(
+      run!.context_breakdown.failureDiagnostics.responseValidation
+        .outputCharacters,
+      response.length,
+    );
+    assert.ok(
+      !JSON.stringify(run!.context_breakdown.failureDiagnostics).includes(
+        "unsafe",
+      ),
+    );
     assert.equal(
       stream.filter((e) => e.event === "ui" || e.event === "token").length,
       0,

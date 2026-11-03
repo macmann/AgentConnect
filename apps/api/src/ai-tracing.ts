@@ -11,6 +11,7 @@ import type {
   ChatProvider,
   ModelConnection,
   ChatRequest,
+  ProviderError,
 } from "@agentconnect/provider-sdk";
 
 export const AI_TRACER = "agentconnex-ai";
@@ -29,7 +30,11 @@ export function startObservation(
 }
 /** Never record arbitrary exception messages, provider bodies or stack traces. */
 export function observationError(span: Span, error: unknown) {
-  const value = error as { code?: unknown; httpStatus?: unknown } | null;
+  const value = error as {
+    code?: unknown;
+    httpStatus?: unknown;
+    details?: ProviderError["details"];
+  } | null;
   const code =
     typeof value?.code === "string" && /^[A-Z][A-Z0-9_]{0,79}$/.test(value.code)
       ? value.code
@@ -40,6 +45,46 @@ export function observationError(span: Span, error: unknown) {
     "langfuse.observation.level": "ERROR",
     "langfuse.observation.status_message": code,
   });
+  const stream = value?.details?.providerStream;
+  if (stream) {
+    for (const key of [
+      "responseStatus",
+      "frameCount",
+      "contentCharacters",
+      "reasoningCharacters",
+      "reasoningTokens",
+      "inputTokens",
+      "outputTokens",
+    ] as const) {
+      const n = stream[key];
+      if (typeof n === "number" && Number.isFinite(n))
+        span.setAttribute(`provider.stream.${key}`, n);
+    }
+    for (const key of [
+      "refusalObserved",
+      "toolCallsObserved",
+      "nonTextContentObserved",
+    ] as const)
+      if (typeof stream[key] === "boolean")
+        span.setAttribute(`provider.stream.${key}`, stream[key]);
+    if (stream.finishReason)
+      span.setAttribute("provider.stream.finishReason", stream.finishReason);
+    span.setAttribute("provider.stream.responseFormat", stream.responseFormat);
+  }
+  const validation = value?.details?.responseValidation;
+  if (validation) {
+    span.setAttribute("response.validation.stage", validation.stage);
+    span.setAttribute(
+      "response.validation.outputCharacters",
+      validation.outputCharacters,
+    );
+    span.setAttribute("response.validation.format", validation.format);
+    if (validation.issueCodes)
+      span.setAttribute(
+        "response.validation.issueCodes",
+        validation.issueCodes,
+      );
+  }
   if (typeof value?.httpStatus === "number")
     span.setAttribute("http.status_code", value.httpStatus);
 }

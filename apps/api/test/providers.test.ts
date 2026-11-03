@@ -520,3 +520,46 @@ test("Vision images use native provider payloads while text messages retain thei
     assert.ok(!captured.includes('"images"'));
   }
 });
+
+test("Empty-stream diagnostics retain finish reason, token usage and reasoning-only evidence without raw output", async () => {
+  const sensitive = "sk-sensitive-reasoning-private-text";
+  await assert.rejects(
+    () =>
+      output("openai-compatible", [
+        `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: sensitive, refusal: "private refusal", tool_calls: [{ function: { arguments: "private arguments" } }] }, finish_reason: "length" }], usage: { prompt_tokens: 42, completion_tokens: 20000, completion_tokens_details: { reasoning_tokens: 19990 } } })}\n\n`,
+        "data: [DONE]\n\n",
+      ]),
+    (error) => {
+      assert.ok(error instanceof ProviderError);
+      assert.equal(error.code, "EMPTY_PROVIDER_RESPONSE");
+      const d = error.details?.providerStream;
+      assert.ok(d);
+      assert.equal(d.finishReason, "length");
+      assert.equal(d.inputTokens, 42);
+      assert.equal(d.outputTokens, 20000);
+      assert.equal(d.reasoningTokens, 19990);
+      assert.equal(d.frameCount, 2);
+      assert.equal(d.contentCharacters, 0);
+      assert.equal(d.reasoningCharacters, sensitive.length);
+      assert.equal(d.refusalObserved, true);
+      assert.equal(d.toolCallsObserved, true);
+      assert.equal(d.modelId, "fixture-model");
+      assert.ok(!JSON.stringify(error.details).includes(sensitive));
+      assert.ok(!JSON.stringify(error.details).includes("private refusal"));
+      return true;
+    },
+  );
+  await assert.rejects(
+    () =>
+      output("openai-compatible", [
+        'data: {"choices":[{"delta":{"content":[]},"finish_reason":"secret-not-a-finish-reason"}]}\n\n',
+      ]),
+    (error) => {
+      assert.ok(error instanceof ProviderError);
+      assert.equal(error.details?.providerStream?.finishReason, "unknown");
+      assert.equal(error.details?.providerStream?.nonTextContentObserved, true);
+      assert.ok(!JSON.stringify(error.details).includes("secret-not"));
+      return true;
+    },
+  );
+});

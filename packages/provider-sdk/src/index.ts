@@ -35,12 +35,40 @@ export interface ChatProvider {
   stream(input: ChatRequest): AsyncIterable<ProviderEvent>;
 }
 export type ProviderFactory = (connection: ModelConnection) => ChatProvider;
+export type ProviderStreamDiagnostics = {
+  provider: ProviderName;
+  modelId: string;
+  hostname: string;
+  responseFormat: "event-stream" | "json" | "other" | "unknown";
+  responseStatus: number;
+  finishReason: string | null;
+  frameCount: number;
+  contentCharacters: number;
+  reasoningCharacters: number;
+  reasoningTokens: number | null;
+  refusalObserved: boolean;
+  nonTextContentObserved: boolean;
+  toolCallsObserved: boolean;
+  inputTokens: number | null;
+  outputTokens: number | null;
+};
+export type ResponseValidationDiagnostics = {
+  stage: "json" | "schema" | "allowed_blocks" | "artifacts";
+  outputCharacters: number;
+  format: "object" | "array" | "code_fence" | "other";
+  issueCodes?: string[];
+};
 export class ProviderError extends Error {
   constructor(
     public code: string,
     public retryable = false,
     public httpStatus?: number,
-    public details?: { providerCode?: string; parameter?: string },
+    public details?: {
+      providerCode?: string;
+      parameter?: string;
+      providerStream?: ProviderStreamDiagnostics;
+      responseValidation?: ResponseValidationDiagnostics;
+    },
   ) {
     super("Model provider request failed");
   }
@@ -196,13 +224,12 @@ export function safeHttpTransport(
       const response = await request(url, {
         method,
         headers,
-        body:
-          ["POST", "PUT", "PATCH", "DELETE"].includes(method)
-            ? headers["content-type"] === "application/x-www-form-urlencoded" &&
-              typeof body === "string"
-              ? body
-              : JSON.stringify(body)
-            : undefined,
+        body: ["POST", "PUT", "PATCH", "DELETE"].includes(method)
+          ? headers["content-type"] === "application/x-www-form-urlencoded" &&
+            typeof body === "string"
+            ? body
+            : JSON.stringify(body)
+          : undefined,
         signal,
         headersTimeout: 30000,
         bodyTimeout: 60000,
@@ -395,6 +422,53 @@ export function createProvider(
         payload,
         input.signal,
       );
+      const contentType = response.headers?.["content-type"];
+      const responseFormat =
+        typeof contentType !== "string"
+          ? "unknown"
+          : contentType.includes("text/event-stream")
+            ? "event-stream"
+            : contentType.includes("application/json")
+              ? "json"
+              : "other";
+      const diagnostics: ProviderStreamDiagnostics = {
+        provider,
+        modelId,
+        hostname: new URL(baseUrl).hostname,
+        responseFormat,
+        responseStatus: response.status,
+        finishReason: null,
+        frameCount: 0,
+        contentCharacters: 0,
+        reasoningCharacters: 0,
+        reasoningTokens: null,
+        refusalObserved: false,
+        nonTextContentObserved: false,
+        toolCallsObserved: false,
+        inputTokens: null,
+        outputTokens: null,
+      };
+      const finishReason = (value: unknown) =>
+        typeof value === "string" &&
+        [
+          "stop",
+          "length",
+          "content_filter",
+          "tool_calls",
+          "function_call",
+          "end_turn",
+          "max_tokens",
+          "stop_sequence",
+          "refusal",
+          "pause_turn",
+          "STOP",
+          "MAX_TOKENS",
+          "SAFETY",
+          "RECITATION",
+          "OTHER",
+        ].includes(value)
+          ? value
+          : "unknown";
       let finished = false;
       let hasVisibleText = false;
       let inputTokens: number | null = null;
@@ -411,6 +485,7 @@ export function createProvider(
             await providerErrorDetails(response.body),
           );
         for await (const frame of decodeSSE(response.body)) {
+          diagnostics.frameCount++;
           if (frame.data === "[DONE]") {
             finished = true;
             break;
@@ -430,6 +505,7 @@ export function createProvider(
               data.type === "content_block_delta" &&
               typeof delta.text === "string"
             ) {
+              diagnostics.contentCharacters += delta.text.length;
               if (delta.text.trim()) hasVisibleText = true;
               yield { type: "token", text: delta.text };
             }
@@ -446,6 +522,14 @@ export function createProvider(
                 inputTokens,
                 outputTokens: number(usage.output_tokens),
               };
+            diagnostics.reasoningCharacters +=
+              typeof delta.thinking === "string" ? delta.thinking.length : 0;
+            if (delta.stop_reason)
+              diagnostics.finishReason = finishReason(delta.stop_reason);
+            if (usage.input_tokens !== undefined)
+              diagnostics.inputTokens = number(usage.input_tokens);
+            if (usage.output_tokens !== undefined)
+              diagnostics.outputTokens = number(usage.output_tokens);
             if (data.type === "message_stop") finished = true;
           } else if (provider === "gemini") {
             const candidates = Array.isArray(data.candidates)
@@ -457,11 +541,13 @@ export function createProvider(
               for (const part of parts) {
                 const text = object(part).text;
                 if (typeof text === "string") {
+                  diagnostics.contentCharacters += text.length;
                   if (text.trim()) hasVisibleText = true;
                   yield { type: "token", text };
                 }
               }
             if (candidate.finishReason) {
+              diagnostics.finishReason = finishReason(candidate.finishReason);
               if (
                 candidate.finishReason !== "STOP" &&
                 candidate.finishReason !== "MAX_TOKENS"
@@ -470,6 +556,10 @@ export function createProvider(
               finished = true;
             }
             const usage = object(data.usageMetadata);
+            if (usage.promptTokenCount !== undefined)
+              diagnostics.inputTokens = number(usage.promptTokenCount);
+            if (usage.candidatesTokenCount !== undefined)
+              diagnostics.outputTokens = number(usage.candidatesTokenCount);
             if (Object.keys(usage).length)
               yield {
                 type: "usage",
@@ -479,17 +569,41 @@ export function createProvider(
           } else {
             const choices = Array.isArray(data.choices) ? data.choices : [];
             const choice = object(choices[0]);
-            const text = object(choice.delta).content;
+            const delta = object(choice.delta);
+            const text = delta.content;
+            diagnostics.reasoningCharacters +=
+              typeof delta.reasoning_content === "string"
+                ? delta.reasoning_content.length
+                : typeof delta.reasoning === "string"
+                  ? delta.reasoning.length
+                  : 0;
+            diagnostics.refusalObserved ||=
+              typeof delta.refusal === "string" && delta.refusal.length > 0;
+            diagnostics.toolCallsObserved ||=
+              Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0;
+            diagnostics.nonTextContentObserved ||=
+              text != null && typeof text !== "string";
             if (typeof text === "string") {
+              diagnostics.contentCharacters += text.length;
               if (text.trim()) hasVisibleText = true;
               yield { type: "token", text };
             }
             if (choice.finish_reason) {
+              diagnostics.finishReason = finishReason(choice.finish_reason);
               if (!["stop", "length"].includes(String(choice.finish_reason)))
                 throw new ProviderError("RESPONSE_BLOCKED");
               finished = true;
             }
             const usage = object(data.usage);
+            const reasoningTokens = object(
+              usage.completion_tokens_details,
+            ).reasoning_tokens;
+            if (reasoningTokens !== undefined)
+              diagnostics.reasoningTokens = number(reasoningTokens);
+            if (usage.prompt_tokens !== undefined)
+              diagnostics.inputTokens = number(usage.prompt_tokens);
+            if (usage.completion_tokens !== undefined)
+              diagnostics.outputTokens = number(usage.completion_tokens);
             if (Object.keys(usage).length)
               yield {
                 type: "usage",
@@ -500,6 +614,17 @@ export function createProvider(
         }
         if (!finished) throw new ProviderError("INCOMPLETE_STREAM");
         if (!hasVisibleText) throw new ProviderError("EMPTY_PROVIDER_RESPONSE");
+      } catch (error) {
+        if (
+          error instanceof ProviderError &&
+          response.status >= 200 &&
+          response.status < 300
+        )
+          error.details = {
+            ...error.details,
+            providerStream: { ...diagnostics },
+          };
+        throw error;
       } finally {
         await response.close();
       }
