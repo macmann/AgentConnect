@@ -245,7 +245,7 @@ export async function buildApp(
   });
   await app.register(swagger, {
     openapi: {
-      info: { title: "Agent Connex Foundation API", version: "0.1.0" },
+      info: { title: "API Toolz Foundation API", version: "0.1.0" },
       servers: [{ url: "http://localhost:4000" }],
       components: {
         securitySchemes: {

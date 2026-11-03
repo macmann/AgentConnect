@@ -15,7 +15,7 @@ export default function GlobalError() {
         }}
       >
         <main style={{ maxWidth: "32rem", margin: "0 auto" }}>
-          <h1>Unable to load Agent Connex</h1>
+          <h1>Unable to load API Toolz</h1>
           <p>Please reload the page to try again.</p>
           <form>
             <button type="submit" style={{ padding: "0.75rem 1rem" }}>

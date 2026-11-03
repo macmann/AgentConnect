@@ -1355,7 +1355,7 @@ function Studio() {
           )}
           <footer>
             <span>
-              Agent Connex{" "}
+              API Toolz{" "}
               <span className="muted">/ Enterprise AI, connected.</span>
             </span>
             <span>

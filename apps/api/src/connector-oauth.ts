@@ -376,7 +376,7 @@ export async function registerConnectorOAuth(
       return reply
         .type("text/html")
         .send(
-          "<!doctype html><title>Source connected</title><main><h1>Source connected</h1><p>Return to Agent Connex to select the folder or channel to synchronize. You can close this window.</p></main>",
+          "<!doctype html><title>Source connected</title><main><h1>Source connected</h1><p>Return to API Toolz to select the folder or channel to synchronize. You can close this window.</p></main>",
         );
     } catch (error) {
       const code =
@@ -387,7 +387,7 @@ export async function registerConnectorOAuth(
         .code(400)
         .type("text/html")
         .send(
-          "<!doctype html><title>Sign-in failed</title><main><h1>Unable to connect</h1><p>Return to Agent Connex for details and try signing in again.</p></main>",
+          "<!doctype html><title>Sign-in failed</title><main><h1>Unable to connect</h1><p>Return to API Toolz for details and try signing in again.</p></main>",
         );
     }
   });

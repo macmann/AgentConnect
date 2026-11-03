@@ -102,7 +102,7 @@ export function ConnectorSignIn({
               "width=620,height=760",
             );
             if (!popup.current) {
-              setError("Allow pop-ups for Agent Connex, then try again.");
+              setError("Allow pop-ups for API Toolz, then try again.");
               return;
             }
             setBusy(true);

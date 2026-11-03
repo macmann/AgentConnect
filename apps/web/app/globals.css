@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "@xyflow/react/dist/style.css";
 
-/* Agent Connex: semantic surfaces and the supplied cyan/violet brand palette. */
+/* API Toolz: semantic surfaces and the supplied cyan/violet brand palette. */
 :root {
   color-scheme: light;
   --ink: #182033;
@@ -4680,18 +4680,28 @@ footer {
 }
 
 /* Shared top-level branding and appearance control. */
-.product-logo {
+.product-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.product-brand .product-logo {
   display: block;
-  width: 174px;
-  height: auto;
-  flex-shrink: 0;
-  border-radius: 7px;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  object-fit: contain;
 }
-.auth-story .product-logo {
-  width: min(300px, 100%);
+.auth-story .product-brand {
+  font-size: 30px;
 }
-.hosted-shell .product-logo {
-  width: 160px;
+.auth-story .product-brand .product-logo {
+  width: 52px;
+  height: 52px;
 }
 .global-theme-control {
   position: fixed;
@@ -4814,17 +4824,6 @@ input[type="range"] {
   *::after {
     scroll-behavior: auto !important;
   }
-}
-
-/* Follow the selected application theme rather than the device media query. */
-.product-logo-dark {
-  display: none;
-}
-:root[data-theme="dark"] .product-logo-light {
-  display: none;
-}
-:root[data-theme="dark"] .product-logo-dark {
-  display: block;
 }
 
 /* AI and human support share the same conversation log and composer. */
