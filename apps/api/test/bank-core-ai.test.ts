@@ -40,9 +40,14 @@ const embedding: EmbeddingFactory = () => ({
   },
 });
 const provider: ProviderFactory = () => ({
-  async *stream() {
+  async *stream(request) {
     calls++;
-    yield { type: "token", text: JSON.stringify(answer) };
+    yield {
+      type: "token",
+      text: request.system.includes("Approved-knowledge-only response policy")
+        ? JSON.stringify(answer)
+        : answer.message,
+    };
     yield { type: "usage", inputTokens: 8, outputTokens: 6 };
   },
 });
@@ -491,6 +496,59 @@ test("Workflow and evaluation snapshot execution use the same grounded policy", 
   );
   assert.match(result.output, /approved recovery screen/);
   assert.equal(result.citations.length, 1);
+});
+test("Optional citations apply to new playground and public widget conversations in both answer modes", async () => {
+  const previous = answer;
+  try {
+    answer = { kind: "answer", message: "Use the approved recovery screen." };
+    for (const mode of ["standard", "grounded"] as const) {
+      const c = current();
+      c.answerPolicy.mode = mode;
+      c.rag.requireCitations = false;
+      await save(c);
+      const playground = await chat("Recovery");
+      assert.ok(playground.some((f) => f.event === "done"));
+      assert.deepEqual(
+        playground.find((f) => f.event === "done")!.data.citations,
+        [],
+      );
+      const published = await call("POST", `/agents/${agent}/publish`, {
+        revision: agentRevision,
+      });
+      assert.equal(published.statusCode, 201, published.body);
+      const deployed = await call("POST", `/agents/${agent}/deployments`, {
+        name: "Optional citations",
+        versionId: published.json().id,
+      });
+      assert.equal(deployed.statusCode, 201, deployed.body);
+      const deployment = deployed.json().id;
+      await sql`UPDATE deployments SET widget_settings=${sql.json({ enabled: true, access: "restricted", allowedOrigins: [config.WEB_ORIGIN] })} WHERE id=${deployment}`;
+      const response = await call(
+        "POST",
+        `/public/widgets/${deployment}/chat`,
+        { message: "Recovery" },
+      );
+      assert.equal(response.statusCode, 200, response.body);
+      const widget = frames(response.body);
+      assert.ok(
+        widget.some((f) => f.event === "done"),
+        response.body,
+      );
+      assert.deepEqual(
+        widget.find((f) => f.event === "done")!.data.citations,
+        [],
+      );
+      for (const events of [playground, widget]) {
+        const id = events.find((f) => f.event === "meta")!.data.conversationId;
+        const [row] =
+          await sql`SELECT config_snapshot FROM conversations WHERE id=${id}`;
+        assert.equal(row!.config_snapshot.rag.requireCitations, false);
+      }
+    }
+  } finally {
+    answer = previous;
+    await save();
+  }
 });
 test("Deleted sources and revoked public knowledge never leak frozen release passages", async () => {
   await sql`UPDATE knowledge_bases SET public_access=false WHERE id=${kb}`;

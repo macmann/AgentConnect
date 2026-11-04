@@ -880,6 +880,7 @@ async function streamChat(
                 : toolPlanningDiagnostics.at(-1),
             richResponsesEnabled: c.generative.enabled,
             answerMode: c.answerPolicy.mode,
+            citationsRequired: c.rag.requireCitations,
             temperature: c.temperature,
             topP: c.topP,
             maxOutputTokens: c.maxOutputTokens,

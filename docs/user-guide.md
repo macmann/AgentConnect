@@ -95,6 +95,9 @@ Installation-wide switches, budgets, migration 0042 and an example trace are doc
 
 ### Test grounding
 
+
+**Require citations:** when off, citation markers are optional and are not requested unless the user asks for sources. References that are included are still validated. Save the draft and start a new Playground chat after changing this setting. For a public widget, publish and deploy the new version, use that deployment in the website embed, and start a new conversation; existing conversations retain their configuration snapshot.
+
 Ask a question whose answer is in your uploaded document. Check that the answer is supported and its citations identify the relevant source. Then ask an unsupported question and verify that it does not invent an answer.
 
 Test greetings and irrelevant questions if you configured automatic knowledge use. Inspect private run details to understand retrieval, tool calls, selected model and token/context usage. A connection test proves only a small provider request succeeded; it does not prove all prompt settings or agent behaviors work.
