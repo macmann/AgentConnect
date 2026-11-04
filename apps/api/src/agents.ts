@@ -1,3 +1,9 @@
+import {
+  CitationTextFilter,
+  withoutCitationMarkers,
+  withoutBlockCitations,
+  citationDisplay,
+} from "./citation-display.js";
 import { customerAppearance } from "@agentconnect/schemas/customer-theme";
 import { widgetSettings } from "@agentconnect/schemas/channels";
 import {
@@ -400,7 +406,8 @@ async function streamChat(
       let retrievalDetails: unknown;
       let skillDetails:
         Awaited<ReturnType<typeof resolveAgentSkills>>["details"] | null = null;
-      const write = (event: string, data: unknown) => {
+      const citationFilter = new CitationTextFilter();
+      const rawWrite = (event: string, data: unknown) => {
         if (integration) {
           if (event === "error") responseError = data;
           if (event === "support") support = data;
@@ -410,6 +417,21 @@ async function streamChat(
           reply.raw.write(
             `event: ${event}\ndata: ${JSON.stringify({ protocolVersion: 1, ...(data as object) })}\n\n`,
           );
+      };
+      const write = (event: string, data: unknown) => {
+        if (!c.rag.requireCitations && event === "token") {
+          const visible = citationFilter.push((data as { text: string }).text);
+          if (visible) rawWrite(event, { ...(data as object), text: visible });
+          return;
+        }
+        if (
+          !c.rag.requireCitations &&
+          ["done", "error", "ui"].includes(event)
+        ) {
+          const tail = citationFilter.finish();
+          if (tail) rawWrite("token", { text: tail });
+        }
+        rawWrite(event, data);
       };
       const disconnected = () => {
         if (!reply.raw.writableEnded) controller.abort();
@@ -905,6 +927,11 @@ async function streamChat(
           "Agent chat failed",
         );
       } finally {
+        if (!c.rag.requireCitations) {
+          output = withoutCitationMarkers(output);
+          uiBlocks = withoutBlockCitations(uiBlocks);
+          citations = [];
+        }
         clearTimeout(timer);
         integration?.signal?.removeEventListener("abort", cancelled);
         clearInterval(heartbeat);
@@ -1647,12 +1674,17 @@ export async function registerAgentRoutes(
   app.get("/agents/:agentId/conversations/:conversationId", async (r) => {
     const { u, a } = await ownedAgent(r, "agent:execute");
     const [conversation] =
-      await sql`SELECT id FROM conversations WHERE id=${id(params(r).conversationId)} AND agent_id=${a.id} AND user_id=${u.id} AND deployment_id IS NULL AND channel<>'api'`;
+      await sql`SELECT id,COALESCE((config_snapshot->'rag'->>'requireCitations')::boolean,true) AS citations_required FROM conversations WHERE id=${id(params(r).conversationId)} AND agent_id=${a.id} AND user_id=${u.id} AND deployment_id IS NULL AND channel<>'api'`;
     if (!conversation)
       throw new HttpError(404, "Playground conversation unavailable");
     const messages =
       await sql`SELECT m.id AS "messageId",m.role,m.content,m.citations,m.ui_blocks AS blocks,m.created_at,true AS "actionsEnabled" FROM messages m WHERE m.conversation_id=${conversation.id} ORDER BY m.created_at,m.id`;
-    return { conversationId: conversation.id, messages };
+    return {
+      conversationId: conversation.id,
+      messages: messages.map((m) =>
+        citationDisplay(m, conversation.citations_required !== false),
+      ),
+    };
   });
   app.get("/conversations/:conversationId/messages", async (r) => {
     const u = await actor(r);

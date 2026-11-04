@@ -96,7 +96,7 @@ Installation-wide switches, budgets, migration 0042 and an example trace are doc
 ### Test grounding
 
 
-**Require citations:** when off, citation markers are optional and are not requested unless the user asks for sources. References that are included are still validated. Save the draft and start a new Playground chat after changing this setting. For a public widget, publish and deploy the new version, use that deployment in the website embed, and start a new conversation; existing conversations retain their configuration snapshot.
+**Require citations:** when off, numbered citation markers and citation cards are removed from displayed and saved AI replies. Knowledge retrieval remains active, and Markdown links and code examples are preserved. Save the draft and start a new Playground chat after changing this setting. For a public widget, publish and deploy the new version, use that deployment in the website embed, and start a new conversation; existing conversations retain their configuration snapshot.
 
 Ask a question whose answer is in your uploaded document. Check that the answer is supported and its citations identify the relevant source. Then ask an unsupported question and verify that it does not invent an answer.
 

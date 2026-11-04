@@ -136,7 +136,7 @@ test("Citation requirements control the shared knowledge prompt, including prefe
     ...policy,
     requireCitations: false,
   });
-  assert.match(optional, /Do not add bracket references unless the user asks/);
+  assert.match(optional, /Do not include citation markers/);
   assert.doesNotMatch(
     optional,
     /Cite supported claims|Cite the approved answer/,

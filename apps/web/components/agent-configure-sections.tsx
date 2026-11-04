@@ -754,9 +754,9 @@ export function KnowledgeSection(p: SectionProps) {
           Require citations
         </label>
         <p className="settings-hint">
-          When off, citation markers are optional and are not requested unless
-          the user asks for sources. Save and start a new chat to apply changes.
-          Public widgets use their published deployment version.
+          When off, numbered citation markers and source cards are hidden from
+          AI replies. Save and start a new chat to apply changes. Public widgets
+          use their published deployment version.
         </p>
       </Group>
       <details
