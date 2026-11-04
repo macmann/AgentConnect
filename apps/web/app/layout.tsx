@@ -1,8 +1,14 @@
 import type { Metadata } from "next";
 import "./globals.css";
 export const metadata: Metadata = {
-  title: "API Toolz · Workspace",
-  icons: { icon: [], apple: [], shortcut: [] },
+  title: "Agent Connex · Workspace",
+  icons: {
+    icon: {
+      url: "/agent-connex-icon-light.svg",
+      type: "image/svg+xml",
+      sizes: "any",
+    },
+  },
   description: "Build, orchestrate, and govern enterprise AI agents.",
 };
 export default function Layout({ children }: { children: React.ReactNode }) {

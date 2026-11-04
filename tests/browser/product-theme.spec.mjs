@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-test("Product name and theme persist across reloads, system changes and mobile layouts", async ({
+test("Product logo and theme persist across reloads, system changes and mobile layouts", async ({
   page,
 }) => {
   const errors = [];
@@ -8,12 +8,13 @@ test("Product name and theme persist across reloads, system changes and mobile l
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page.locator(".product-brand")).toBeVisible();
+  await expect(page.locator("img.product-logo-dark")).toBeVisible();
   await page
     .getByRole("button", { name: "Switch to light theme", exact: true })
     .click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await expect(page.locator(".product-brand")).toBeVisible();
+  await expect(page.locator("img.product-logo-light")).toBeVisible();
+  await expect(page.locator("img.product-logo-dark")).toBeHidden();
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await page.emulateMedia({ colorScheme: "light" });
@@ -36,17 +37,21 @@ test("Product name and theme persist across reloads, system changes and mobile l
       path: "docs/screenshots/sign-in-dark.png",
       fullPage: true,
     });
-  await expect(page).toHaveTitle("API Toolz · Workspace");
-  await expect(page.locator(".product-brand")).toHaveText("API Toolz");
-  await expect(page.locator(".product-brand img")).toHaveCount(0);
-  await expect(page.locator('link[rel="icon"]')).toHaveCount(0);
-  const legacy = await page.request.get(
+  const logo = await page.request.get("/agent-connex-logo.svg");
+  expect(logo.ok()).toBe(true);
+  expect(await logo.text()).toContain("CONNEX");
+  const widgetLogo = await page.request.get(
     "http://localhost:4000/brand/agent-connex-logo.svg",
-    { maxRedirects: 0 },
   );
-  expect(legacy.status()).toBe(302);
-  expect(legacy.headers().location).toBe(
-    "https://apitoolz.com/brand/apitoolz-icon.svg",
+  expect(widgetLogo.ok()).toBe(true);
+  expect(await widgetLogo.text()).toBe(await logo.text());
+  const light = await page.request.get("/agent-connex-logo-light.svg");
+  const widgetLight = await page.request.get(
+    "http://localhost:4000/brand/agent-connex-logo-light.svg",
   );
+  expect(light.ok()).toBe(true);
+  expect(widgetLight.ok()).toBe(true);
+  expect(await widgetLight.text()).toBe(await light.text());
+  expect(await light.text()).toContain(".logo-text-connex { fill: #0F172A; }");
   expect(errors).toEqual([]);
 });

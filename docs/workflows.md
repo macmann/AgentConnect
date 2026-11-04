@@ -72,6 +72,6 @@ Select a node or connection and use **Delete selected**, Delete, or Backspace. D
 
 ## Workflow Definition V2
 
-V1 definitions and their published snapshots remain supported. V2 introduces resource-only Agent references, typed workflow context/conditions, reusable deterministic Actions and editor-independent execution definitions, compiled into the same durable runtime. See [V2 architecture, contracts, API and compatibility](workflows-v2.md). The current canvas previews V2 read-only to avoid a lossy V1 save; V1 editing and the other API Toolz modules remain unchanged.
+V1 definitions and their published snapshots remain supported. V2 introduces resource-only Agent references, typed workflow context/conditions, reusable deterministic Actions and editor-independent execution definitions, compiled into the same durable runtime. See [V2 architecture, contracts, API and compatibility](workflows-v2.md). The current canvas previews V2 read-only to avoid a lossy V1 save; V1 editing and the other Agent Connex modules remain unchanged.
 
 For resource-referencing V2 workflows, choose **Create V2 workflow**. Its no-code panels support Structured AI, Human Review/Edit, Actions, Transform, variables and Switch routing. Published Agents remain reusable resources. See [Workflow V2 architecture and configuration](workflows-v2.md).

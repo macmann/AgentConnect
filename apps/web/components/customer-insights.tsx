@@ -121,7 +121,7 @@ export function CustomerInsights({ workspaceId }: { workspaceId: string }) {
               const url = URL.createObjectURL(await r.blob()),
                 a = document.createElement("a");
               a.href = url;
-              a.download = "api-toolz-insights.xlsx";
+              a.download = "agent-connex-insights.xlsx";
               a.click();
               URL.revokeObjectURL(url);
             } catch (e) {

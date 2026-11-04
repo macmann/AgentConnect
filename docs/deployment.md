@@ -1,6 +1,6 @@
 # Development deployment
 
-For a Git-backed deployment with bundled infrastructure and automatic initialization, see [Deploy API Toolz on Coolify](coolify.md).
+For a Git-backed deployment with bundled infrastructure and automatic initialization, see [Deploy Agent Connex on Coolify](coolify.md).
 
 Requires Node 24, pnpm 11.19.0 and Docker Compose. Run commands from the repository root. In the cloud machine, keep package-manager caches under /workspace using XDG_DATA_HOME=/workspace/.cache/data, XDG_CACHE_HOME=/workspace/.cache, PNPM_HOME=/workspace/.cache/pnpm.
 

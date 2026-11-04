@@ -1,3 +1,4 @@
+import { productLogo, productLogoLight } from "./brand-assets.js";
 import {
   registerCustomerSessions,
   customerOwnsConversation,
@@ -93,14 +94,28 @@ export async function conversationAccess(
 }
 export async function registerChannelRoutes(app: FastifyInstance) {
   await registerCustomerSessions(app);
-  // Keep existing embed URLs working while serving the current product identity.
-  for (const route of [
-    "/brand/agent-connex-logo.svg",
-    "/brand/agent-connex-logo-light.svg",
-  ])
-    app.get(route, async (_r, reply) =>
-      reply.redirect("https://apitoolz.com/brand/apitoolz-icon.svg"),
-    );
+  app.get("/brand/agent-connex-logo.svg", async (_r, reply) =>
+    reply
+      .type("image/svg+xml")
+      .header("Cross-Origin-Resource-Policy", "cross-origin")
+      .header("cache-control", "public, max-age=3600")
+      .header(
+        "content-security-policy",
+        "default-src 'none'; style-src 'unsafe-inline'",
+      )
+      .send(productLogo),
+  );
+  app.get("/brand/agent-connex-logo-light.svg", async (_r, reply) =>
+    reply
+      .type("image/svg+xml")
+      .header("Cross-Origin-Resource-Policy", "cross-origin")
+      .header("cache-control", "public, max-age=3600")
+      .header(
+        "content-security-policy",
+        "default-src 'none'; style-src 'unsafe-inline'",
+      )
+      .send(productLogoLight),
+  );
   app.get("/widget.js", async (_r, reply) =>
     reply
       .type("application/javascript; charset=utf-8")
