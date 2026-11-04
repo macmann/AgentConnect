@@ -34,7 +34,13 @@ jobs:
           for file in apps/api/test/*.test.ts; do
             # Only the disposable hosted-runner Redis instance is cleared.
             docker compose exec -T redis redis-cli FLUSHDB >/dev/null
-            (cd apps/api && pnpm exec tsx --env-file=../../.env --test "${file#apps/api/}")
+            echo "::group::API regression: $file"
+            if ! (cd apps/api && pnpm exec tsx --env-file=../../.env --test "${file#apps/api/}"); then
+              echo "::endgroup::"
+              echo "::error file=$file::API regression failed; expand this file’s log group for the test error."
+              exit 1
+            fi
+            echo "::endgroup::"
           done
       - run: node --test tests/release/*.test.mjs
       # Exercise the dispatcher regression: build must normalize an inherited
