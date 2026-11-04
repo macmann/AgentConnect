@@ -197,6 +197,9 @@ export const agentRuns = pgTable("agent_runs", {
 });
 
 export const messages = pgTable("messages", {
+  attachments: jsonb("attachments").notNull().default([]),
+  attachmentContext: text("attachment_context").notNull().default(""),
+  attachmentPayload: jsonb("attachment_payload"),
   uiBlocks: jsonb("ui_blocks").notNull().default([]),
   id: uuid("id").primaryKey(),
   organizationId: uuid("organization_id").notNull(),

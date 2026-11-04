@@ -10,7 +10,7 @@ const sql = postgres(process.env.DATABASE_URL, { max: 1 }),
   workspace = randomUUID(),
   users = {},
   sessions = {};
-let deployment;
+let deployment, agentId;
 const website = createServer((_req, res) =>
   res
     .writeHead(200, { "content-type": "text/html" })
@@ -49,6 +49,12 @@ test.beforeAll(async ({ request }) => {
     provider: "openai-compatible",
     modelId: "fixture",
     baseUrl: "https://api.openai.com/v1",
+    capabilities: {
+      streaming: true,
+      temperature: true,
+      topP: true,
+      imageInput: true,
+    },
   });
   const agent = await post(`/workspaces/${workspace}/agents`, {
     name: "Published support",
@@ -58,6 +64,7 @@ test.beforeAll(async ({ request }) => {
       conversationStarters: ["What can you help with?"],
     },
   });
+  agentId = agent.id;
   const version = await post(`/agents/${agent.id}/publish`, { revision: 1 });
   deployment = (
     await post(`/agents/${agent.id}/deployments`, {
@@ -394,4 +401,144 @@ test("Customer widget and hosted iframe use configured colors without platform b
     path: info.outputPath("customer-hosted-chat-mobile.png"),
     fullPage: true,
   });
+});
+
+test("Playground and floating widget select, remove and send document/photo attachments", async ({
+  page,
+  context,
+  browser,
+}) => {
+  const photo = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1cAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const files = [
+    {
+      name: "notes.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Meeting at 14:30"),
+    },
+    { name: "photo.png", mimeType: "image/png", buffer: photo },
+  ];
+  const event = (name, value) =>
+    `event: ${name}\ndata: ${JSON.stringify(value)}\n\n`;
+  const respond = (route) =>
+    route.fulfill({
+      contentType: "text/event-stream",
+      headers: {
+        "access-control-allow-origin":
+          route.request().headers().origin ?? "http://localhost:3000",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "POST, OPTIONS",
+        "access-control-allow-headers":
+          "content-type, authorization, x-customer-token",
+      },
+      body:
+        event("meta", { conversationId: randomUUID(), guestToken: "fixture" }) +
+        event("token", { text: "Files received" }) +
+        event("done", { messageId: randomUUID(), citations: [] }),
+    });
+  await context.addCookies([
+    {
+      name: "session",
+      value: sessions.owner,
+      url: "http://localhost:3000",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  let playgroundBody;
+  await page.route(`http://localhost:4000/agents/${agentId}/chat`, (route) => {
+    playgroundBody = route.request().postDataJSON();
+    return respond(route);
+  });
+  await page.goto(
+    `/#view=Agents&organization=${org}&workspace=${workspace}&agent=${agentId}&stage=playground`,
+  );
+  const playground = page.locator(".playground-chat");
+  await expect(
+    playground.getByRole("button", { name: "Attach files", exact: true }),
+  ).toBeVisible();
+  await playground
+    .getByLabel("Choose attachments", { exact: true })
+    .setInputFiles(files);
+  await expect(
+    playground.getByLabel("Attached files", { exact: true }),
+  ).toContainText("photo.png");
+  await playground
+    .getByRole("button", { name: "Remove photo.png", exact: true })
+    .click();
+  await expect(
+    playground.getByLabel("Attached files", { exact: true }),
+  ).not.toContainText("photo.png");
+  await playground
+    .getByLabel("Choose attachments", { exact: true })
+    .setInputFiles(files.slice(1));
+  await playground
+    .getByRole("button", { name: "Send message", exact: true })
+    .click();
+  await expect(
+    playground.getByText("Files received", { exact: true }),
+  ).toBeVisible();
+  expect(playgroundBody.attachments.map((f) => f.name)).toEqual([
+    "notes.txt",
+    "photo.png",
+  ]);
+  expect(playgroundBody.attachments[1].data).toBe(photo.toString("base64"));
+  await expect(
+    playground.getByLabel("Message attachments", { exact: true }),
+  ).toContainText("notes.txt");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("playground-attachments-mobile.png"),
+    fullPage: true,
+  });
+  const guest = await browser.newContext();
+  try {
+    const widgetPage = await guest.newPage();
+    let widgetBody;
+    await widgetPage.route(
+      `http://localhost:4000/public/widgets/${deployment}/chat`,
+      (route) => {
+        widgetBody = route.request().postDataJSON();
+        return respond(route);
+      },
+    );
+    await widgetPage.goto("http://localhost:4509");
+    await widgetPage.getByRole("button", { name: "Chat", exact: true }).click();
+    await widgetPage
+      .getByLabel("Choose attachments", { exact: true })
+      .setInputFiles(files);
+    await expect(
+      widgetPage.getByLabel("Attached files", { exact: true }),
+    ).toContainText("photo.png");
+    await widgetPage.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(
+      widgetPage.getByText("Files received", { exact: true }),
+    ).toBeVisible();
+    expect(widgetBody.attachments.map((f) => f.name)).toEqual([
+      "notes.txt",
+      "photo.png",
+    ]);
+    expect(widgetBody.attachments[1].data).toBe(photo.toString("base64"));
+    await expect(
+      widgetPage.getByLabel("Message attachments", { exact: true }),
+    ).toContainText("photo.png");
+    await widgetPage.setViewportSize({ width: 360, height: 800 });
+    await widgetPage.screenshot({
+      path: test.info().outputPath("widget-attachments-mobile.png"),
+    });
+    expect(
+      await widgetPage.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  } finally {
+    await guest.close();
+  }
 });

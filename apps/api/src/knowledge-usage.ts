@@ -1,3 +1,4 @@
+import { messageContextSize } from "./context-control.js";
 import { observe } from "./ai-tracing.js";
 import { z } from "zod";
 import type { AgentConfig } from "@agentconnect/schemas/agents";
@@ -71,7 +72,7 @@ async function decideKnowledgeUsage(
     '\nYour previous decision was invalid. Return exactly one object matching {"retrieve": boolean}, without additional keys, explanations or markdown.';
   if (
     Buffer.byteLength(system + repairInstruction) +
-      Buffer.byteLength(JSON.stringify(history)) >
+      messageContextSize(history) >
     contextBudget
   )
     throw new ProviderError("CONTEXT_LIMIT");

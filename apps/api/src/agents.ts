@@ -1,4 +1,15 @@
 import {
+  prepareChatAttachments,
+  protectImages,
+  restoreImages,
+  capAttachmentHistory,
+  chatBodyLimit,
+} from "./chat-attachments.js";
+import type {
+  ChatAttachment,
+  AttachmentInfo,
+} from "@agentconnect/schemas/chat-attachments";
+import {
   CitationTextFilter,
   withoutCitationMarkers,
   withoutBlockCitations,
@@ -26,6 +37,7 @@ import {
   componentPreview,
   knowledgeContextBudget,
   fitHistory,
+  messageContextSize,
   summarizeHistory,
   reserveTokens,
   settleTokens,
@@ -259,10 +271,25 @@ async function streamChat(
   ragTool: RagTool = new PostgresRagTool(),
   quickActionId?: string,
   integration?: { json: true; includeDetails: boolean; signal?: AbortSignal },
+  files: ChatAttachment[] = [],
 ) {
   const c = agentConfig.parse(conversation.config_snapshot);
   const model = modelSnapshotSchema.parse(conversation.model_snapshot);
   validateModelSet(c, model);
+  const prepared = await prepareChatAttachments(
+    files,
+    AbortSignal.timeout(15000),
+  );
+  if (
+    prepared.images.length &&
+    ![model, ...model.alternatives].some((m) => m.capabilities.imageInput)
+  )
+    throw new HttpError(
+      400,
+      "This agent's model does not support photos. Enable image input for a vision-capable model in Models, then save/publish the agent.",
+    );
+  const userMessageId = randomUUID();
+
   const [prior] =
     await sql`SELECT count(*)::int AS turns FROM agent_runs WHERE conversation_id=${conversation.id} AND status='completed'`;
   const metered = routedProvider(
@@ -349,7 +376,7 @@ async function streamChat(
                 ),
             );
           await tx`UPDATE conversations SET last_customer_message_at=now() WHERE id=${conversation.id}`;
-          await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content) VALUES (${randomUUID()},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'user',${message})`;
+          await tx`INSERT INTO messages(id,conversation_id,organization_id,workspace_id,run_id,role,content,attachments,attachment_context,attachment_payload) VALUES (${userMessageId},${conversation.id},${conversation.organization_id},${conversation.workspace_id},${runId},'user',${message},${tx.json(prepared.metadata)},${prepared.context},${prepared.images.length ? tx.json(protectImages(prepared.images, userMessageId)!) : null})`;
         });
       } catch (e) {
         if ((e as { code?: string }).code === "23505")
@@ -367,13 +394,43 @@ async function streamChat(
           created_at: Date;
           role: "user" | "assistant";
           content: string;
+          attachments: AttachmentInfo[];
+          attachment_context: string;
         }[]
-      >`SELECT m.id,m.created_at,m.role,m.content FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${conversation.id} AND (ar.status='completed' OR ar.id=${runId}) AND (${c.contextControls.enabled && c.contextControls.summarize ? (summaryState!.context_summary.beforeTime ?? null) : null}::timestamptz IS NULL OR (m.created_at,m.id)>(${c.contextControls.enabled && c.contextControls.summarize ? (summaryState!.context_summary.beforeTime ?? null) : null}::timestamptz,${summaryState!.context_summary.beforeId ?? "00000000-0000-0000-0000-000000000000"}::uuid)) ORDER BY m.created_at DESC,m.id DESC LIMIT ${c.contextControls.enabled && c.contextControls.summarize ? 200 : c.historyWindow * 2}`;
-      const fitted = fitHistory(c, model, rows.reverse());
+      >`SELECT m.id,m.created_at,m.role,m.content,m.attachments,m.attachment_context FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${conversation.id} AND (ar.status='completed' OR ar.id=${runId}) AND (${c.contextControls.enabled && c.contextControls.summarize ? (summaryState!.context_summary.beforeTime ?? null) : null}::timestamptz IS NULL OR (m.created_at,m.id)>(${c.contextControls.enabled && c.contextControls.summarize ? (summaryState!.context_summary.beforeTime ?? null) : null}::timestamptz,${summaryState!.context_summary.beforeId ?? "00000000-0000-0000-0000-000000000000"}::uuid)) ORDER BY m.created_at DESC,m.id DESC LIMIT ${c.contextControls.enabled && c.contextControls.summarize ? 200 : c.historyWindow * 2}`;
+      const bounded = capAttachmentHistory(
+        rows.reverse().map((row) => ({
+          ...row,
+          content: row.content + row.attachment_context,
+          images: row.attachments
+            .filter((a) => a.kind === "image")
+            .map((a) => ({
+              mimeType: a.mimeType as "image/png" | "image/jpeg" | "image/webp",
+              data: "",
+              byteSize: a.size,
+            })),
+        })),
+      );
+      const fitted = fitHistory(c, model, bounded.kept);
+      fitted.removed.unshift(...bounded.removed);
+      const imageIds = fitted.messages
+        .filter((m) => m.images?.length)
+        .map((m) => (m as (typeof bounded.kept)[number]).id);
+      if (imageIds.length) {
+        const payloads =
+          await sql`SELECT id,attachment_payload FROM messages WHERE id=ANY(${imageIds}::uuid[]) AND conversation_id=${conversation.id}`;
+        for (const m of fitted.messages) {
+          const row = payloads.find(
+            (p) => p.id === (m as (typeof bounded.kept)[number]).id,
+          );
+          if (row) m.images = restoreImages(row.attachment_payload, row.id);
+        }
+      }
       const messages: ChatMessage[] = fitted.messages.map(
-        ({ role, content }) => ({
+        ({ role, content, images }) => ({
           role,
           content,
+          ...(images?.length ? { images } : {}),
         }),
       );
       let newSummary: string | null = null;
@@ -532,7 +589,7 @@ async function streamChat(
               JSON.stringify(summaryText);
           if (
             !c.contextControls.enabled &&
-            Buffer.byteLength(JSON.stringify(messages)) +
+            messageContextSize(messages) +
               Buffer.byteLength(JSON.stringify(c.prompt)) +
               Buffer.byteLength(continuation.grounding) >
               model.contextWindow - c.maxOutputTokens
@@ -635,7 +692,11 @@ async function streamChat(
               count: sources.length,
             });
             retrievalMs = Math.round(performance.now() - started);
-            if (!sources.length && c.answerPolicy.mode !== "grounded")
+            if (
+              !sources.length &&
+              c.answerPolicy.mode !== "grounded" &&
+              !rows.some((row) => row.attachments.length)
+            )
               throw new KnowledgeError("NO_RELEVANT_SOURCES");
             write("sources", { sources });
           }
@@ -672,7 +733,11 @@ async function streamChat(
               provider,
               [
                 ...messages.slice(0, -1),
-                { role: "user", content: journey!.query },
+                {
+                  ...messages.at(-1)!,
+                  role: "user",
+                  content: journey!.query + prepared.context,
+                },
               ],
               sources,
               controller.signal,
@@ -760,7 +825,7 @@ async function streamChat(
             );
             if (
               !c.contextControls.enabled &&
-              Buffer.byteLength(JSON.stringify(messages)) +
+              messageContextSize(messages) +
                 Buffer.byteLength(JSON.stringify(c.prompt)) +
                 Buffer.byteLength(grounding) >
                 model.contextWindow - c.maxOutputTokens
@@ -912,17 +977,19 @@ async function streamChat(
               (errorCode === "TOOL_ARGUMENTS_INVALID" &&
                 toolPlanningDiagnostics.at(-1)?.status === "rejected")
                 ? "Inspect toolPlanning.reason, attempt, planBytes, maxCalls, maxOutputTokens and issueKeywords. Planning failed before tool execution; use the trace ID to inspect model generations."
-                : errorCode === "EMPTY_PROVIDER_RESPONSE"
-                  ? "Inspect providerStream.finishReason, token usage, reasoningCharacters and refusal/tool flags. Verify the model supports visible streaming text at the configured API endpoint."
-                  : errorCode === "INVALID_UI_RESPONSE"
-                    ? "Inspect responseValidation.stage and issueCodes. This model must produce the configured rich-response JSON; test plain-text mode or a model with reliable structured output."
-                    : errorCode === "PROVIDER_HTTP_ERROR"
-                      ? "Check model identifier, account access, output token limit and supported sampling parameters."
-                      : errorCode === "AUTHENTICATION_FAILED"
-                        ? "Check the selected workspace credential."
-                        : errorCode === "RATE_LIMITED"
-                          ? "Check provider quota and retry later."
-                          : "Use the failure code and trace ID to investigate the run.",
+                : errorCode === "IMAGE_INPUT_UNSUPPORTED"
+                  ? "The selected model cannot read images. Choose an image-capable model and publish an updated version."
+                  : errorCode === "EMPTY_PROVIDER_RESPONSE"
+                    ? "Inspect providerStream.finishReason, token usage, reasoningCharacters and refusal/tool flags. Verify the model supports visible streaming text at the configured API endpoint."
+                    : errorCode === "INVALID_UI_RESPONSE"
+                      ? "Inspect responseValidation.stage and issueCodes. This model must produce the configured rich-response JSON; test plain-text mode or a model with reliable structured output."
+                      : errorCode === "PROVIDER_HTTP_ERROR"
+                        ? "Check model identifier, account access, output token limit and supported sampling parameters."
+                        : errorCode === "AUTHENTICATION_FAILED"
+                          ? "Check the selected workspace credential."
+                          : errorCode === "RATE_LIMITED"
+                            ? "Check provider quota and retry later."
+                            : "Use the failure code and trace ID to investigate the run.",
           },
           "Agent chat failed",
         );
@@ -1033,30 +1100,32 @@ async function streamChat(
             write("error", {
               code: errorCode,
               message:
-                errorCode === "EMPTY_PROVIDER_RESPONSE"
-                  ? "The model returned no response text. Retry, or check the model output limit and provider configuration."
-                  : errorCode === "TOOL_PLAN_INVALID"
-                    ? "The model returned an invalid tool plan. No tools were executed. Retry or use a model with reliable JSON output; check API toolPlanning diagnostics with the trace ID."
-                    : errorCode === "TOOL_ARGUMENTS_INVALID" &&
-                        toolPlanningDiagnostics.at(-1)?.status === "rejected"
-                      ? "The model supplied invalid tool arguments. No tools were executed. Check the tool parameter schema and API toolPlanning diagnostics."
-                      : errorCode === "KNOWLEDGE_PLAN_INVALID"
-                        ? "The knowledge usage decision was invalid. Check your model and usage instructions, then retry."
-                        : errorCode === "GROUNDED_RESPONSE_INVALID"
-                          ? "The answer could not be verified. Please clarify your question or request customer care."
-                          : errorCode === "TOOL_REQUIRED"
-                            ? "Your tool policy requires a call, but no relevant safe call was selected. Review the usage policy and tool descriptions."
-                            : errorCode === "NO_RELEVANT_SOURCES"
-                              ? "No relevant knowledge was found. Try another question or check the knowledge sources."
-                              : errorCode === "CITATION_REQUIRED" ||
-                                  errorCode === "INVALID_CITATION"
-                                ? "The response could not be verified against its source references."
-                                : errorCode === "KNOWLEDGE_NOT_PUBLIC"
-                                  ? "This knowledge is unavailable in public chat."
-                                  : errorCode.startsWith("TOOL_") ||
-                                      errorCode.startsWith("MCP_")
-                                    ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
-                                    : c.fallbackResponse,
+                errorCode === "CONTEXT_LIMIT"
+                  ? "The conversation or attachments exceed this model's context limit. Try fewer files, a smaller excerpt, or a model with a larger context window."
+                  : errorCode === "EMPTY_PROVIDER_RESPONSE"
+                    ? "The model returned no response text. Retry, or check the model output limit and provider configuration."
+                    : errorCode === "TOOL_PLAN_INVALID"
+                      ? "The model returned an invalid tool plan. No tools were executed. Retry or use a model with reliable JSON output; check API toolPlanning diagnostics with the trace ID."
+                      : errorCode === "TOOL_ARGUMENTS_INVALID" &&
+                          toolPlanningDiagnostics.at(-1)?.status === "rejected"
+                        ? "The model supplied invalid tool arguments. No tools were executed. Check the tool parameter schema and API toolPlanning diagnostics."
+                        : errorCode === "KNOWLEDGE_PLAN_INVALID"
+                          ? "The knowledge usage decision was invalid. Check your model and usage instructions, then retry."
+                          : errorCode === "GROUNDED_RESPONSE_INVALID"
+                            ? "The answer could not be verified. Please clarify your question or request customer care."
+                            : errorCode === "TOOL_REQUIRED"
+                              ? "Your tool policy requires a call, but no relevant safe call was selected. Review the usage policy and tool descriptions."
+                              : errorCode === "NO_RELEVANT_SOURCES"
+                                ? "No relevant knowledge was found. Try another question or check the knowledge sources."
+                                : errorCode === "CITATION_REQUIRED" ||
+                                    errorCode === "INVALID_CITATION"
+                                  ? "The response could not be verified against its source references."
+                                  : errorCode === "KNOWLEDGE_NOT_PUBLIC"
+                                    ? "This knowledge is unavailable in public chat."
+                                    : errorCode.startsWith("TOOL_") ||
+                                        errorCode.startsWith("MCP_")
+                                      ? "A configured tool is unavailable or its policy rejected the request. Check the workspace tool traces."
+                                      : c.fallbackResponse,
               status,
             });
           else {
@@ -1678,7 +1747,7 @@ export async function registerAgentRoutes(
     if (!conversation)
       throw new HttpError(404, "Playground conversation unavailable");
     const messages =
-      await sql`SELECT m.id AS "messageId",m.role,m.content,m.citations,m.ui_blocks AS blocks,m.created_at,true AS "actionsEnabled" FROM messages m WHERE m.conversation_id=${conversation.id} ORDER BY m.created_at,m.id`;
+      await sql`SELECT m.id AS "messageId",m.role,m.content,m.attachments,m.citations,m.ui_blocks AS blocks,m.created_at,true AS "actionsEnabled" FROM messages m WHERE m.conversation_id=${conversation.id} ORDER BY m.created_at,m.id`;
     return {
       conversationId: conversation.id,
       messages: messages.map((m) =>
@@ -1693,12 +1762,13 @@ export async function registerAgentRoutes(
     >`SELECT * FROM conversations WHERE id=${id(params(r).conversationId)}`;
     if (!c) throw new HttpError(404, "Conversation not found");
     await workspaceAccess(u.id, c.workspace_id, "conversation:view");
-    return sql`SELECT m.id,m.role,m.content,m.citations,m.ui_blocks,m.created_at,ar.status,m.run_id FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${c.id} ORDER BY m.created_at,m.id`;
+    return sql`SELECT m.id,m.role,m.content,m.attachments,m.citations,m.ui_blocks,m.created_at,ar.status,m.run_id FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${c.id} ORDER BY m.created_at,m.id`;
   });
   app.post(
     "/agents/:agentId/chat",
     {
       ...schema(chatInput),
+      bodyLimit: chatBodyLimit,
       config: {
         rateLimit: {
           max: 30,
@@ -1738,6 +1808,8 @@ export async function registerAgentRoutes(
         undefined,
         ragTool,
         data.quickActionId,
+        undefined,
+        data.attachments,
       );
     },
   );
@@ -1790,6 +1862,12 @@ export async function registerAgentRoutes(
         await sql`SELECT branding,widget_settings FROM deployments WHERE id=${d.id}`;
       const b = branding.parse(presentation!.branding);
       return {
+        attachmentPolicy: {
+          images: [
+            modelSnapshotSchema.parse(d.model_snapshot),
+            ...modelSnapshotSchema.parse(d.model_snapshot).alternatives,
+          ].some((m) => m.capabilities.imageInput === true),
+        },
         branding: b,
         appearance: customerAppearance(
           b,
@@ -1815,6 +1893,7 @@ export async function registerAgentRoutes(
       `/public/${channel}/:deploymentId/chat`,
       {
         ...schema(chatInput),
+        bodyLimit: chatBodyLimit,
         config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
       },
       async (r, reply) => {
@@ -1874,6 +1953,8 @@ export async function registerAgentRoutes(
           raw,
           ragTool,
           data.quickActionId,
+          undefined,
+          data.attachments,
         );
       },
     );

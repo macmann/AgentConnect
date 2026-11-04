@@ -11,10 +11,33 @@ const encodings = {
   o200k_base: getEncoding("o200k_base"),
   cl100k_base: getEncoding("cl100k_base"),
 };
+export function messageContextSize(messages: ChatMessage[]) {
+  return (
+    Buffer.byteLength(
+      JSON.stringify(messages.map(({ role, content }) => ({ role, content }))),
+    ) + messages.reduce((n, m) => n + (m.images?.length ?? 0) * 8192, 0)
+  );
+}
+export function messageTokens(
+  message: ChatMessage,
+  tokenizer: "o200k_base" | "cl100k_base" | "conservative",
+) {
+  return (
+    tokenCount(message.content, tokenizer) +
+    (message.images?.length ?? 0) * 8192
+  );
+}
 export function tokenCount(
   text: string,
   tokenizer: "o200k_base" | "cl100k_base" | "conservative",
 ) {
+  // Long encoded/minified strings can make BPE merging quadratic. Use a safe
+  // byte upper bound instead of blocking the request while counting an upload.
+  if (
+    text.length > 8192 &&
+    text.split(/\s+/).some((part) => part.length > 8192)
+  )
+    return Buffer.byteLength(text);
   return tokenizer === "conservative"
     ? Buffer.byteLength(text)
     : encodings[tokenizer].encode(text).length;
@@ -64,8 +87,10 @@ export function componentPreview(
   const system = count(renderPrompt(c)),
     history = messages
       .slice(0, -1)
-      .reduce((n, m) => n + count(m.content) + 4, 0),
-    user = messages.length ? count(messages.at(-1)!.content) + 4 : 0;
+      .reduce((n, m) => n + messageTokens(m, controls.tokenizer) + 4, 0),
+    user = messages.length
+      ? messageTokens(messages.at(-1)!, controls.tokenizer) + 4
+      : 0;
   const components = {
     system,
     history,
@@ -127,7 +152,7 @@ export function controlledProvider(
         const measured =
           tokenCount(request.system, controls.tokenizer) +
           request.messages.reduce(
-            (n, m) => n + tokenCount(m.content, controls.tokenizer) + 4,
+            (n, m) => n + messageTokens(m, controls.tokenizer) + 4,
             3,
           );
         const limit = Math.min(
@@ -201,10 +226,8 @@ export function fitHistory(
   while (
     kept.length > 1 &&
     (kept.length > c.historyWindow * 2 ||
-      kept.reduce(
-        (n, m) => n + tokenCount(m.content, controls.tokenizer) + 4,
-        0,
-      ) > available)
+      kept.reduce((n, m) => n + messageTokens(m, controls.tokenizer) + 4, 0) >
+        available)
   ) {
     removed.push(kept.shift()!);
     if (kept[0]?.role === "assistant") removed.push(kept.shift()!);

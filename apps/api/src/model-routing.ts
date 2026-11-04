@@ -11,7 +11,11 @@ import {
   validateModelSet,
   type ModelSnapshot,
 } from "./agent-models.js";
-import { controlledProvider, tokenCount } from "./context-control.js";
+import {
+  controlledProvider,
+  tokenCount,
+  messageTokens,
+} from "./context-control.js";
 
 export function selectRoute(c: AgentConfig, query: string, priorTurns: number) {
   const rule = c.modelRouting;
@@ -142,13 +146,18 @@ export function routedProvider(
           };
           attempts.push(attempt);
           try {
+            if (
+              input.messages.some((m) => m.images?.length) &&
+              !model.capabilities.imageInput
+            )
+              throw new ProviderError("IMAGE_INPUT_UNSUPPORTED");
             // Even without opt-in optimization, each routed model must fit this exact request.
             if (order.length > 1 || c.modelRouting.enabled) {
               const measured =
                 tokenCount(input.system, c.contextControls.tokenizer) +
                 input.messages.reduce(
                   (n, m) =>
-                    n + tokenCount(m.content, c.contextControls.tokenizer) + 4,
+                    n + messageTokens(m, c.contextControls.tokenizer) + 4,
                   3,
                 );
               if (
@@ -201,6 +210,10 @@ export function routedProvider(
               emitted ||
               index === order.length - 1 ||
               (!lightDoesNotFit &&
+                !(
+                  error instanceof ProviderError &&
+                  error.code === "IMAGE_INPUT_UNSUPPORTED"
+                ) &&
                 !eligibleForFailover(error, c.modelRouting.fallbackOnRateLimit))
             )
               throw error;

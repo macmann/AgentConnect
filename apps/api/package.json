@@ -49,6 +49,7 @@
     "fast-xml-parser": "^5.3.8",
     "fastify": "5.12.5",
     "fflate": "^0.8.2",
+    "image-size": "^2.0.4",
     "ioredis": "^5.8.2",
     "js-tiktoken": "1.0.21",
     "nodemailer": "^7.0.12",

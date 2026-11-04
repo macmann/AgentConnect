@@ -490,3 +490,13 @@ Connector setup now shows **Destination → Account → Source & sync**. Use Con
 In Quality → Datasets, edit **Test questions** directly. Add questions, set expected behavior and optionally supply an expected answer. Larger datasets use question pages. Use **Advanced JSON / import** for specialized assertions or bulk imports; ordinary edits preserve those settings.
 
 Hover, focus or tap an information icon for field help. Press Escape to dismiss it. Longer setup instructions, skill instruction previews and debug details use expandable sections. See [console UI conventions](console-design.md).
+
+## Attach files in chat
+
+Use the paperclip in Playground, hosted chat, or the website widget to attach up to six files. You can remove selected files before sending, and you can send files without typing a message. File names remain visible in the conversation history.
+
+Supported documents are text-based PDF, DOCX, PPTX, XLSX, TXT, Markdown, CSV and JSON. Your agent’s existing knowledge, citation and answer policies still apply. Their contents are extracted as context for this conversation; they are not added to shared Knowledge sources. Scanned PDFs need a text layer; alternatively upload the scanned pages as photos. Convert legacy `.doc` files to DOCX or PDF.
+
+Photos support PNG, JPEG and WebP. In **Models → Edit → Model limits & supported parameters**, enable **Supports image attachments (vision)** only for a provider model that actually supports images. Save the agent and start a new Playground chat. For public chat, publish and deploy an updated agent version. Configured image-capable fallback models can handle images when the primary model cannot.
+
+Limits: 4 MB per file, 8 MB total per message, and 4096 pixels per image side. Extracted document text is bounded to 80,000 characters per message and must fit the model context window. Photos are encrypted with their chat messages; normal conversation retention removes them with the message. Follow-up questions can use retained attachments within the conversation context budget. Human-support messages currently accept text; remove pending files before switching to a human conversation.

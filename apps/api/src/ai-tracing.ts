@@ -100,7 +100,7 @@ function safeContent(value: unknown, depth = 0): unknown {
         .slice(0, 50)
         .map(([k, v]) => [
           k,
-          /password|secret|authorization|api.?key|cookie|credential|access.?token|refresh.?token/i.test(
+          /^images$|^attachment_payload$|password|secret|authorization|api.?key|cookie|credential|access.?token|refresh.?token/i.test(
             k,
           )
             ? "[REDACTED]"

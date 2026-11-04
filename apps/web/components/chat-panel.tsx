@@ -1,7 +1,13 @@
 "use client";
+import {
+  attachmentAccept,
+  type ChatAttachment,
+  type AttachmentInfo,
+} from "@agentconnect/schemas/chat-attachments";
+import { readChatFiles } from "./chat-attachment-files";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { QuickAction } from "@agentconnect/schemas/bank-experience";
-import { ArrowUp, Square, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowUp, Square, RefreshCw, Sparkles, Paperclip } from "lucide-react";
 import { ChatMarkdown } from "./chat-markdown";
 import { AnswerReport } from "./answer-report";
 import { CustomerFeedback } from "./customer-feedback";
@@ -48,6 +54,7 @@ export function ChatPanel({
   diagnostics = false,
   customerView = false,
   customerLogo,
+  allowImageAttachments = false,
 }: {
   endpoint: string;
   name: string;
@@ -57,12 +64,17 @@ export function ChatPanel({
   diagnostics?: boolean;
   customerView?: boolean;
   customerLogo?: string;
+  allowImageAttachments?: boolean;
 }) {
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [readingFiles, setReadingFiles] = useState(false);
+  const filePicker = useRef<HTMLInputElement>(null);
   const customerOptions = useRef<HTMLDetailsElement>(null);
   const [messages, setMessages] = useState<
     {
       role: "user" | "assistant";
       content: string;
+      attachments?: AttachmentInfo[];
       actionsEnabled?: boolean;
       messageId?: string;
       created_at?: string;
@@ -125,6 +137,7 @@ export function ChatPanel({
       system: false,
     })),
     ...(support.state?.events ?? []).map((event) => ({
+      attachments: undefined,
       blocks: undefined,
       messageId: undefined,
       actionsEnabled: false,
@@ -250,7 +263,8 @@ export function ChatPanel({
   }, [endpoint, publicBase]);
   async function send(text: string, quickActionId?: string) {
     if (
-      !text.trim() ||
+      (!text.trim() && !attachments.length) ||
+      readingFiles ||
       busy ||
       support.sending ||
       supportPaused ||
@@ -258,6 +272,10 @@ export function ChatPanel({
       restoring
     )
       return;
+    if (handoffOpen && attachments.length) {
+      setError("Remove attachments before messaging human support.");
+      return;
+    }
     if (handoffOpen) {
       setError("");
       try {
@@ -268,14 +286,29 @@ export function ChatPanel({
       }
       return;
     }
+    const uploadFiles = [...attachments];
+    text = text.trim() || "Please review the attached files.";
     setBusy(true);
     setError("");
     setInput("");
     const abort = new AbortController();
     controller.current = abort;
+    let accepted = false;
     setMessages((m) => [
       ...m,
-      { role: "user", content: text, created_at: new Date().toISOString() },
+      {
+        role: "user",
+        content: text,
+        attachments: uploadFiles.map((f) => ({
+          name: f.name,
+          size: f.data.length * 0.75,
+          mimeType: "",
+          kind: /\.(png|jpe?g|webp)$/i.test(f.name)
+            ? ("image" as const)
+            : ("document" as const),
+        })),
+        created_at: new Date().toISOString(),
+      },
       { role: "assistant", content: "", created_at: new Date().toISOString() },
     ]);
     try {
@@ -283,12 +316,15 @@ export function ChatPanel({
         endpoint,
         {
           message: text,
+          attachments: uploadFiles,
           conversationId: conversation.current,
           ...(quickActionId ? { quickActionId } : {}),
         },
         abort.signal,
         (event, data) => {
           if (event === "meta") {
+            accepted = true;
+            setAttachments([]);
             conversation.current = data.conversationId;
             setConversationId(data.conversationId);
             if (playgroundStorage.current && data.conversationId) {
@@ -374,6 +410,10 @@ export function ChatPanel({
         customer.current?.token,
       );
     } catch (e) {
+      if (!accepted) {
+        setMessages((items) => items.slice(0, -2));
+        setInput(text);
+      }
       setError(
         abort.signal.aborted ? "Response cancelled." : (e as Error).message,
       );
@@ -388,6 +428,7 @@ export function ChatPanel({
     void send(input);
   }
   function reset() {
+    setAttachments([]);
     if (customerOptions.current) customerOptions.current.open = false;
     setWorkflowAction(null);
     controller.current?.abort();
@@ -759,6 +800,15 @@ export function ChatPanel({
             }
           >
             <small>{m.label}</small>
+            {!!m.attachments?.length && (
+              <ul className="chat-file-list" aria-label="Message attachments">
+                {m.attachments.map((file, i) => (
+                  <li key={i}>
+                    {file.kind === "image" ? "▧" : "▤"} {file.name}
+                  </li>
+                ))}
+              </ul>
+            )}
             {m.role === "assistant" && !m.system && m.content ? (
               <ChatMarkdown content={m.content} />
             ) : (
@@ -869,7 +919,69 @@ export function ChatPanel({
         </p>
       )}
       {!customerView && customerFeedback}
+      {!!attachments.length && (
+        <div className="chat-pending-files" aria-label="Attached files">
+          {attachments.map((file, i) => (
+            <span key={i}>
+              {file.name}
+              <button
+                type="button"
+                disabled={busy || readingFiles}
+                aria-label={`Remove ${file.name}`}
+                onClick={() =>
+                  setAttachments((items) =>
+                    items.filter((_, index) => index !== i),
+                  )
+                }
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <form onSubmit={submit} className="chat-composer">
+        <input
+          hidden
+          ref={filePicker}
+          type="file"
+          multiple
+          aria-label="Choose attachments"
+          accept={
+            allowImageAttachments
+              ? attachmentAccept
+              : attachmentAccept.replace(/\.png,\.jpg,\.jpeg,\.webp,/, "")
+          }
+          onChange={async (event) => {
+            const files = Array.from(event.target.files ?? []);
+            event.target.value = "";
+            setReadingFiles(true);
+            setError("");
+            try {
+              setAttachments(await readChatFiles(files, attachments));
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setReadingFiles(false);
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="chat-attach-button"
+          aria-label="Attach files"
+          title={
+            allowImageAttachments
+              ? "Attach photos or documents (4 MB each, 8 MB total)"
+              : "Attach documents (photos require a vision-capable model)"
+          }
+          disabled={
+            busy || readingFiles || restoring || handoffOpen || supportPaused
+          }
+          onClick={() => filePicker.current?.click()}
+        >
+          <Paperclip size={18} />
+        </button>
         <label className="sr-only" htmlFor={`chat-${name}`}>
           Message
         </label>
@@ -901,7 +1013,7 @@ export function ChatPanel({
                 !supportPaused &&
                 !supportLoading &&
                 !restoring &&
-                input.trim()
+                (input.trim() || attachments.length)
               )
                 e.currentTarget.form?.requestSubmit();
             }
@@ -927,7 +1039,11 @@ export function ChatPanel({
           <Button
             type="submit"
             disabled={
-              !input.trim() || support.sending || supportPaused || restoring
+              (!input.trim() && !attachments.length) ||
+              readingFiles ||
+              support.sending ||
+              supportPaused ||
+              restoring
             }
             aria-label="Send message"
           >

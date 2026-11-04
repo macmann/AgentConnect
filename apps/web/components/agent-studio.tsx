@@ -33,7 +33,12 @@ export type Model = {
   base_url: string;
   secret_id: string | null;
   revision: number;
-  capabilities: { streaming: true; temperature: boolean; topP: boolean };
+  capabilities: {
+    streaming: true;
+    temperature: boolean;
+    topP: boolean;
+    imageInput?: boolean;
+  };
 };
 type AgentSummary = {
   id: string;
@@ -240,6 +245,7 @@ export function Models({
             streaming: true,
             temperature: f.get("temperature") === "on",
             topP: f.get("topP") === "on",
+            imageInput: f.get("imageInput") === "on",
           },
         },
       );
@@ -489,6 +495,14 @@ export function Models({
                     defaultChecked={editing?.capabilities.temperature ?? true}
                   />
                   Supports temperature
+                </label>
+                <label className="checkbox-label">
+                  <input
+                    name="imageInput"
+                    type="checkbox"
+                    defaultChecked={editing?.capabilities.imageInput ?? false}
+                  />
+                  Supports image attachments (vision)
                 </label>
                 <label>
                   <input
@@ -1174,6 +1188,19 @@ export function AgentStudio({
             {tab === "playground" && draft.id && canBuild && (
               <ChatPanel
                 diagnostics
+                allowImageAttachments={
+                  models.data?.some(
+                    (m) =>
+                      m.capabilities.imageInput &&
+                      [
+                        draft.config.modelId,
+                        draft.config.modelRouting?.enabled
+                          ? draft.config.modelRouting.lightModelId
+                          : undefined,
+                        ...(draft.config.modelRouting?.fallbackModelIds ?? []),
+                      ].includes(m.id),
+                  ) ?? false
+                }
                 key={`${draft.id}-${chatKey}`}
                 endpoint={`/agents/${draft.id}/chat`}
                 name={draft.name}

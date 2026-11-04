@@ -150,7 +150,7 @@ export async function registerCustomerSessions(app: FastifyInstance) {
       if (!!q.before !== !!q.beforeId)
         throw new HttpError(400, "Transcript cursor requires both fields");
       const rows =
-        await sql`SELECT m.id AS "messageId",m.role,m.content,m.citations,m.ui_blocks AS blocks,m.created_at FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${c.id} AND ar.status IN ('completed','failed','cancelled') AND (m.created_at,m.id)<(${q.before ?? new Date().toISOString()},${q.beforeId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"}) ORDER BY m.created_at DESC,m.id DESC LIMIT 201`;
+        await sql`SELECT m.id AS "messageId",m.role,m.content,m.attachments,m.citations,m.ui_blocks AS blocks,m.created_at FROM messages m JOIN agent_runs ar ON ar.id=m.run_id WHERE m.conversation_id=${c.id} AND ar.status IN ('completed','failed','cancelled') AND (m.created_at,m.id)<(${q.before ?? new Date().toISOString()},${q.beforeId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"}) ORDER BY m.created_at DESC,m.id DESC LIMIT 201`;
       return {
         ...c,
         messages: rows

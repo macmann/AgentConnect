@@ -35,6 +35,7 @@ type Entry = {
   id: string;
   role: string;
   content: string;
+  attachments?: import("@agentconnect/schemas/chat-attachments").AttachmentInfo[];
   created_at: string;
   actor_name: string | null;
   origin: string;
@@ -446,6 +447,16 @@ export function Conversations({
                       </strong>
                       <time dateTime={m.created_at}>{time(m.created_at)}</time>
                     </header>
+                    {!!m.attachments?.length && (
+                      <ul
+                        className="chat-file-list"
+                        aria-label="Message attachments"
+                      >
+                        {m.attachments.map((file, i) => (
+                          <li key={i}>{file.name}</li>
+                        ))}
+                      </ul>
+                    )}
                     {m.content ? (
                       <ChatMarkdown content={m.content} />
                     ) : (

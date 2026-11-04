@@ -8,7 +8,7 @@ export interface ModelConnection {
   modelId: string;
   baseUrl: string;
   apiKey?: string;
-  capabilities: { temperature: boolean; topP: boolean };
+  capabilities: { temperature: boolean; topP: boolean; imageInput?: boolean };
 }
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -16,6 +16,7 @@ export interface ChatMessage {
   images?: {
     mimeType: "image/png" | "image/jpeg" | "image/webp";
     data: string;
+    byteSize?: number;
   }[];
 }
 export interface ChatRequest {

@@ -1,3 +1,4 @@
+import { messageContextSize } from "./context-control.js";
 import {
   calculateFinancial,
   financialInputSchema,
@@ -793,8 +794,7 @@ export async function runAgentTools(
         ? history.slice(-agent.historyWindow * 2)
         : [{ role: "user", content: question }];
       if (
-        Buffer.byteLength(system) +
-          Buffer.byteLength(JSON.stringify(messages)) >
+        Buffer.byteLength(system) + messageContextSize(messages) >
         contextBudget
       )
         throw new ToolError("TOOL_CONTEXT_LIMIT");
@@ -822,8 +822,7 @@ export async function runAgentTools(
             ? `\nThe previous plan failed validation (${previousReason}). Return a complete JSON object with ONLY calls. Every call must use a listed tool UUID and arguments matching its exact schema. Do not use tool names as IDs, add extra keys or exceed the call limit. If none apply return {"calls":[]}.`
             : "");
         if (
-          Buffer.byteLength(attemptSystem) +
-            Buffer.byteLength(JSON.stringify(messages)) >
+          Buffer.byteLength(attemptSystem) + messageContextSize(messages) >
           contextBudget
         )
           throw new ToolError("TOOL_CONTEXT_LIMIT");

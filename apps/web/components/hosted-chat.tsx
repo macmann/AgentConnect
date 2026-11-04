@@ -10,6 +10,7 @@ export function HostedChat({ deploymentId }: { deploymentId: string }) {
   const [deployment, setDeployment] = useState<{
     branding?: import("@agentconnect/schemas/customer-experience").Branding;
     appearance?: CustomerAppearance;
+    attachmentPolicy?: { images: boolean };
     name: string;
     description: string;
     welcomeMessage: string;
@@ -73,6 +74,7 @@ export function HostedChat({ deploymentId }: { deploymentId: string }) {
             starters={deployment.conversationStarters}
             quickActions={deployment.quickActions ?? []}
             customerView
+            allowImageAttachments={deployment.attachmentPolicy?.images ?? false}
             customerLogo={deployment.branding?.logoUrl}
           />
         ) : (

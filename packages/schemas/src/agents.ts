@@ -1,3 +1,4 @@
+import { chatAttachment } from "./chat-attachments";
 import { z } from "zod";
 import { agentSkills } from "@agentconnect/schemas/agent-skills";
 import { contextControls } from "@agentconnect/schemas/customer-experience";
@@ -30,6 +31,7 @@ export const modelInput = z.object({
       streaming: z.literal(true).default(true),
       temperature: z.boolean().default(true),
       topP: z.boolean().default(true),
+      imageInput: z.boolean().optional(),
     })
     .default({ streaming: true, temperature: true, topP: true }),
 });
@@ -163,6 +165,7 @@ export const deploymentInput = z.object({
   name: z.string().trim().min(1).max(100),
 });
 export const chatInput = z.object({
+  attachments: z.array(chatAttachment).max(6).default([]),
   message: z.string().trim().min(1).max(12000),
   conversationId: z.uuid().optional(),
   quickActionId: z
