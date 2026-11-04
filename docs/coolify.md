@@ -1,4 +1,4 @@
-# Deploy API Toolz on Coolify
+# Deploy Agent Connex on Coolify
 
 Use the repository's **Docker Compose** build pack with [`compose.coolify.yaml`](../compose.coolify.yaml). After the one-time domain and SMTP setup, **Deploy** builds and starts the complete stack. Coolify can then deploy later commits through its Git integration. No manual database migration or bucket-creation command is needed for this deployment path.
 

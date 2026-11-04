@@ -1,6 +1,6 @@
 # AI-assisted agent and workflow creation
 
-API Toolz offers three creation paths under **Agents → Create agent** and
+Agent Connex offers three creation paths under **Agents → Create agent** and
 **Workflows → Create workflow**:
 
 | Mode              | Experience                                                                                                   |

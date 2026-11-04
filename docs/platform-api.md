@@ -1,6 +1,6 @@
 # Platform API and MCP
 
-Applications can invoke a published API Toolz agent or retrieve raw knowledge matches using the REST API or the MCP Streamable HTTP server. Both interfaces use the same scoped key registry, authorization and runtime. No additional service, provider credential or MCP package installation is required on the platform server.
+Applications can invoke a published Agent Connex agent or retrieve raw knowledge matches using the REST API or the MCP Streamable HTTP server. Both interfaces use the same scoped key registry, authorization and runtime. No additional service, provider credential or MCP package installation is required on the platform server.
 
 Install migration **0038** with `pnpm db:migrate`, then restart the API and worker.
 

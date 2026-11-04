@@ -4,7 +4,7 @@
 
 ## Add tools
 
-- **Templates:** Brave web search, the built-in financial calculator, GitHub MCP, Context7 documentation MCP, PostgreSQL, and a connection to your own sandboxed code executor. Templates prefill known settings; enter a name and any required key. The code executor template connects an existing sandbox service; API Toolz does not execute arbitrary code in its API process or provision a sandbox.
+- **Templates:** Brave web search, the built-in financial calculator, GitHub MCP, Context7 documentation MCP, PostgreSQL, and a connection to your own sandboxed code executor. Templates prefill known settings; enter a name and any required key. The code executor template connects an existing sandbox service; Agent Connex does not execute arbitrary code in its API process or provision a sandbox.
 - **Custom MCP:** choose Streamable HTTP or an installed STDIO profile, provide credentials or reuse a saved connection, then validate. The wizard discovers remote tools and lets you select up to eight capabilities to register together.
 - **API / OpenAPI:** paste an OpenAPI 3.0 or 3.1 specification in JSON or YAML. The server extracts operations, typed path/query parameters, required JSON request bodies, and bearer/API-key authentication. Optionally override the server URL. Review supported operations and warnings, select tools, and save.
 

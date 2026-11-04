@@ -1,4 +1,4 @@
-# API Toolz user guide
+# Agent Connex user guide
 
 This guide takes a workspace administrator or builder from an empty workspace to a grounded assistant and a customer chat deployment. Menu visibility and actions depend on your workspace role. Use an administrator account for models, credentials, connectors and publication policies.
 
@@ -124,7 +124,7 @@ Your installation administrator must first configure the provider OAuth app. You
 1. Open **Connectors**, choose **Add connector** and select Google Drive, OneDrive, SharePoint, Teams or Slack.
 2. Choose the target knowledge base.
 3. Use **Sign in with Google/Microsoft/Slack**. Allow the popup, sign in and grant the requested read permissions.
-4. Return to API Toolz. The signed-in credential is selected automatically; raw token values are never shown.
+4. Return to Agent Connex. The signed-in credential is selected automatically; raw token values are never shown.
 5. Use **Choose a folder or channel** to browse available sources. Open a folder and use **Use current folder**, or choose a channel. SharePoint uses its site/library/folder browser.
 6. Review the populated source IDs. If a source is beyond the first 100 browse results, use its exact ID or a narrower folder.
 7. Set the sync limit and optional schedule, then save.

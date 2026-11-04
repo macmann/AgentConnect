@@ -164,7 +164,10 @@ test("Visual workflow publishes, pauses for review and resumes two agent handoff
     },
   ]);
   await page.goto("/");
-  await expect(page.locator('link[rel="icon"]')).toHaveCount(0);
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
+    "href",
+    "/agent-connex-icon-light.svg",
+  );
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
   await page.getByRole("button", { name: "Create workflow" }).click();
   await page.getByRole("button", { name: /Manual setup/ }).click();
