@@ -500,7 +500,10 @@ test("Workflow and evaluation snapshot execution use the same grounded policy", 
 test("Optional citations apply to new playground and public widget conversations in both answer modes", async () => {
   const previous = answer;
   try {
-    answer = { kind: "answer", message: "Use the approved recovery screen." };
+    answer = {
+      kind: "answer",
+      message: "Use the approved recovery screen [1].",
+    };
     for (const mode of ["standard", "grounded"] as const) {
       const c = current();
       c.answerPolicy.mode = mode;
@@ -538,11 +541,44 @@ test("Optional citations apply to new playground and public widget conversations
         widget.find((f) => f.event === "done")!.data.citations,
         [],
       );
+      const workflow = await executeAgentSnapshot(
+        c,
+        await modelSnapshot(model, workspace),
+        "Recovery",
+        { workspaceId: workspace, organizationId: org },
+        AbortSignal.timeout(5000),
+        provider,
+        embedding,
+      );
+      assert.equal(workflow.output, "Use the approved recovery screen.");
+      assert.deepEqual(workflow.citations, []);
       for (const events of [playground, widget]) {
         const id = events.find((f) => f.event === "meta")!.data.conversationId;
         const [row] =
           await sql`SELECT config_snapshot FROM conversations WHERE id=${id}`;
         assert.equal(row!.config_snapshot.rag.requireCitations, false);
+        const text = events
+          .filter((f) => f.event === "token")
+          .map((f) => f.data.text)
+          .join("");
+        assert.equal(text, "Use the approved recovery screen.");
+        const [saved] =
+          await sql`SELECT content,citations FROM messages WHERE conversation_id=${id} AND role='assistant' ORDER BY created_at DESC LIMIT 1`;
+        assert.equal(saved!.content, text);
+        assert.deepEqual(saved!.citations, []);
+        if (events === playground) {
+          await sql`UPDATE messages SET content=${answer.message},citations=${sql.json([{ id: 1 }])} WHERE conversation_id=${id} AND role='assistant'`;
+          const history = await call(
+            "GET",
+            `/agents/${agent}/conversations/${id}`,
+          );
+          assert.equal(history.statusCode, 200, history.body);
+          const restored = history
+            .json()
+            .messages.find((m: { role: string }) => m.role === "assistant");
+          assert.equal(restored.content, text);
+          assert.deepEqual(restored.citations, []);
+        }
       }
     }
   } finally {

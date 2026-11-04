@@ -1,3 +1,4 @@
+import { withoutCitationMarkers } from "./citation-display.js";
 import { resolveAgentSkills, validateSkillSelection } from "./agent-skills.js";
 import type {
   WorkflowNode,
@@ -240,7 +241,9 @@ export async function executeAgentSnapshot(
           skills.prompt + financial.grounding,
         );
         return {
-          output: result.message,
+          output: c.rag.requireCitations
+            ? result.message
+            : withoutCitationMarkers(result.message),
           inputTokens: completeUsage
             ? metered.usage().inputTokens
             : result.inputTokens === null || financial.inputTokens === null
@@ -251,7 +254,9 @@ export async function executeAgentSnapshot(
             : result.outputTokens === null || financial.outputTokens === null
               ? null
               : result.outputTokens + financial.outputTokens,
-          citations: citedSources(result.message, sources),
+          citations: c.rag.requireCitations
+            ? citedSources(result.message, sources)
+            : [],
           sources,
           modelUsage: metered.usage().modelUsage,
         };
@@ -326,12 +331,12 @@ export async function executeAgentSnapshot(
         throw new KnowledgeError("INVALID_CITATION");
       observationContent(span, "output", text);
       return {
-        output: text,
+        output: c.rag.requireCitations ? text : withoutCitationMarkers(text),
         inputTokens: completeUsage ? metered.usage().inputTokens : inputTokens,
         outputTokens: completeUsage
           ? metered.usage().outputTokens
           : outputTokens,
-        citations,
+        citations: c.rag.requireCitations ? citations : [],
         sources,
         modelUsage: metered.usage().modelUsage,
       };

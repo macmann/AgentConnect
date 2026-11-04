@@ -1,3 +1,4 @@
+import { citationDisplay } from "./citation-display.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
@@ -137,7 +138,7 @@ export async function registerCustomerSessions(app: FastifyInstance) {
       if (!s)
         throw new HttpError(401, "Customer session expired or unavailable");
       const [c] =
-        await sql`SELECT id,conversation_mode,handoff_status,(config_snapshot->'generative'->>'allowPublicForms')::boolean AS actions_enabled FROM conversations WHERE id=${id(params(r).conversationId)} AND customer_session_id=${s.id} AND deployment_id=${s.deployment_id}`;
+        await sql`SELECT id,conversation_mode,handoff_status,COALESCE((config_snapshot->'rag'->>'requireCitations')::boolean,true) AS citations_required,(config_snapshot->'generative'->>'allowPublicForms')::boolean AS actions_enabled FROM conversations WHERE id=${id(params(r).conversationId)} AND customer_session_id=${s.id} AND deployment_id=${s.deployment_id}`;
       if (!c) throw new HttpError(404, "Conversation not found");
       reply.header("cache-control", "no-store");
       const q = z
@@ -155,7 +156,10 @@ export async function registerCustomerSessions(app: FastifyInstance) {
         messages: rows
           .slice(0, 200)
           .reverse()
-          .map((m) => ({ ...m, actionsEnabled: !!c.actions_enabled })),
+          .map((m) => ({
+            ...citationDisplay(m, c.citations_required !== false),
+            actionsEnabled: !!c.actions_enabled,
+          })),
         hasMore: rows.length > 200,
       };
     });
