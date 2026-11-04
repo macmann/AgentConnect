@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -80,9 +81,14 @@ test("readiness returns deterministic service codes for simultaneous dependency 
     service: "postgres",
   });
 });
-test("release schema and vector requirements reject missing and unsupported extension versions", () => {
-  assert.equal(requiredMigrations.length, 46);
-  assert.equal(requiredMigrations.at(-1), "0046");
+test("release schema matches shipped migrations and vector requirements reject unsupported versions", () => {
+  const shippedMigrations = readdirSync(
+    new URL("../../../packages/db/migrations/", import.meta.url),
+  )
+    .filter((name) => /^\d{4}_.+\.sql$/.test(name))
+    .map((name) => name.slice(0, 4))
+    .sort();
+  assert.deepEqual(requiredMigrations, shippedMigrations);
   for (const v of [
     undefined,
     "",
