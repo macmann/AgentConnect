@@ -1,5 +1,6 @@
 import type { Citation } from "./tool.js";
 export interface AnswerSourceOptions {
+  requireCitations?: boolean;
   answerSourcePolicy?: "balanced" | "prefer_approved_qa";
   qaMinScore?: number;
 }

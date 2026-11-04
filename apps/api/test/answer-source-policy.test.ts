@@ -124,3 +124,73 @@ test("Reranker cannot demote approved Q&A authority; diagnostics expose final se
   assert.equal(result.diagnostics.selectedApprovedQa, 1);
   assert.equal(result.sources[0]?.id, 1);
 });
+
+test("Citation requirements control the shared knowledge prompt, including preferred Q&A", () => {
+  const evidence = [source(1, true, true), source(2)];
+  assert.match(groundedPrompt(evidence), /Cite supported claims/);
+  assert.match(
+    groundedPrompt(evidence, { ...policy, requireCitations: true }),
+    /Cite the approved answer/,
+  );
+  const optional = groundedPrompt(evidence, {
+    ...policy,
+    requireCitations: false,
+  });
+  assert.match(optional, /Do not add bracket references unless the user asks/);
+  assert.doesNotMatch(
+    optional,
+    /Cite supported claims|Cite the approved answer/,
+  );
+  assert.match(optional, /primary_approved_qa/);
+  assert.match(optional, /untrusted data/);
+});
+
+test("Grounded answers honor optional citations while rejecting invented references in both modes", async () => {
+  const { generateGroundedAnswer } = await import("../src/bank-runtime.js");
+  const evidence = [source(1)];
+  let answer = "Refunds are available within 30 days.";
+  let system = "";
+  const provider: import("@agentconnect/provider-sdk").ChatProvider = {
+    async *stream(request) {
+      system = request.system;
+      yield {
+        type: "token",
+        text: JSON.stringify({ kind: "answer", message: answer }),
+      };
+      yield { type: "usage", inputTokens: 10, outputTokens: 8 };
+    },
+  };
+  const execute = (required: boolean) =>
+    generateGroundedAnswer(
+      agentConfig.parse({
+        modelId: randomUUID(),
+        answerPolicy: { mode: "grounded" },
+        rag: {
+          knowledgeBaseIds: [evidence[0]!.knowledgeBaseId],
+          contentMode: "approved",
+          usageMode: "always",
+          requireCitations: required,
+        },
+      }),
+      provider,
+      [{ role: "user", content: "What is the refund period?" }],
+      evidence,
+      AbortSignal.timeout(5000),
+      Infinity,
+    );
+  assert.equal((await execute(false)).message, answer);
+  assert.doesNotMatch(
+    system,
+    /with \[n\] citations|cite the operand references/,
+  );
+  await assert.rejects(execute(true), { code: "GROUNDED_RESPONSE_INVALID" });
+  assert.match(system, /with \[n\] citations/);
+  for (const required of [false, true]) {
+    answer = "Refunds are available within 30 days [1].";
+    assert.equal((await execute(required)).message, answer);
+    answer = "Refunds are available within 30 days [99].";
+    await assert.rejects(execute(required), {
+      code: "GROUNDED_RESPONSE_INVALID",
+    });
+  }
+});
